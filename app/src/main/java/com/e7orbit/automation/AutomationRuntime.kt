@@ -175,6 +175,26 @@ class AutomationRuntime(
         )
     }
 
+    fun restart() {
+        val current = _status.value
+        if (!current.isTerminal) return
+        logger.info("runtime.restart.requested", "reason" to current.stopReason)
+        scope.launch { start(current.config) }
+    }
+
+    fun dismissTerminalStatus() {
+        val current = _status.value
+        if (!current.isTerminal) return
+        logger.info("runtime.terminal.dismissed", "reason" to current.stopReason)
+        _status.value = AutomationStatus(
+            phase = AutomationPhase.IDLE,
+            config = current.config,
+            message = "尚未运行",
+            serviceReady = gatewayRef.get() != null,
+            templatesReady = vision.health().isReady,
+        )
+    }
+
     fun refreshHealth() {
         _status.value = _status.value.copy(
             serviceReady = gatewayRef.get() != null,

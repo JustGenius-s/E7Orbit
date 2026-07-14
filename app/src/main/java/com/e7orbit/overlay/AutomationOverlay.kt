@@ -144,6 +144,12 @@ class AutomationOverlay(
     }
 
     private fun requestStop() {
+        if (runtime.status.value.isTerminal) {
+            stopConfirmationDeadline = 0L
+            bubble.stopConfirmationPending = false
+            runtime.dismissTerminalStatus()
+            return
+        }
         val now = System.currentTimeMillis()
         if (now <= stopConfirmationDeadline) {
             stopConfirmationDeadline = 0L
@@ -576,7 +582,7 @@ class AutomationOverlay(
         private fun drawPauseOrPlayIcon(canvas: Canvas, rect: RectF, alpha: Int) {
             fillPaint.color = COLOR_ON_SURFACE
             fillPaint.alpha = alpha
-            if (status.phase == AutomationPhase.PAUSED) {
+            if (status.phase == AutomationPhase.PAUSED || status.isTerminal) {
                 path.reset()
                 path.moveTo(rect.centerX() - dpFloat(4f), rect.centerY() - dpFloat(7f))
                 path.lineTo(rect.centerX() + dpFloat(7f), rect.centerY())
@@ -651,7 +657,11 @@ class AutomationOverlay(
             when {
                 actionRect(ACTION_HOME).contains(x, y) -> returnToApp()
                 actionRect(ACTION_PAUSE).contains(x, y) -> {
-                    if (status.phase == AutomationPhase.PAUSED) runtime.resume() else runtime.pause()
+                    when {
+                        status.isTerminal -> runtime.restart()
+                        status.phase == AutomationPhase.PAUSED -> runtime.resume()
+                        else -> runtime.pause()
+                    }
                 }
 
                 actionRect(ACTION_STOP).contains(x, y) -> requestStop()

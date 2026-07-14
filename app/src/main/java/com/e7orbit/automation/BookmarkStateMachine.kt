@@ -95,21 +95,22 @@ class BookmarkStateMachine(
                 publish(AutomationPhase.SCANNING_BOTTOM, "滑动并扫描下半页")
                 val scrollFrom = visionConfig.scrollFrom.toCapturePoint()
                 val scrollTo = visionConfig.scrollTo.toCapturePoint()
-                val scrollResult = gateway.swipe(
-                    from = scrollFrom,
-                    to = scrollTo,
-                    durationMs = SCROLL_DURATION_MS,
-                )
+                val scrollResult = performGestureWithRetry(
+                    message = "商店滑动失败",
+                    awaitRunPermission = awaitRunPermission,
+                ) {
+                    gateway.swipe(
+                        from = scrollFrom,
+                        to = scrollTo,
+                        durationMs = SCROLL_DURATION_MS,
+                    )
+                }
                 logger.info(
                     "gesture.scroll",
                     "from" to "${scrollFrom.x},${scrollFrom.y}",
                     "to" to "${scrollTo.x},${scrollTo.y}",
                     "durationMs" to SCROLL_DURATION_MS,
                     "result" to scrollResult,
-                )
-                requireGesture(
-                    scrollResult,
-                    "商店滑动失败",
                 )
                 clock.delay(AFTER_SCROLL_DELAY_MS)
                 stats = scanAndPurchase(
@@ -126,6 +127,7 @@ class BookmarkStateMachine(
                 tapAction(
                     action = ShopAction.REFRESH,
                     gateway = gateway,
+                    awaitRunPermission = awaitRunPermission,
                     failureMessage = "未找到刷新按钮",
                 )
                 when (
@@ -154,6 +156,7 @@ class BookmarkStateMachine(
                 tapAction(
                     action = ShopAction.CONFIRM_REFRESH,
                     gateway = gateway,
+                    awaitRunPermission = awaitRunPermission,
                     failureMessage = "未找到刷新确认按钮",
                 )
                 publish(AutomationPhase.WAITING_FOR_REFRESH, "等待新商品加载")
@@ -271,18 +274,18 @@ class BookmarkStateMachine(
                 "购买${currentTarget.type.displayName()}",
                 currentTarget.confidence,
             )
-            requireGesture(
-                gateway.tap(currentTarget.purchaseButton).also { result ->
-                    logger.info(
-                        "gesture.purchase_button",
-                        "type" to currentTarget.type,
-                        "point" to
-                            "${currentTarget.purchaseButton.x},${currentTarget.purchaseButton.y}",
-                        "confidence" to currentTarget.confidence,
-                        "result" to result,
-                    )
-                },
-                "购买按钮点击失败",
+            val purchaseResult = performGestureWithRetry(
+                message = "购买按钮点击失败",
+                awaitRunPermission = awaitRunPermission,
+            ) {
+                gateway.tap(currentTarget.purchaseButton)
+            }
+            logger.info(
+                "gesture.purchase_button",
+                "type" to currentTarget.type,
+                "point" to "${currentTarget.purchaseButton.x},${currentTarget.purchaseButton.y}",
+                "confidence" to currentTarget.confidence,
+                "result" to purchaseResult,
             )
 
             when (
@@ -336,6 +339,7 @@ class BookmarkStateMachine(
             tapAction(
                 action = ShopAction.CONFIRM_PURCHASE,
                 gateway = gateway,
+                awaitRunPermission = awaitRunPermission,
                 failureMessage = "未找到购买确认按钮",
             )
             waitForPage(
@@ -369,6 +373,7 @@ class BookmarkStateMachine(
     private suspend fun tapAction(
         action: ShopAction,
         gateway: ScreenGateway,
+        awaitRunPermission: suspend () -> Unit,
         failureMessage: String,
     ) {
         val actionMatch = captureChecked(gateway).use { frame ->
@@ -385,14 +390,18 @@ class BookmarkStateMachine(
         if (!actionMatch.matched || point == null) {
             throw MachineStop(StopReason.LOW_CONFIDENCE, failureMessage)
         }
-        val result = gateway.tap(point)
+        val result = performGestureWithRetry(
+            message = failureMessage,
+            awaitRunPermission = awaitRunPermission,
+        ) {
+            gateway.tap(point)
+        }
         logger.info(
             "gesture.action",
             "action" to action,
             "point" to "${point.x},${point.y}",
             "result" to result,
         )
-        requireGesture(result, failureMessage)
     }
 
     private suspend fun waitForPage(
@@ -514,13 +523,29 @@ class BookmarkStateMachine(
         return frame
     }
 
-    private fun requireGesture(
-        result: GestureResult,
+    private suspend fun performGestureWithRetry(
         message: String,
-    ) {
-        if (result != GestureResult.COMPLETED) {
-            throw MachineStop(StopReason.GESTURE_FAILED, "$message：$result")
+        awaitRunPermission: suspend () -> Unit,
+        gesture: suspend () -> GestureResult,
+    ): GestureResult {
+        repeat(GESTURE_MAX_ATTEMPTS) { attemptIndex ->
+            awaitRunPermission()
+            val result = gesture()
+            if (result == GestureResult.COMPLETED) return result
+            if (
+                result != GestureResult.CANCELLED ||
+                attemptIndex == GESTURE_MAX_ATTEMPTS - 1
+            ) {
+                throw MachineStop(StopReason.GESTURE_FAILED, "$message：$result")
+            }
+            logger.warn(
+                "gesture.cancelled_retrying",
+                "message" to message,
+                "attempt" to attemptIndex + 1,
+            )
+            clock.delay(GESTURE_RETRY_DELAY_MS)
         }
+        error("不可达的手势重试状态")
     }
 
     private suspend fun diagnose(
@@ -564,6 +589,8 @@ class BookmarkStateMachine(
         const val POLL_INTERVAL_MS = 450L
         const val SCROLL_DURATION_MS = 500L
         const val AFTER_SCROLL_DELAY_MS = 800L
+        const val GESTURE_MAX_ATTEMPTS = 3
+        const val GESTURE_RETRY_DELAY_MS = 160L
         const val TARGET_REVALIDATE_TOLERANCE_PX = 100
     }
 }

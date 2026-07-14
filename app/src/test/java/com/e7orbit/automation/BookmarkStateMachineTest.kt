@@ -54,6 +54,37 @@ class BookmarkStateMachineTest {
     }
 
     @Test
+    fun retriesGestureCancelledByUserInput() = runTest {
+        val vision = FakeVision(
+            pages = listOf(
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.REFRESH_CONFIRMATION,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+            ),
+            targets = listOf(emptyList(), emptyList()),
+        )
+        val gateway = FakeGateway(
+            swipeResults = listOf(GestureResult.CANCELLED, GestureResult.COMPLETED),
+        )
+
+        val result = machine(vision).run(
+            config = RunConfig(maxRefreshes = 1),
+            gateway = gateway,
+            awaitRunPermission = {},
+            onStatus = { _, _, _, _ -> },
+            onDiagnostic = { _, _ -> },
+        )
+
+        assertTrue(result.successful)
+        assertEquals(2, gateway.swipes)
+        assertEquals(1, result.stats.completedRefreshes)
+    }
+
+    @Test
     fun verifiesAndCountsPurchaseBeforeRefreshing() = runTest {
         val covenant = PurchaseTarget(
             type = ItemType.COVENANT_BOOKMARK,
@@ -194,7 +225,12 @@ class BookmarkStateMachineTest {
     )
 }
 
-private class FakeGateway : ScreenGateway {
+private class FakeGateway(
+    tapResults: List<GestureResult> = emptyList(),
+    swipeResults: List<GestureResult> = emptyList(),
+) : ScreenGateway {
+    private val tapResults = ArrayDeque(tapResults)
+    private val swipeResults = ArrayDeque(swipeResults)
     var captures = 0
     var taps = 0
     var swipes = 0
@@ -209,7 +245,7 @@ private class FakeGateway : ScreenGateway {
 
     override suspend fun tap(point: ScreenPoint): GestureResult {
         taps += 1
-        return GestureResult.COMPLETED
+        return tapResults.pollFirst() ?: GestureResult.COMPLETED
     }
 
     override suspend fun swipe(
@@ -218,7 +254,7 @@ private class FakeGateway : ScreenGateway {
         durationMs: Long,
     ): GestureResult {
         swipes += 1
-        return GestureResult.COMPLETED
+        return swipeResults.pollFirst() ?: GestureResult.COMPLETED
     }
 }
 
