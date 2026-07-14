@@ -3,7 +3,6 @@ package com.e7orbit.overlay
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -114,23 +113,27 @@ class AutomationOverlay(
     private fun buildView() {
         root.orientation = LinearLayout.VERTICAL
         root.setPadding(dp(16), dp(12), dp(16), dp(12))
-        root.background = roundedBackground(0xFF332E2A.toInt(), 18f)
+        root.background = roundedBackground(
+            color = 0xFFFFFFFF.toInt(),
+            radiusDp = 18f,
+            strokeColor = 0xFFDEDEDE.toInt(),
+        )
         root.elevation = dp(12).toFloat()
 
-        title.setTextColor(Color.WHITE)
+        title.setTextColor(0xFF1B1B1B.toInt())
         title.textSize = 15f
         title.setPadding(0, 0, 0, dp(6))
         root.addView(title, matchWrap())
 
-        summary.setTextColor(0xFFFFF5E8.toInt())
+        summary.setTextColor(0xFF3F3F3F.toInt())
         summary.textSize = 13f
         root.addView(summary, matchWrap())
 
         progress.progressTintList = android.content.res.ColorStateList.valueOf(
-            0xFF9B87E8.toInt(),
+            0xFF1B1B1B.toInt(),
         )
         progress.progressBackgroundTintList = android.content.res.ColorStateList.valueOf(
-            0xFF5A5048.toInt(),
+            0xFFEBEBEB.toInt(),
         )
         root.addView(
             progress,
@@ -144,7 +147,7 @@ class AutomationOverlay(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
         }
-        styleButton(pauseButton, primary = true)
+        styleButton(pauseButton)
         pauseButton.text = "暂停"
         pauseButton.setOnClickListener {
             if (runtime.status.value.phase == AutomationPhase.PAUSED) {
@@ -154,14 +157,14 @@ class AutomationOverlay(
                 runtime.pause()
             }
         }
-        styleButton(expandButton, primary = false)
+        styleButton(expandButton)
         expandButton.text = "详情"
         expandButton.setOnClickListener { setExpanded(!expanded) }
         compactActions.addView(pauseButton, weightedButton())
         compactActions.addView(expandButton, weightedButton().apply { marginStart = dp(8) })
         root.addView(compactActions, matchWrap().apply { topMargin = dp(8) })
 
-        details.setTextColor(0xFFD8CEC2.toInt())
+        details.setTextColor(0xFF5F5F5F.toInt())
         details.textSize = 12f
         details.visibility = View.GONE
         details.setPadding(0, dp(10), 0, dp(6))
@@ -169,7 +172,7 @@ class AutomationOverlay(
 
         expandedActions.orientation = LinearLayout.HORIZONTAL
         expandedActions.visibility = View.GONE
-        styleButton(returnButton, primary = false)
+        styleButton(returnButton)
         returnButton.text = "返回应用"
         returnButton.setOnClickListener {
             val intent = Intent(context, MainActivity::class.java).apply {
@@ -177,7 +180,7 @@ class AutomationOverlay(
             }
             context.startActivity(intent)
         }
-        styleButton(stopButton, primary = false, danger = true)
+        styleButton(stopButton, danger = true)
         stopButton.text = "停止"
         stopButton.setOnClickListener {
             val now = System.currentTimeMillis()
@@ -227,30 +230,31 @@ class AutomationOverlay(
 
     private fun styleButton(
         button: Button,
-        primary: Boolean,
         danger: Boolean = false,
     ) {
-        val color = when {
-            danger -> 0xFF7A3440.toInt()
-            primary -> 0xFF6750C8.toInt()
-            else -> 0xFF514842.toInt()
-        }
-        button.setTextColor(Color.WHITE)
+        val textColor = if (danger) 0xFFBA1A1A.toInt() else 0xFF1B1B1B.toInt()
+        val strokeColor = if (danger) 0xFFBA1A1A.toInt() else 0xFFDEDEDE.toInt()
+        button.setTextColor(textColor)
         button.textSize = 12f
         button.isAllCaps = false
         button.minHeight = 0
         button.minimumHeight = 0
         button.setPadding(dp(8), dp(8), dp(8), dp(8))
-        button.background = roundedBackground(color, 12f)
+        button.background = roundedBackground(
+            color = 0xFFFFFFFF.toInt(),
+            radiusDp = 12f,
+            strokeColor = strokeColor,
+        )
     }
 
     private fun roundedBackground(
         color: Int,
         radiusDp: Float,
+        strokeColor: Int,
     ) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = dp(radiusDp.roundToInt()).toFloat()
-        setStroke(dp(1), 0xFF6C5F55.toInt())
+        setStroke(dp(1), strokeColor)
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(

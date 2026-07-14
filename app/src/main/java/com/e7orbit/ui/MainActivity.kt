@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -37,15 +38,15 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -59,13 +60,7 @@ import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
 import com.e7orbit.ui.theme.E7OrbitTheme
-import com.e7orbit.ui.theme.OrbitBackground
-import com.e7orbit.ui.theme.OrbitError
-import com.e7orbit.ui.theme.OrbitOnSurfaceMuted
-import com.e7orbit.ui.theme.OrbitPrimary
-import com.e7orbit.ui.theme.OrbitSecondary
 import com.e7orbit.ui.theme.OrbitSuccess
-import com.e7orbit.ui.theme.OrbitSurface
 import com.e7orbit.ui.theme.OrbitWarning
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -147,21 +142,14 @@ private fun OrbitDashboard(
     onPauseOrResume: () -> Unit,
     onStop: () -> Unit,
 ) {
-    val background = Brush.linearGradient(
-        colors = listOf(
-            Color(0xFFF8F3EA),
-            Color(0xFFF1E9F8),
-            Color(0xFFF6EBDD),
-        ),
-    )
     Scaffold(
-        containerColor = OrbitBackground,
+        containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
     ) { contentPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(background)
+                .background(MaterialTheme.colorScheme.background)
                 .padding(contentPadding)
                 .padding(horizontal = 32.dp, vertical = 20.dp),
         ) {
@@ -221,14 +209,15 @@ private fun Header(status: AutomationStatus) {
             modifier = Modifier
                 .size(46.dp)
                 .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        listOf(OrbitSecondary, OrbitPrimary, Color(0xFFF0A15A)),
-                    ),
-                ),
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Text("E7", fontWeight = FontWeight.Black, color = Color.White)
+            Text(
+                "E7",
+                fontWeight = FontWeight.Black,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
         Spacer(Modifier.width(14.dp))
         Column {
@@ -239,7 +228,7 @@ private fun Header(status: AutomationStatus) {
             )
             Text(
                 text = "国服 · MuMu 12 · 1920×1080",
-                color = OrbitOnSurfaceMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -252,15 +241,15 @@ private fun Header(status: AutomationStatus) {
 private fun StatusPill(status: AutomationStatus) {
     val color = when (status.phase) {
         AutomationPhase.COMPLETED -> OrbitSuccess
-        AutomationPhase.ERROR -> OrbitError
+        AutomationPhase.ERROR -> MaterialTheme.colorScheme.error
         AutomationPhase.PAUSED -> OrbitWarning
-        AutomationPhase.IDLE -> OrbitOnSurfaceMuted
-        else -> OrbitSecondary
+        AutomationPhase.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurface
     }
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(color.copy(alpha = 0.12f))
+            .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(50))
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -297,7 +286,7 @@ private fun AutomationCard(
         )
         Text(
             "进入秘密商店后自动识别、二次确认购买并刷新。",
-            color = OrbitOnSurfaceMuted,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(14.dp))
         ToggleRow(
@@ -334,7 +323,7 @@ private fun AutomationCard(
             Spacer(Modifier.weight(1f))
             Text(
                 "${(config.matchThreshold * 100).toInt()}%",
-                color = OrbitSecondary,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold,
             )
         }
@@ -342,6 +331,13 @@ private fun AutomationCard(
             value = config.matchThreshold.toFloat(),
             onValueChange = { onThresholdChanged(it.toDouble()) },
             valueRange = 0.85f..0.98f,
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.onSurface,
+                activeTrackColor = MaterialTheme.colorScheme.onSurface,
+                inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                activeTickColor = MaterialTheme.colorScheme.surface,
+                inactiveTickColor = MaterialTheme.colorScheme.outline,
+            ),
         )
         Spacer(Modifier.height(12.dp))
         if (automation.isRunning || automation.phase == AutomationPhase.PAUSED) {
@@ -352,13 +348,17 @@ private fun AutomationCard(
                 Button(
                     onClick = onPauseOrResume,
                     modifier = Modifier.weight(1f),
+                    colors = whiteButtonColors(),
+                    border = whiteButtonBorder(),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
                 ) {
                     Text(if (automation.phase == AutomationPhase.PAUSED) "继续" else "暂停")
                 }
                 OutlinedButton(
                     onClick = onStop,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = OrbitError),
+                    colors = whiteOutlinedButtonColors(danger = true),
+                    border = whiteButtonBorder(danger = true),
                 ) {
                     Text("停止")
                 }
@@ -370,6 +370,9 @@ private fun AutomationCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
+                colors = whiteButtonColors(),
+                border = whiteButtonBorder(),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
             ) {
                 Text("准备运行", fontWeight = FontWeight.Bold)
             }
@@ -379,9 +382,9 @@ private fun AutomationCard(
             Text(
                 automation.message,
                 color = if (automation.phase == AutomationPhase.ERROR) {
-                    OrbitError
+                    MaterialTheme.colorScheme.error
                 } else {
-                    OrbitOnSurfaceMuted
+                    MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -428,6 +431,8 @@ private fun EnvironmentCard(
             OutlinedButton(
                 onClick = onEnableAccessibility,
                 modifier = Modifier.fillMaxWidth(),
+                colors = whiteOutlinedButtonColors(),
+                border = whiteButtonBorder(),
             ) {
                 Text("开启无障碍服务")
             }
@@ -466,12 +471,12 @@ private fun LastRunCard(summary: RunSummary) {
 private fun OrbitCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(
-            containerColor = OrbitSurface,
+            containerColor = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
         ),
-        border = androidx.compose.foundation.BorderStroke(
+        border = BorderStroke(
             1.dp,
             MaterialTheme.colorScheme.outlineVariant,
         ),
@@ -498,9 +503,24 @@ private fun ToggleRow(
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, color = OrbitOnSurfaceMuted, fontSize = 12.sp)
+            Text(
+                subtitle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.surface,
+                checkedTrackColor = MaterialTheme.colorScheme.onSurface,
+                checkedBorderColor = MaterialTheme.colorScheme.onSurface,
+                uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                uncheckedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            ),
+        )
     }
 }
 
@@ -538,10 +558,40 @@ private fun MetricRow(label: String, value: String) {
             .fillMaxWidth()
             .padding(vertical = 5.dp),
     ) {
-        Text(label, color = OrbitOnSurfaceMuted, modifier = Modifier.weight(1f))
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
         Text(value, fontWeight = FontWeight.SemiBold)
     }
 }
+
+@Composable
+private fun whiteButtonColors() = ButtonDefaults.buttonColors(
+    containerColor = MaterialTheme.colorScheme.surface,
+    contentColor = MaterialTheme.colorScheme.onSurface,
+    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+)
+
+@Composable
+private fun whiteOutlinedButtonColors(danger: Boolean = false) =
+    ButtonDefaults.outlinedButtonColors(
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = if (danger) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+    )
+
+@Composable
+private fun whiteButtonBorder(danger: Boolean = false) = BorderStroke(
+    1.dp,
+    if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant,
+)
 
 private fun AutomationPhase.label(): String = when (this) {
     AutomationPhase.IDLE -> "待机"
