@@ -204,6 +204,9 @@ data class RunSummary(
     val covenantRatePercent: Double
         get() = ratePercent(covenantBookmarksBought)
 
+    val mysticRatePercent: Double
+        get() = ratePercent(mysticMedalsBought)
+
     private fun ratePercent(count: Int): Double =
         if (shopPagesScanned == 0) 0.0 else count * 100.0 / shopPagesScanned
 }
