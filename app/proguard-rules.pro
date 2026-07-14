@@ -1,0 +1,3 @@
+-keep class org.opencv.** { *; }
+-keep class kotlinx.serialization.** { *; }
+-dontwarn org.opencv.**

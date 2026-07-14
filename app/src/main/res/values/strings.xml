@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">E7 Orbit</string>
+    <string name="accessibility_service_name">E7 Orbit 自动化服务</string>
+    <string name="accessibility_service_description">仅在第七史诗国服中读取屏幕并执行用户明确启动的点击和滑动操作。</string>
+</resources>

@@ -1,0 +1,85 @@
+{
+  "referenceWidth": 1024,
+  "referenceHeight": 576,
+  "purchaseButtonX": 955,
+  "scrollFrom": {
+    "x": 720,
+    "y": 440
+  },
+  "scrollTo": {
+    "x": 720,
+    "y": 160
+  },
+  "templates": [
+    {
+      "id": "shop_anchor",
+      "file": "shop_anchor.png",
+      "region": { "left": 0, "top": 0, "right": 250, "bottom": 80 },
+      "threshold": 0.90
+    },
+    {
+      "id": "covenant_item",
+      "file": "covenant_item.png",
+      "region": { "left": 330, "top": 60, "right": 600, "bottom": 576 },
+      "threshold": 0.88,
+      "maxMatches": 8
+    },
+    {
+      "id": "mystic_item",
+      "file": "mystic_item.png",
+      "region": { "left": 330, "top": 60, "right": 600, "bottom": 576 },
+      "threshold": 0.88,
+      "maxMatches": 8
+    },
+    {
+      "id": "purchase_button",
+      "file": "purchase_button.png",
+      "region": { "left": 820, "top": 50, "right": 1024, "bottom": 576 },
+      "threshold": 0.88,
+      "maxMatches": 8
+    },
+    {
+      "id": "covenant_confirm",
+      "file": "covenant_confirm.png",
+      "region": { "left": 300, "top": 160, "right": 700, "bottom": 360 },
+      "threshold": 0.90
+    },
+    {
+      "id": "mystic_confirm",
+      "file": "mystic_confirm.png",
+      "region": { "left": 300, "top": 160, "right": 700, "bottom": 360 },
+      "threshold": 0.90
+    },
+    {
+      "id": "confirm_purchase",
+      "file": "confirm_purchase.png",
+      "region": { "left": 500, "top": 300, "right": 780, "bottom": 500 },
+      "threshold": 0.90
+    },
+    {
+      "id": "refresh_button",
+      "file": "refresh_button.png",
+      "region": { "left": 0, "top": 430, "right": 330, "bottom": 576 },
+      "threshold": 0.90
+    },
+    {
+      "id": "refresh_dialog",
+      "file": "refresh_dialog.png",
+      "region": { "left": 300, "top": 170, "right": 750, "bottom": 340 },
+      "threshold": 0.90
+    },
+    {
+      "id": "confirm_refresh",
+      "file": "confirm_refresh.png",
+      "region": { "left": 450, "top": 290, "right": 750, "bottom": 460 },
+      "threshold": 0.90
+    },
+    {
+      "id": "resource_insufficient",
+      "file": "resource_insufficient.png",
+      "region": { "left": 200, "top": 100, "right": 824, "bottom": 500 },
+      "threshold": 0.90,
+      "required": false
+    }
+  ]
+}
