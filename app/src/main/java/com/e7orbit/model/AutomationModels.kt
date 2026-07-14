@@ -65,6 +65,7 @@ enum class AutomationPhase {
     WAITING_FOR_SERVICE,
     WAITING_FOR_SHOP,
     SCANNING_TOP,
+    PURCHASING,
     VERIFYING_PURCHASE,
     SCANNING_BOTTOM,
     REFRESHING,
@@ -105,6 +106,7 @@ data class AutomationStatus(
         get() = phase in setOf(
             AutomationPhase.WAITING_FOR_SHOP,
             AutomationPhase.SCANNING_TOP,
+            AutomationPhase.PURCHASING,
             AutomationPhase.VERIFYING_PURCHASE,
             AutomationPhase.SCANNING_BOTTOM,
             AutomationPhase.REFRESHING,

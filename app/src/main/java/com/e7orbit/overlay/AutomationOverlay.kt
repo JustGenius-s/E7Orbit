@@ -50,8 +50,8 @@ class AutomationOverlay(
 
     init {
         params.gravity = Gravity.TOP or Gravity.START
-        params.x = dp(16)
-        params.y = dp(48)
+        params.x = (context.resources.displayMetrics.widthPixels * 0.30f).roundToInt()
+        params.y = dp(8)
         bubble.background = GradientDrawable().apply { setColor(Color.TRANSPARENT) }
         bubble.elevation = dp(10).toFloat()
     }
@@ -63,10 +63,6 @@ class AutomationOverlay(
         }
         bubble.render(status)
         show()
-    }
-
-    fun setCaptureHidden(hidden: Boolean) {
-        if (added) bubble.alpha = if (hidden) 0f else 1f
     }
 
     fun destroy() {
@@ -204,6 +200,7 @@ class AutomationOverlay(
         private var windowStartY = 0
         private var dragging = false
         private var canDrag = false
+        private val collapseHoverRunnable = Runnable { setExpanded(false) }
 
         var expansion: Float = 0f
         var stopConfirmationPending: Boolean = false
@@ -228,6 +225,7 @@ class AutomationOverlay(
 
         fun destroy() {
             progressAnimator?.cancel()
+            removeCallbacks(collapseHoverRunnable)
             covenantIcon?.let { if (!it.isRecycled) it.recycle() }
             mysticIcon?.let { if (!it.isRecycled) it.recycle() }
         }
@@ -242,8 +240,16 @@ class AutomationOverlay(
 
         override fun onHoverEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
-                MotionEvent.ACTION_HOVER_ENTER -> setExpanded(true)
-                MotionEvent.ACTION_HOVER_EXIT -> setExpanded(false)
+                MotionEvent.ACTION_HOVER_ENTER -> {
+                    removeCallbacks(collapseHoverRunnable)
+                    setExpanded(true)
+                }
+
+                MotionEvent.ACTION_HOVER_MOVE -> removeCallbacks(collapseHoverRunnable)
+                MotionEvent.ACTION_HOVER_EXIT -> {
+                    removeCallbacks(collapseHoverRunnable)
+                    postDelayed(collapseHoverRunnable, HOVER_EXIT_DELAY_MS)
+                }
             }
             return true
         }
@@ -706,7 +712,8 @@ class AutomationOverlay(
         AutomationPhase.WAITING_FOR_SERVICE -> 0.04f
         AutomationPhase.WAITING_FOR_SHOP -> 0.08f
         AutomationPhase.SCANNING_TOP -> 0.22f
-        AutomationPhase.VERIFYING_PURCHASE -> 0.42f
+        AutomationPhase.PURCHASING -> 0.34f
+        AutomationPhase.VERIFYING_PURCHASE -> 0.46f
         AutomationPhase.SCANNING_BOTTOM -> 0.58f
         AutomationPhase.REFRESHING -> 0.76f
         AutomationPhase.WAITING_FOR_REFRESH -> 0.92f
@@ -720,6 +727,7 @@ class AutomationOverlay(
         AutomationPhase.WAITING_FOR_SERVICE -> "服务"
         AutomationPhase.WAITING_FOR_SHOP -> "等待"
         AutomationPhase.SCANNING_TOP -> "上扫"
+        AutomationPhase.PURCHASING -> "购买"
         AutomationPhase.VERIFYING_PURCHASE -> "确认"
         AutomationPhase.SCANNING_BOTTOM -> "下扫"
         AutomationPhase.REFRESHING -> "刷新"
@@ -757,6 +765,7 @@ class AutomationOverlay(
         const val EXPAND_DURATION_MS = 240L
         const val PROGRESS_DURATION_MS = 260L
         const val STOP_CONFIRMATION_MS = 3_000L
+        const val HOVER_EXIT_DELAY_MS = 140L
         const val VISION_ASSET_ROOT = "vision/cn_1920x1080"
 
         val COLOR_SURFACE = 0xFFFFFFFF.toInt()

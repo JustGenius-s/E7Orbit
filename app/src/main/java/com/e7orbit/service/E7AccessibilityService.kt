@@ -70,10 +70,6 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
             delay(MIN_CAPTURE_INTERVAL_MS - elapsed)
         }
 
-        withContext(Dispatchers.Main.immediate) {
-            overlay?.setCaptureHidden(true)
-        }
-        delay(OVERLAY_SETTLE_MS)
         try {
             AppGraph.projectionCapture.capture().also { frame ->
                 AppGraph.logger.debug(
@@ -81,14 +77,11 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
                     "sequence" to frame.sequence,
                     "width" to frame.width,
                     "height" to frame.height,
-                    "overlayHidden" to true,
+                    "overlayHidden" to false,
                 )
             }
         } finally {
             lastCaptureAt = SystemClock.elapsedRealtime()
-            withContext(Dispatchers.Main.immediate) {
-                overlay?.setCaptureHidden(false)
-            }
         }
     }
 
@@ -169,7 +162,6 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
 
     private companion object {
         const val MIN_CAPTURE_INTERVAL_MS = 360L
-        const val OVERLAY_SETTLE_MS = 48L
         const val TAP_DURATION_MS = 80L
     }
 }

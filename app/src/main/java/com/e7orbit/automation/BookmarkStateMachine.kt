@@ -267,8 +267,8 @@ class BookmarkStateMachine(
             } ?: return@forEach
 
             publish(
-                AutomationPhase.VERIFYING_PURCHASE,
-                "二次确认${currentTarget.type.displayName()}",
+                AutomationPhase.PURCHASING,
+                "购买${currentTarget.type.displayName()}",
                 currentTarget.confidence,
             )
             requireGesture(
@@ -306,6 +306,11 @@ class BookmarkStateMachine(
                 else -> error("不可达的购买状态")
             }
 
+            publish(
+                AutomationPhase.VERIFYING_PURCHASE,
+                "确认${currentTarget.type.displayName()}",
+                currentTarget.confidence,
+            )
             val verification = captureChecked(gateway).use { frame ->
                 vision.verifyPurchase(frame, currentTarget)
             }

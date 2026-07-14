@@ -8,10 +8,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -21,10 +20,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -47,6 +44,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -54,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.e7orbit.AppGraph
+import com.e7orbit.R
 import com.e7orbit.capture.MediaProjectionCaptureService
 import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.AutomationStatus
@@ -153,8 +153,6 @@ private fun OrbitDashboard(
                 .padding(contentPadding)
                 .padding(horizontal = 32.dp, vertical = 20.dp),
         ) {
-            Header(status = state.automation)
-            Spacer(Modifier.height(18.dp))
             Row(
                 modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -200,72 +198,6 @@ private fun OrbitDashboard(
 }
 
 @Composable
-private fun Header(status: AutomationStatus) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surface)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                "E7",
-                fontWeight = FontWeight.Black,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        Spacer(Modifier.width(14.dp))
-        Column {
-            Text(
-                text = "E7 Orbit",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "国服 · MuMu 12 · 1920×1080",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        StatusPill(status)
-    }
-}
-
-@Composable
-private fun StatusPill(status: AutomationStatus) {
-    val color = when (status.phase) {
-        AutomationPhase.COMPLETED -> OrbitSuccess
-        AutomationPhase.ERROR -> MaterialTheme.colorScheme.error
-        AutomationPhase.PAUSED -> OrbitWarning
-        AutomationPhase.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant
-        else -> MaterialTheme.colorScheme.onSurface
-    }
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(50))
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(color),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(status.phase.label(), color = color, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-@Composable
 private fun AutomationCard(
     config: RunConfig,
     canStart: Boolean,
@@ -279,15 +211,23 @@ private fun AutomationCard(
     onStop: () -> Unit,
 ) {
     OrbitCard {
-        Text(
-            "秘密商店自动化",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            "进入秘密商店后自动识别、二次确认购买并刷新。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Image(
+                painter = painterResource(R.drawable.ic_secret_shop),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .width(38.dp)
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(7.dp)),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "自动神秘商店",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+        }
         Spacer(Modifier.height(14.dp))
         ToggleRow(
             title = "购买誓约书签",
@@ -415,16 +355,6 @@ private fun EnvironmentCard(
             "1920×1080 横屏",
             environment.resolutionReady,
             "${environment.width}×${environment.height}",
-        )
-        CheckRow("OpenCV 已就绪", environment.openCvReady)
-        CheckRow(
-            "识图模板",
-            environment.templatesReady,
-            if (environment.templatesReady) {
-                "已加载"
-            } else {
-                "缺少 ${environment.missingTemplates.size} 项"
-            },
         )
         if (!environment.accessibilityEnabled) {
             Spacer(Modifier.height(10.dp))
@@ -592,20 +522,6 @@ private fun whiteButtonBorder(danger: Boolean = false) = BorderStroke(
     1.dp,
     if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant,
 )
-
-private fun AutomationPhase.label(): String = when (this) {
-    AutomationPhase.IDLE -> "待机"
-    AutomationPhase.WAITING_FOR_SERVICE -> "等待服务"
-    AutomationPhase.WAITING_FOR_SHOP -> "等待秘密商店"
-    AutomationPhase.SCANNING_TOP -> "扫描上半页"
-    AutomationPhase.VERIFYING_PURCHASE -> "确认购买"
-    AutomationPhase.SCANNING_BOTTOM -> "扫描下半页"
-    AutomationPhase.REFRESHING -> "刷新中"
-    AutomationPhase.WAITING_FOR_REFRESH -> "等待加载"
-    AutomationPhase.PAUSED -> "已暂停"
-    AutomationPhase.COMPLETED -> "已完成"
-    AutomationPhase.ERROR -> "异常停止"
-}
 
 private fun formatDuration(durationMs: Long): String {
     val totalSeconds = durationMs.coerceAtLeast(0L) / 1000
