@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.milliseconds
 import androidx.core.graphics.createBitmap
 
@@ -154,22 +154,21 @@ class MediaProjectionCaptureService : Service() {
         val reader = imageReader
             ?: throw ScreenCaptureException("MediaProjection 尚未就绪")
         val image = acquireLatestImage(reader)
-        try {
+        image.use { image ->
             image.toScreenFrame(sequence.incrementAndGet())
-        } finally {
-            image.close()
         }
     }
 
     private suspend fun acquireLatestImage(reader: ImageReader): Image {
         reader.acquireLatestImage()?.let { return it }
-        return withTimeout(CAPTURE_TIMEOUT_MS.milliseconds) {
-            while (true) {
+        var frame: Image? = null
+        withTimeoutOrNull(CAPTURE_TIMEOUT_MS.milliseconds) {
+            while (frame == null) {
                 imageSignal.receive()
-                reader.acquireLatestImage()?.let { return@withTimeout it }
+                frame = reader.acquireLatestImage()
             }
-            throw ScreenCaptureException("等待 MediaProjection 帧超时")
         }
+        return frame ?: throw ScreenCaptureException("等待 MediaProjection 帧超时")
     }
 
     private fun Image.toScreenFrame(frameSequence: Long): ScreenFrame {

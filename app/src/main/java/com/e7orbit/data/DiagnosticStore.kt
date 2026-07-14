@@ -37,9 +37,4 @@ class DiagnosticStore(
         output
     }
 
-    fun latestFiles(limit: Int = 10): List<File> =
-        directory.listFiles()
-            ?.sortedByDescending(File::lastModified)
-            ?.take(limit)
-            .orEmpty()
 }

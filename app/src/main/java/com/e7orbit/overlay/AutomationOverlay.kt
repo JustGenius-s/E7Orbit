@@ -778,13 +778,12 @@ class AutomationOverlay(
         const val HOVER_EXIT_DELAY_MS = 140L
         const val VISION_ASSET_ROOT = "vision/cn_1920x1080"
 
-        val COLOR_SURFACE = 0xFFFFFFFF.toInt()
-        val COLOR_ON_SURFACE = 0xFF1B1B1B.toInt()
-        val COLOR_ON_SURFACE_VARIANT = 0xFF5F5F5F.toInt()
-        val COLOR_OUTLINE = 0xFFDEDEDE.toInt()
-        val COLOR_PROGRESS_TRACK = 0xFFEBEBEB.toInt()
-        val COLOR_SUCCESS = 0xFF247A52.toInt()
-        val COLOR_WARNING = 0xFF8A5A00.toInt()
-        val COLOR_ERROR = 0xFFBA1A1A.toInt()
+        const val COLOR_SURFACE = 0xFFFFFFFF.toInt()
+        const val COLOR_ON_SURFACE = 0xFF1B1B1B.toInt()
+        const val COLOR_OUTLINE = 0xFFDEDEDE.toInt()
+        const val COLOR_PROGRESS_TRACK = 0xFFEBEBEB.toInt()
+        const val COLOR_SUCCESS = 0xFF247A52.toInt()
+        const val COLOR_WARNING = 0xFF8A5A00.toInt()
+        const val COLOR_ERROR = 0xFFBA1A1A.toInt()
     }
 }

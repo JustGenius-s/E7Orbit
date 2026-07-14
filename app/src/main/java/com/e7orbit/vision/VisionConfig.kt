@@ -1,6 +1,5 @@
 package com.e7orbit.vision
 
-import com.e7orbit.model.ScreenPoint
 import com.e7orbit.model.ScreenRect
 import kotlinx.serialization.Serializable
 
@@ -20,9 +19,7 @@ data class VisionConfig(
 data class PointConfig(
     val x: Int,
     val y: Int,
-) {
-    fun toScreenPoint(): ScreenPoint = ScreenPoint(x, y)
-}
+)
 
 @Serializable
 data class RectConfig(
@@ -57,17 +54,4 @@ object TemplateIds {
     const val CONFIRM_REFRESH = "confirm_refresh"
     const val RESOURCE_INSUFFICIENT = "resource_insufficient"
 
-    val all = setOf(
-        SHOP_ANCHOR,
-        COVENANT_ITEM,
-        MYSTIC_ITEM,
-        PURCHASE_BUTTON,
-        COVENANT_CONFIRM,
-        MYSTIC_CONFIRM,
-        CONFIRM_PURCHASE,
-        REFRESH_BUTTON,
-        REFRESH_DIALOG,
-        CONFIRM_REFRESH,
-        RESOURCE_INSUFFICIENT,
-    )
 }

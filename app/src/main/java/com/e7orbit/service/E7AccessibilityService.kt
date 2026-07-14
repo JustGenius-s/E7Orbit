@@ -2,6 +2,7 @@ package com.e7orbit.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.annotation.SuppressLint
 import android.graphics.Path
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
@@ -25,6 +26,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 
+@SuppressLint("AccessibilityPolicy")
 class E7AccessibilityService : AccessibilityService(), ScreenGateway {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val captureMutex = Mutex()

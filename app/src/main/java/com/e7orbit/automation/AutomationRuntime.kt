@@ -21,7 +21,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -223,7 +222,7 @@ class AutomationRuntime(
                 config = config,
                 gateway = gateway,
                 awaitRunPermission = {
-                    paused.filter { isPaused -> !isPaused }.first()
+                    paused.first { isPaused -> !isPaused }
                 },
                 onStatus = { phase, stats, message, confidence ->
                     logger.debug(

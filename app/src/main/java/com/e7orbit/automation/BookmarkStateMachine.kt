@@ -8,7 +8,6 @@ import com.e7orbit.model.COVENANT_BOOKMARK_GOLD_COST
 import com.e7orbit.model.GestureResult
 import com.e7orbit.model.ItemType
 import com.e7orbit.model.MYSTIC_MEDAL_GOLD_COST
-import com.e7orbit.model.PurchaseTarget
 import com.e7orbit.model.REFERENCE_HEIGHT
 import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.RunConfig
@@ -22,6 +21,7 @@ import com.e7orbit.vision.PointConfig
 import com.e7orbit.vision.VisionConfig
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.milliseconds
 
 data class MachineResult(
     val reason: StopReason,
@@ -599,6 +599,6 @@ object SystemAutomationClock : AutomationClock {
     override fun elapsedRealtime(): Long = SystemClock.elapsedRealtime()
 
     override suspend fun delay(durationMs: Long) {
-        kotlinx.coroutines.delay(durationMs)
+        kotlinx.coroutines.delay(durationMs.milliseconds)
     }
 }
