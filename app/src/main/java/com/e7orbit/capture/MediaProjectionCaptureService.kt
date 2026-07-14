@@ -31,6 +31,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.milliseconds
+import androidx.core.graphics.createBitmap
 
 class MediaProjectionCaptureService : Service() {
     private val captureMutex = Mutex()
@@ -161,7 +163,7 @@ class MediaProjectionCaptureService : Service() {
 
     private suspend fun acquireLatestImage(reader: ImageReader): Image {
         reader.acquireLatestImage()?.let { return it }
-        return withTimeout(CAPTURE_TIMEOUT_MS) {
+        return withTimeout(CAPTURE_TIMEOUT_MS.milliseconds) {
             while (true) {
                 imageSignal.receive()
                 reader.acquireLatestImage()?.let { return@withTimeout it }
@@ -183,11 +185,7 @@ class MediaProjectionCaptureService : Service() {
         val contentHeight = height
         val rowPadding = (rowStride - pixelStride * contentWidth).coerceAtLeast(0)
         val paddedWidth = contentWidth + rowPadding / pixelStride
-        val padded = Bitmap.createBitmap(
-            paddedWidth,
-            contentHeight,
-            Bitmap.Config.ARGB_8888,
-        )
+        val padded = createBitmap(paddedWidth, contentHeight)
         padded.copyPixelsFromBuffer(plane.buffer)
         val bitmap = if (paddedWidth == contentWidth) {
             padded

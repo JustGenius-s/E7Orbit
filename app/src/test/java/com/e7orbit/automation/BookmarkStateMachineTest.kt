@@ -92,6 +92,7 @@ class BookmarkStateMachineTest {
 
         assertTrue(result.successful)
         assertEquals(1, result.stats.covenantBookmarksBought)
+        assertEquals(5, result.stats.covenantBookmarksGained)
         assertEquals(1, result.stats.shopPagesScanned)
         assertEquals(184_000L, result.stats.goldSpent)
         assertEquals(100.0, result.stats.covenantRatePercent, 0.001)

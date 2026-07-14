@@ -9,6 +9,8 @@ const val REFERENCE_HEIGHT = 1080
 const val E7_CN_PACKAGE = "com.zlongame.cn.epicseven"
 const val COVENANT_BOOKMARK_GOLD_COST = 184_000L
 const val MYSTIC_MEDAL_GOLD_COST = 280_000L
+const val COVENANT_BOOKMARKS_PER_PURCHASE = 5
+const val MYSTIC_MEDALS_PER_PURCHASE = 50
 
 @Serializable
 data class RunConfig(
@@ -47,6 +49,12 @@ data class RunStats(
 
     val mysticRatePercent: Double
         get() = ratePercent(mysticMedalsBought)
+
+    val covenantBookmarksGained: Int
+        get() = covenantBookmarksBought * COVENANT_BOOKMARKS_PER_PURCHASE
+
+    val mysticMedalsGained: Int
+        get() = mysticMedalsBought * MYSTIC_MEDALS_PER_PURCHASE
 
     private fun ratePercent(count: Int): Double =
         if (shopPagesScanned == 0) 0.0 else count * 100.0 / shopPagesScanned
