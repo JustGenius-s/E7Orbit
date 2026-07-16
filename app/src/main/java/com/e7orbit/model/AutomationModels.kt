@@ -162,6 +162,7 @@ data class PurchaseTarget(
 )
 
 enum class ShopPage {
+    LOBBY,
     SHOP,
     PURCHASE_CONFIRMATION,
     REFRESH_CONFIRMATION,
@@ -170,6 +171,7 @@ enum class ShopPage {
 }
 
 enum class ShopAction {
+    OPEN_SECRET_SHOP,
     CONFIRM_PURCHASE,
     REFRESH,
     CONFIRM_REFRESH,

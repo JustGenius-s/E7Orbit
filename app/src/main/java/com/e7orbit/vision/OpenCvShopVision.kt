@@ -41,6 +41,7 @@ class OpenCvShopVision(
         val purchase = bestMatch(source, TemplateIds.CONFIRM_PURCHASE)
         val refresh = bestMatch(source, TemplateIds.REFRESH_DIALOG)
         val shop = bestMatch(source, TemplateIds.SHOP_ANCHOR)
+        val lobby = bestMatch(source, TemplateIds.SHOP_LOBBY_SECRET_SHOP)
         val page = when {
             resource.matched ->
                 ShopPage.RESOURCE_INSUFFICIENT
@@ -54,6 +55,9 @@ class OpenCvShopVision(
             shop.matched ->
                 ShopPage.SHOP
 
+            lobby.matched ->
+                ShopPage.LOBBY
+
             else -> ShopPage.UNKNOWN
         }
         logger.debug(
@@ -61,6 +65,7 @@ class OpenCvShopVision(
             "sequence" to frame.sequence,
             "page" to page,
             "shop" to shop.confidence,
+            "lobby" to lobby.confidence,
             "purchase" to purchase.confidence,
             "refresh" to refresh.confidence,
             "resource" to resource.confidence,
@@ -167,6 +172,7 @@ class OpenCvShopVision(
     ): MatchResult {
         val match = withSource(frame) { source ->
             val template = when (action) {
+                ShopAction.OPEN_SECRET_SHOP -> TemplateIds.SHOP_LOBBY_SECRET_SHOP
                 ShopAction.CONFIRM_PURCHASE -> TemplateIds.CONFIRM_PURCHASE
                 ShopAction.REFRESH -> TemplateIds.REFRESH_BUTTON
                 ShopAction.CONFIRM_REFRESH -> TemplateIds.CONFIRM_REFRESH

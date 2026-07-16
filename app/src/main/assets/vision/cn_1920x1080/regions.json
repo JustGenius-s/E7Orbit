@@ -12,6 +12,12 @@
   },
   "templates": [
     {
+      "id": "shop_lobby_secret_shop",
+      "file": "shop_lobby_secret_shop.png",
+      "region": { "left": 0, "top": 190, "right": 130, "bottom": 330 },
+      "threshold": 0.84
+    },
+    {
       "id": "shop_anchor",
       "file": "shop_anchor.png",
       "region": { "left": 0, "top": 0, "right": 250, "bottom": 80 },

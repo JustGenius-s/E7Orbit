@@ -23,6 +23,37 @@ import org.junit.Test
 
 class BookmarkStateMachineTest {
     @Test
+    fun entersSecretShopFromLobbyBeforeRefreshing() = runTest {
+        val vision = FakeVision(
+            pages = listOf(
+                ShopPage.LOBBY,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.REFRESH_CONFIRMATION,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+            ),
+            targets = listOf(emptyList(), emptyList()),
+        )
+        val gateway = FakeGateway()
+
+        val result = machine(vision).run(
+            config = RunConfig(maxRefreshes = 1),
+            gateway = gateway,
+            awaitRunPermission = {},
+            onStatus = { _, _, _, _ -> },
+            onDiagnostic = { _, _ -> },
+        )
+
+        assertTrue(result.successful)
+        assertEquals(ShopAction.OPEN_SECRET_SHOP, vision.actions.first())
+        assertEquals(3, gateway.taps)
+        assertEquals(1, gateway.swipes)
+    }
+
+    @Test
     fun completesOneRefreshWhenNoTargetExists() = runTest {
         val vision = FakeVision(
             pages = listOf(
@@ -264,6 +295,7 @@ private class FakeVision(
 ) : ShopVision {
     private val pages = ArrayDeque(pages)
     private val targets = ArrayDeque(targets)
+    val actions = mutableListOf<ShopAction>()
 
     override fun health(): VisionHealth = VisionHealth(
         openCvReady = true,
@@ -292,11 +324,14 @@ private class FakeVision(
     override suspend fun findAction(
         frame: ScreenFrame,
         action: ShopAction,
-    ): MatchResult = MatchResult(
-        matched = true,
-        confidence = 0.99,
-        bounds = ScreenRect(1000, 700, 1200, 800),
-    )
+    ): MatchResult {
+        actions += action
+        return MatchResult(
+            matched = true,
+            confidence = 0.99,
+            bounds = ScreenRect(1000, 700, 1200, 800),
+        )
+    }
 }
 
 private class FakeClock : AutomationClock {

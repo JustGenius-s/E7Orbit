@@ -42,6 +42,7 @@ data class TemplateConfig(
 )
 
 object TemplateIds {
+    const val SHOP_LOBBY_SECRET_SHOP = "shop_lobby_secret_shop"
     const val SHOP_ANCHOR = "shop_anchor"
     const val COVENANT_ITEM = "covenant_item"
     const val MYSTIC_ITEM = "mystic_item"

@@ -139,7 +139,7 @@ class AutomationRuntime(
                 phase = AutomationPhase.WAITING_FOR_SHOP,
                 config = normalized,
                 stats = RunStats(startedAtElapsedMs = clock.elapsedRealtime()),
-                message = "请进入秘密商店",
+                message = "等待主页或秘密商店",
                 serviceReady = true,
                 templatesReady = vision.health().isReady,
             )

@@ -65,15 +65,47 @@ class BookmarkStateMachine(
         }
 
         return try {
-            publish(AutomationPhase.WAITING_FOR_SHOP, "请进入秘密商店")
-            waitForPage(
-                expected = ShopPage.SHOP,
-                timeoutMs = WAIT_FOR_SHOP_TIMEOUT_MS,
-                consecutiveMatches = 2,
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
-                onDiagnostic = onDiagnostic,
-            )
+            publish(AutomationPhase.WAITING_FOR_SHOP, "等待主页或秘密商店")
+            when (
+                waitForAnyPage(
+                    expected = setOf(ShopPage.LOBBY, ShopPage.SHOP),
+                    timeoutMs = WAIT_FOR_SHOP_TIMEOUT_MS,
+                    gateway = gateway,
+                    awaitRunPermission = awaitRunPermission,
+                    onDiagnostic = onDiagnostic,
+                )
+            ) {
+                ShopPage.LOBBY -> {
+                    publish(AutomationPhase.WAITING_FOR_SHOP, "从主页进入秘密商店")
+                    tapAction(
+                        action = ShopAction.OPEN_SECRET_SHOP,
+                        gateway = gateway,
+                        awaitRunPermission = awaitRunPermission,
+                        failureMessage = "未找到主页秘密商店入口",
+                    )
+                    waitForPage(
+                        expected = ShopPage.SHOP,
+                        timeoutMs = PAGE_TIMEOUT_MS,
+                        consecutiveMatches = 2,
+                        gateway = gateway,
+                        awaitRunPermission = awaitRunPermission,
+                        onDiagnostic = onDiagnostic,
+                    )
+                }
+
+                ShopPage.SHOP -> {
+                    waitForPage(
+                        expected = ShopPage.SHOP,
+                        timeoutMs = PAGE_TIMEOUT_MS,
+                        consecutiveMatches = 1,
+                        gateway = gateway,
+                        awaitRunPermission = awaitRunPermission,
+                        onDiagnostic = onDiagnostic,
+                    )
+                }
+
+                else -> error("不可达的商店入口状态")
+            }
 
             while (stats.completedRefreshes < config.maxRefreshes) {
                 awaitRunPermission()
