@@ -53,5 +53,15 @@ object TemplateIds {
     const val REFRESH_DIALOG = "refresh_dialog"
     const val CONFIRM_REFRESH = "confirm_refresh"
     const val RESOURCE_INSUFFICIENT = "resource_insufficient"
-
+    const val HUNT_LOBBY_BATTLE = "hunt_lobby_battle"
+    const val HUNT_BATTLE_MENU = "hunt_battle_menu"
+    const val HUNT_SELECTION = "hunt_selection"
+    const val HUNT_QUICK_BATTLE = "hunt_quick_battle"
+    const val HUNT_TEAM_READY = "hunt_team_ready"
+    const val HUNT_REPEAT_ENABLED = "hunt_repeat_enabled"
+    const val HUNT_BATTLE_CONTROLS = "hunt_battle_controls"
+    const val HUNT_DELEGATE_CONFIRM = "hunt_delegate_confirm"
+    const val HUNT_MANAGED_STATUS = "hunt_managed_status"
+    const val HUNT_MANAGED_COMPLETE = "hunt_managed_complete"
+    const val HUNT_MANAGED_PANEL = "hunt_managed_panel"
 }

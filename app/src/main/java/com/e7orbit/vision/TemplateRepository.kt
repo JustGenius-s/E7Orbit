@@ -39,6 +39,10 @@ class TemplateRepository(
 
     fun health(): VisionHealth {
         val requiredIds = config.templates.filter(TemplateConfig::required).map(TemplateConfig::id)
+        return health(requiredIds)
+    }
+
+    fun health(requiredIds: Collection<String>): VisionHealth {
         val missing = requiredIds.filterNot(templates::containsKey)
         return VisionHealth(
             openCvReady = openCvReady,

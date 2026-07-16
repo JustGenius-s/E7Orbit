@@ -3,11 +3,14 @@ package com.e7orbit
 import android.app.Application
 import android.content.Context
 import com.e7orbit.automation.AutomationRuntime
+import com.e7orbit.automation.AutomationRunCoordinator
+import com.e7orbit.automation.HuntRuntime
 import com.e7orbit.capture.ProjectionCaptureRepository
 import com.e7orbit.data.DiagnosticStore
 import com.e7orbit.data.SettingsRepository
 import com.e7orbit.logging.FileOrbitLogger
 import com.e7orbit.vision.OpenCvShopVision
+import com.e7orbit.vision.OpenCvHuntVision
 import com.e7orbit.vision.TemplateRepository
 import org.opencv.android.OpenCVLoader
 
@@ -36,6 +39,8 @@ object AppGraph {
         private set
     lateinit var automationRuntime: AutomationRuntime
         private set
+    lateinit var huntRuntime: HuntRuntime
+        private set
 
     var openCvReady: Boolean = false
         private set
@@ -53,6 +58,7 @@ object AppGraph {
         settingsRepository = SettingsRepository(appContext)
         diagnosticStore = DiagnosticStore(appContext)
         templateRepository = TemplateRepository(appContext, openCvReady)
+        val runCoordinator = AutomationRunCoordinator()
         val vision = OpenCvShopVision(templateRepository, logger)
         automationRuntime = AutomationRuntime(
             vision = vision,
@@ -61,6 +67,16 @@ object AppGraph {
             diagnosticStore = diagnosticStore,
             logger = logger,
             captureReady = { projectionCapture.isReady.value },
+            runCoordinator = runCoordinator,
+        )
+        huntRuntime = HuntRuntime(
+            vision = OpenCvHuntVision(templateRepository, logger),
+            visionConfig = templateRepository.config,
+            settingsRepository = settingsRepository,
+            diagnosticStore = diagnosticStore,
+            logger = logger,
+            captureReady = { projectionCapture.isReady.value },
+            runCoordinator = runCoordinator,
         )
         initialized = true
     }
@@ -69,6 +85,7 @@ object AppGraph {
     fun close() {
         if (!initialized) return
         automationRuntime.shutdown()
+        huntRuntime.shutdown()
         templateRepository.close()
         logger.close()
         initialized = false

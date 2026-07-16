@@ -20,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -39,13 +40,20 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
         super.onServiceConnected()
         AppGraph.initialize(applicationContext)
         AppGraph.logger.info("service.connected")
-        overlay = AutomationOverlay(this, AppGraph.automationRuntime)
+        overlay = AutomationOverlay(
+            this,
+            AppGraph.automationRuntime,
+            AppGraph.huntRuntime,
+        )
         AppGraph.automationRuntime.attachGateway(this)
+        AppGraph.huntRuntime.attachGateway(this)
         statusJob?.cancel()
         statusJob = serviceScope.launch {
-            AppGraph.automationRuntime.status.collectLatest { status ->
-                overlay?.render(status)
-            }
+            combine(
+                AppGraph.automationRuntime.status,
+                AppGraph.huntRuntime.status,
+            ) { shop, hunt -> shop to hunt }
+                .collectLatest { (shop, hunt) -> overlay?.render(shop, hunt) }
         }
     }
 
@@ -54,6 +62,7 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
     override fun onInterrupt() {
         AppGraph.logger.warn("service.interrupted")
         AppGraph.automationRuntime.pause()
+        AppGraph.huntRuntime.pause()
     }
 
     override fun onDestroy() {
@@ -62,6 +71,7 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
         overlay?.destroy()
         overlay = null
         AppGraph.automationRuntime.detachGateway(this)
+        AppGraph.huntRuntime.detachGateway(this)
         serviceScope.cancel()
         super.onDestroy()
     }

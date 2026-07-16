@@ -13,6 +13,11 @@ import androidx.lifecycle.viewModelScope
 import com.e7orbit.AppGraph
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.E7_CN_PACKAGE
+import com.e7orbit.model.HuntConfig
+import com.e7orbit.model.HuntDifficulty
+import com.e7orbit.model.HuntEnergyRefill
+import com.e7orbit.model.HuntPhase
+import com.e7orbit.model.HuntStatus
 import com.e7orbit.model.REFERENCE_HEIGHT
 import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.RunConfig
@@ -46,7 +51,9 @@ data class EnvironmentStatus(
 
 data class MainUiState(
     val config: RunConfig = RunConfig(),
+    val huntConfig: HuntConfig = HuntConfig(),
     val automation: AutomationStatus = AutomationStatus(),
+    val huntAutomation: HuntStatus = HuntStatus(),
     val environment: EnvironmentStatus = EnvironmentStatus(),
     val lastSummary: RunSummary = RunSummary(),
 )
@@ -55,19 +62,28 @@ class MainViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
     private val runtime = AppGraph.automationRuntime
+    private val huntRuntime = AppGraph.huntRuntime
     private val settings = AppGraph.settingsRepository
     private val draftConfig = MutableStateFlow(RunConfig())
+    private val draftHuntConfig = MutableStateFlow(HuntConfig())
     private val environment = MutableStateFlow(readEnvironment())
+    private val runtimeStatuses = combine(
+        runtime.status,
+        huntRuntime.status,
+    ) { shop, hunt -> shop to hunt }
 
     val uiState: StateFlow<MainUiState> = combine(
         draftConfig,
-        runtime.status,
+        draftHuntConfig,
+        runtimeStatuses,
         environment,
         settings.lastSummary,
-    ) { config, automation, environmentStatus, lastSummary ->
+    ) { config, huntConfig, runtimes, environmentStatus, lastSummary ->
         MainUiState(
             config = config,
-            automation = automation,
+            huntConfig = huntConfig,
+            automation = runtimes.first,
+            huntAutomation = runtimes.second,
             environment = environmentStatus,
             lastSummary = lastSummary,
         )
@@ -81,11 +97,16 @@ class MainViewModel(
         viewModelScope.launch {
             settings.config.collect { saved -> draftConfig.value = saved }
         }
+        viewModelScope.launch {
+            settings.huntConfig.collect { saved -> draftHuntConfig.value = saved }
+        }
         runtime.refreshHealth()
+        huntRuntime.refreshHealth()
     }
 
     fun refreshEnvironment() {
         runtime.refreshHealth()
+        huntRuntime.refreshHealth()
         environment.value = readEnvironment()
     }
 
@@ -107,12 +128,39 @@ class MainViewModel(
         )
     }
 
+    fun setHuntDifficulty(difficulty: HuntDifficulty) {
+        updateHuntConfig { copy(difficulty = difficulty) }
+    }
+
+    fun setHuntManagedBattle(enabled: Boolean) {
+        updateHuntConfig { copy(managedBattle = enabled) }
+    }
+
+    fun setHuntRunCount(value: Int) {
+        updateHuntConfig { copy(runCount = value.coerceIn(1, 10_000)) }
+    }
+
+    fun setHuntEnergyRefill(refill: HuntEnergyRefill) {
+        updateHuntConfig { copy(energyRefill = refill) }
+    }
+
     fun prepareRun() {
         refreshEnvironment()
         viewModelScope.launch {
             val config = draftConfig.value.normalized()
             runtime.start(config)
             if (runtime.status.value.isRunning) {
+                launchGame()
+            }
+        }
+    }
+
+    fun prepareHunt() {
+        refreshEnvironment()
+        viewModelScope.launch {
+            val config = draftHuntConfig.value.normalized()
+            huntRuntime.start(config)
+            if (huntRuntime.status.value.isRunning) {
                 launchGame()
             }
         }
@@ -128,11 +176,27 @@ class MainViewModel(
 
     fun stop() = runtime.stop()
 
+    fun pauseOrResumeHunt() {
+        if (huntRuntime.status.value.phase == HuntPhase.PAUSED) {
+            huntRuntime.resume()
+        } else {
+            huntRuntime.pause()
+        }
+    }
+
+    fun stopHunt() = huntRuntime.stop()
+
     fun openAccessibilitySettings() {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         getApplication<Application>().startActivity(intent)
+    }
+
+    private fun updateHuntConfig(update: HuntConfig.() -> HuntConfig) {
+        val updated = draftHuntConfig.value.update().normalized()
+        draftHuntConfig.value = updated
+        viewModelScope.launch { settings.saveHuntConfig(updated) }
     }
 
     private fun launchGame() {

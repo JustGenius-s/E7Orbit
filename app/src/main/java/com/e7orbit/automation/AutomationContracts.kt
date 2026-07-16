@@ -2,6 +2,7 @@ package com.e7orbit.automation
 
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.GestureResult
+import com.e7orbit.model.HuntPage
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.PurchaseTarget
 import com.e7orbit.model.RunConfig
@@ -44,6 +45,13 @@ interface ShopVision {
         frame: ScreenFrame,
         action: ShopAction,
     ): MatchResult
+}
+
+interface HuntVision {
+    fun health(): VisionHealth
+    suspend fun detectPage(frame: ScreenFrame): HuntPage
+    suspend fun isManagedBattleEnabled(frame: ScreenFrame): Boolean
+    suspend fun managedProgressSignature(frame: ScreenFrame): Long
 }
 
 interface AutomationController {

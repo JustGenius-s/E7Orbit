@@ -19,8 +19,11 @@ import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import com.e7orbit.automation.AutomationRuntime
+import com.e7orbit.automation.HuntRuntime
 import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.AutomationStatus
+import com.e7orbit.model.HuntPhase
+import com.e7orbit.model.HuntStatus
 import com.e7orbit.ui.MainActivity
 import kotlin.math.PI
 import kotlin.math.cos
@@ -31,6 +34,7 @@ import kotlin.math.sin
 class AutomationOverlay(
     private val context: Context,
     private val runtime: AutomationRuntime,
+    private val huntRuntime: HuntRuntime,
 ) {
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val bubble = OrbitBubbleView(context)
@@ -56,12 +60,18 @@ class AutomationOverlay(
         bubble.elevation = dp(10).toFloat()
     }
 
-    fun render(status: AutomationStatus) {
-        if (status.phase == AutomationPhase.IDLE) {
+    fun render(
+        shopStatus: AutomationStatus,
+        huntStatus: HuntStatus,
+    ) {
+        if (
+            shopStatus.phase == AutomationPhase.IDLE &&
+            huntStatus.phase == HuntPhase.IDLE
+        ) {
             hide()
             return
         }
-        bubble.render(status)
+        bubble.render(shopStatus, huntStatus)
         show()
     }
 
@@ -144,17 +154,17 @@ class AutomationOverlay(
     }
 
     private fun requestStop() {
-        if (runtime.status.value.isTerminal) {
+        if (bubble.isActiveTerminal()) {
             stopConfirmationDeadline = 0L
             bubble.stopConfirmationPending = false
-            runtime.dismissTerminalStatus()
+            bubble.dismissActiveTerminal()
             return
         }
         val now = System.currentTimeMillis()
         if (now <= stopConfirmationDeadline) {
             stopConfirmationDeadline = 0L
             bubble.stopConfirmationPending = false
-            runtime.stop()
+            bubble.stopActive()
             return
         }
 
@@ -197,7 +207,9 @@ class AutomationOverlay(
         private val path = Path()
         private val covenantIcon = loadItemIcon("covenant_item.png")
         private val mysticIcon = loadItemIcon("mystic_item.png")
-        private var status = AutomationStatus()
+        private var shopStatus = AutomationStatus()
+        private var huntStatus = HuntStatus()
+        private var activeMode = OverlayMode.SHOP
         private var phaseProgress = 0f
         private var progressAnimator: ValueAnimator? = null
         private var touchStartRawX = 0f
@@ -217,16 +229,54 @@ class AutomationOverlay(
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         }
 
-        fun render(newStatus: AutomationStatus) {
-            status = newStatus
-            contentDescription = buildString {
-                append("E7 Orbit，已执行 ${newStatus.stats.completedRefreshes} 次")
-                append("，誓约书签增加 ${newStatus.stats.covenantBookmarksGained}")
-                append("，神秘奖牌增加 ${newStatus.stats.mysticMedalsGained}")
-                append("，金币消耗 ${newStatus.stats.goldSpent}")
+        fun render(
+            newShopStatus: AutomationStatus,
+            newHuntStatus: HuntStatus,
+        ) {
+            shopStatus = newShopStatus
+            huntStatus = newHuntStatus
+            activeMode = when {
+                newHuntStatus.isRunning || newHuntStatus.phase == HuntPhase.PAUSED ->
+                    OverlayMode.HUNT
+
+                newShopStatus.isRunning || newShopStatus.phase == AutomationPhase.PAUSED ->
+                    OverlayMode.SHOP
+
+                newHuntStatus.phase != HuntPhase.IDLE -> OverlayMode.HUNT
+                else -> OverlayMode.SHOP
             }
-            animatePhaseProgress(newStatus.phase.progress())
+            contentDescription = when (activeMode) {
+                OverlayMode.SHOP -> buildString {
+                    append("E7 Orbit，已执行 ${shopStatus.stats.completedRefreshes} 次")
+                    append("，誓约书签增加 ${shopStatus.stats.covenantBookmarksGained}")
+                    append("，神秘奖牌增加 ${shopStatus.stats.mysticMedalsGained}")
+                    append("，金币消耗 ${shopStatus.stats.goldSpent}")
+                }
+
+                OverlayMode.HUNT ->
+                    "E7 Orbit，讨伐 ${huntStatus.stats.completedRuns}/${huntStatus.config.runCount}"
+            }
+            animatePhaseProgress(activeProgress())
             invalidate()
+        }
+
+        fun isActiveTerminal(): Boolean = when (activeMode) {
+            OverlayMode.SHOP -> shopStatus.isTerminal
+            OverlayMode.HUNT -> huntStatus.isTerminal
+        }
+
+        fun dismissActiveTerminal() {
+            when (activeMode) {
+                OverlayMode.SHOP -> runtime.dismissTerminalStatus()
+                OverlayMode.HUNT -> huntRuntime.dismissTerminalStatus()
+            }
+        }
+
+        fun stopActive() {
+            when (activeMode) {
+                OverlayMode.SHOP -> runtime.stop()
+                OverlayMode.HUNT -> huntRuntime.stop()
+            }
         }
 
         fun destroy() {
@@ -332,7 +382,7 @@ class AutomationOverlay(
             strokePaint.strokeWidth = dpFloat(4f)
             canvas.drawCircle(centerX, centerY, ringRadius, strokePaint)
 
-            strokePaint.color = status.phase.phaseColor()
+            strokePaint.color = activePhaseColor()
             strokePaint.strokeWidth = dpFloat(4f)
             canvas.drawArc(
                 RectF(
@@ -348,9 +398,15 @@ class AutomationOverlay(
             )
 
             val centerText = if (expansion > 0.12f) {
-                "${status.stats.completedRefreshes}/${status.config.maxRefreshes}"
+                when (activeMode) {
+                    OverlayMode.SHOP ->
+                        "${shopStatus.stats.completedRefreshes}/${shopStatus.config.maxRefreshes}"
+
+                    OverlayMode.HUNT ->
+                        "${huntStatus.stats.completedRuns}/${huntStatus.config.runCount}"
+                }
             } else {
-                status.phase.bubbleLabel()
+                activeBubbleLabel()
             }
             textPaint.color = COLOR_ON_SURFACE
             textPaint.textAlign = Paint.Align.CENTER
@@ -373,6 +429,10 @@ class AutomationOverlay(
 
         private fun drawMetrics(canvas: Canvas) {
             if (expansion < 0.72f) return
+            if (activeMode == OverlayMode.HUNT) {
+                drawHuntMetrics(canvas)
+                return
+            }
             val alpha = (((expansion - 0.72f) / 0.28f) * 255).roundToInt().coerceIn(0, 255)
             val metricsLeft = compactSize + dpFloat(4f)
             val metricsRight = actionRect(ACTION_HOME).left - dpFloat(8f)
@@ -384,7 +444,7 @@ class AutomationOverlay(
                 type = MetricType.COVENANT,
                 left = metricsLeft,
                 width = cellWidth,
-                value = "+${status.stats.covenantBookmarksGained}",
+                value = "+${shopStatus.stats.covenantBookmarksGained}",
                 alpha = alpha,
                 centerY = centerY,
             )
@@ -393,7 +453,7 @@ class AutomationOverlay(
                 type = MetricType.MYSTIC,
                 left = metricsLeft + cellWidth,
                 width = cellWidth,
-                value = "+${status.stats.mysticMedalsGained}",
+                value = "+${shopStatus.stats.mysticMedalsGained}",
                 alpha = alpha,
                 centerY = centerY,
             )
@@ -402,10 +462,69 @@ class AutomationOverlay(
                 type = MetricType.GOLD,
                 left = metricsLeft + cellWidth * 2f,
                 width = cellWidth,
-                value = "-${formatNumber(status.stats.goldSpent)}",
+                value = "-${formatNumber(shopStatus.stats.goldSpent)}",
                 alpha = alpha,
                 centerY = centerY,
             )
+        }
+
+        private fun drawHuntMetrics(canvas: Canvas) {
+            val alpha = (((expansion - 0.72f) / 0.28f) * 255)
+                .roundToInt()
+                .coerceIn(0, 255)
+            val metricsLeft = compactSize + dpFloat(4f)
+            val metricsRight = actionRect(ACTION_HOME).left - dpFloat(8f)
+            val cellWidth = (metricsRight - metricsLeft) / 3f
+            val centerY = height / 2f
+            drawTextMetric(
+                canvas,
+                "完成",
+                huntStatus.stats.completedRuns.toString(),
+                metricsLeft,
+                cellWidth,
+                centerY,
+                alpha,
+            )
+            drawTextMetric(
+                canvas,
+                "目标",
+                huntStatus.config.runCount.toString(),
+                metricsLeft + cellWidth,
+                cellWidth,
+                centerY,
+                alpha,
+            )
+            drawTextMetric(
+                canvas,
+                "模式",
+                if (huntStatus.config.managedBattle) "托管" else "普通",
+                metricsLeft + cellWidth * 2f,
+                cellWidth,
+                centerY,
+                alpha,
+            )
+        }
+
+        private fun drawTextMetric(
+            canvas: Canvas,
+            label: String,
+            value: String,
+            left: Float,
+            width: Float,
+            centerY: Float,
+            alpha: Int,
+        ) {
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.alpha = alpha
+            textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+            textPaint.color = COLOR_ON_SURFACE_VARIANT
+            textPaint.textSize = dpFloat(9f)
+            canvas.drawText(label, left + width / 2f, centerY - dpFloat(5f), textPaint)
+            textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textPaint.color = COLOR_ON_SURFACE
+            textPaint.textSize = dpFloat(12f)
+            canvas.drawText(value, left + width / 2f, centerY + dpFloat(12f), textPaint)
+            textPaint.alpha = 255
         }
 
         private fun drawMetric(
@@ -582,7 +701,7 @@ class AutomationOverlay(
         private fun drawPauseOrPlayIcon(canvas: Canvas, rect: RectF, alpha: Int) {
             fillPaint.color = COLOR_ON_SURFACE
             fillPaint.alpha = alpha
-            if (status.phase == AutomationPhase.PAUSED || status.isTerminal) {
+            if (isActivePaused() || isActiveTerminal()) {
                 path.reset()
                 path.moveTo(rect.centerX() - dpFloat(4f), rect.centerY() - dpFloat(7f))
                 path.lineTo(rect.centerX() + dpFloat(7f), rect.centerY())
@@ -658,15 +777,56 @@ class AutomationOverlay(
                 actionRect(ACTION_HOME).contains(x, y) -> returnToApp()
                 actionRect(ACTION_PAUSE).contains(x, y) -> {
                     when {
-                        status.isTerminal -> runtime.restart()
-                        status.phase == AutomationPhase.PAUSED -> runtime.resume()
-                        else -> runtime.pause()
+                        isActiveTerminal() -> restartActive()
+                        isActivePaused() -> resumeActive()
+                        else -> pauseActive()
                     }
                 }
 
                 actionRect(ACTION_STOP).contains(x, y) -> requestStop()
                 x <= compactSize -> setExpanded(false)
             }
+        }
+
+        private fun isActivePaused(): Boolean = when (activeMode) {
+            OverlayMode.SHOP -> shopStatus.phase == AutomationPhase.PAUSED
+            OverlayMode.HUNT -> huntStatus.phase == HuntPhase.PAUSED
+        }
+
+        private fun restartActive() {
+            when (activeMode) {
+                OverlayMode.SHOP -> runtime.restart()
+                OverlayMode.HUNT -> huntRuntime.restart()
+            }
+        }
+
+        private fun pauseActive() {
+            when (activeMode) {
+                OverlayMode.SHOP -> runtime.pause()
+                OverlayMode.HUNT -> huntRuntime.pause()
+            }
+        }
+
+        private fun resumeActive() {
+            when (activeMode) {
+                OverlayMode.SHOP -> runtime.resume()
+                OverlayMode.HUNT -> huntRuntime.resume()
+            }
+        }
+
+        private fun activeProgress(): Float = when (activeMode) {
+            OverlayMode.SHOP -> shopStatus.phase.progress()
+            OverlayMode.HUNT -> huntStatus.phase.progress()
+        }
+
+        private fun activeBubbleLabel(): String = when (activeMode) {
+            OverlayMode.SHOP -> shopStatus.phase.bubbleLabel()
+            OverlayMode.HUNT -> huntStatus.phase.bubbleLabel()
+        }
+
+        private fun activePhaseColor(): Int = when (activeMode) {
+            OverlayMode.SHOP -> shopStatus.phase.phaseColor()
+            OverlayMode.HUNT -> huntStatus.phase.phaseColor()
         }
 
         private fun actionRect(action: Int): RectF {
@@ -682,7 +842,7 @@ class AutomationOverlay(
         }
 
         private fun animatePhaseProgress(target: Float) {
-            if (status.phase == AutomationPhase.PAUSED) return
+            if (isActivePaused()) return
             progressAnimator?.cancel()
             if (kotlin.math.abs(target - phaseProgress) < 0.001f) return
             progressAnimator = ValueAnimator.ofFloat(phaseProgress, target).apply {
@@ -754,6 +914,56 @@ class AutomationOverlay(
         else -> COLOR_ON_SURFACE
     }
 
+    private fun HuntPhase.progress(): Float = when (this) {
+        HuntPhase.IDLE -> 0f
+        HuntPhase.WAITING_FOR_LOBBY -> 0.05f
+        HuntPhase.OPENING_BATTLE -> 0.12f
+        HuntPhase.OPENING_HUNT -> 0.20f
+        HuntPhase.SELECTING_BOSS -> 0.28f
+        HuntPhase.SELECTING_DIFFICULTY -> 0.36f
+        HuntPhase.DISABLING_QUICK_BATTLE -> 0.44f
+        HuntPhase.CONFIGURING_MANAGED_BATTLE -> 0.52f
+        HuntPhase.STARTING_BATTLE -> 0.60f
+        HuntPhase.WAITING_FOR_BATTLE_CONTROLS -> 0.68f
+        HuntPhase.DELEGATING_BATTLE -> 0.76f
+        HuntPhase.CONFIRMING_DELEGATION -> 0.84f
+        HuntPhase.MANAGED_IN_LOBBY -> 0.94f
+        HuntPhase.PAUSED -> 0f
+        HuntPhase.COMPLETED -> 1f
+        HuntPhase.ERROR -> 1f
+    }
+
+    private fun HuntPhase.bubbleLabel(): String = when (this) {
+        HuntPhase.IDLE -> "待机"
+        HuntPhase.WAITING_FOR_LOBBY -> "大厅"
+        HuntPhase.OPENING_BATTLE -> "战斗"
+        HuntPhase.OPENING_HUNT -> "讨伐"
+        HuntPhase.SELECTING_BOSS -> "飞龙"
+        HuntPhase.SELECTING_DIFFICULTY -> "难度"
+        HuntPhase.DISABLING_QUICK_BATTLE -> "快战"
+        HuntPhase.CONFIGURING_MANAGED_BATTLE -> "托管"
+        HuntPhase.STARTING_BATTLE -> "开始"
+        HuntPhase.WAITING_FOR_BATTLE_CONTROLS -> "加载"
+        HuntPhase.DELEGATING_BATTLE -> "转交"
+        HuntPhase.CONFIRMING_DELEGATION -> "确认"
+        HuntPhase.MANAGED_IN_LOBBY -> "挂机"
+        HuntPhase.PAUSED -> "暂停"
+        HuntPhase.COMPLETED -> "完成"
+        HuntPhase.ERROR -> "异常"
+    }
+
+    private fun HuntPhase.phaseColor(): Int = when (this) {
+        HuntPhase.COMPLETED -> COLOR_SUCCESS
+        HuntPhase.ERROR -> COLOR_ERROR
+        HuntPhase.PAUSED -> COLOR_WARNING
+        else -> COLOR_ON_SURFACE
+    }
+
+    private enum class OverlayMode {
+        SHOP,
+        HUNT,
+    }
+
     private enum class MetricType {
         COVENANT,
         MYSTIC,
@@ -780,6 +990,7 @@ class AutomationOverlay(
 
         const val COLOR_SURFACE = 0xFFFFFFFF.toInt()
         const val COLOR_ON_SURFACE = 0xFF1B1B1B.toInt()
+        const val COLOR_ON_SURFACE_VARIANT = 0xFF5F5F5F.toInt()
         const val COLOR_OUTLINE = 0xFFDEDEDE.toInt()
         const val COLOR_PROGRESS_TRACK = 0xFFEBEBEB.toInt()
         const val COLOR_SUCCESS = 0xFF247A52.toInt()

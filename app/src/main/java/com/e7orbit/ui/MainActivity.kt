@@ -57,6 +57,11 @@ import com.e7orbit.R
 import com.e7orbit.capture.MediaProjectionCaptureService
 import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.AutomationStatus
+import com.e7orbit.model.HuntConfig
+import com.e7orbit.model.HuntDifficulty
+import com.e7orbit.model.HuntEnergyRefill
+import com.e7orbit.model.HuntPhase
+import com.e7orbit.model.HuntStatus
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
 import com.e7orbit.ui.theme.E7OrbitTheme
@@ -69,6 +74,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()
+    private var pendingAutomation = PendingAutomation.SHOP
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -88,7 +94,7 @@ class MainActivity : ComponentActivity() {
             } != null
             viewModel.refreshEnvironment()
             if (ready) {
-                viewModel.prepareRun()
+                preparePendingAutomation()
             } else if (!ready) {
                 AppGraph.logger.error("projection.start_timeout")
             }
@@ -106,10 +112,17 @@ class MainActivity : ComponentActivity() {
                     onBuyMysticChanged = viewModel::setBuyMystic,
                     onMaxRefreshChanged = viewModel::setMaxRefreshes,
                     onThresholdChanged = viewModel::setMatchThreshold,
+                    onHuntDifficultyChanged = viewModel::setHuntDifficulty,
+                    onHuntManagedBattleChanged = viewModel::setHuntManagedBattle,
+                    onHuntRunCountChanged = viewModel::setHuntRunCount,
+                    onHuntEnergyRefillChanged = viewModel::setHuntEnergyRefill,
                     onEnableAccessibility = viewModel::openAccessibilitySettings,
-                    onPrepare = ::requestProjection,
+                    onPrepare = { requestProjection(PendingAutomation.SHOP) },
                     onPauseOrResume = viewModel::pauseOrResume,
                     onStop = viewModel::stop,
+                    onPrepareHunt = { requestProjection(PendingAutomation.HUNT) },
+                    onPauseOrResumeHunt = viewModel::pauseOrResumeHunt,
+                    onStopHunt = viewModel::stopHunt,
                 )
             }
         }
@@ -120,13 +133,26 @@ class MainActivity : ComponentActivity() {
         viewModel.refreshEnvironment()
     }
 
-    private fun requestProjection() {
+    private fun requestProjection(automation: PendingAutomation) {
+        pendingAutomation = automation
         if (AppGraph.projectionCapture.isReady.value) {
-            viewModel.prepareRun()
+            preparePendingAutomation()
             return
         }
         val manager = getSystemService(MediaProjectionManager::class.java)
         projectionLauncher.launch(manager.createScreenCaptureIntent())
+    }
+
+    private fun preparePendingAutomation() {
+        when (pendingAutomation) {
+            PendingAutomation.SHOP -> viewModel.prepareRun()
+            PendingAutomation.HUNT -> viewModel.prepareHunt()
+        }
+    }
+
+    private enum class PendingAutomation {
+        SHOP,
+        HUNT,
     }
 }
 
@@ -137,10 +163,17 @@ private fun OrbitDashboard(
     onBuyMysticChanged: (Boolean) -> Unit,
     onMaxRefreshChanged: (Int) -> Unit,
     onThresholdChanged: (Double) -> Unit,
+    onHuntDifficultyChanged: (HuntDifficulty) -> Unit,
+    onHuntManagedBattleChanged: (Boolean) -> Unit,
+    onHuntRunCountChanged: (Int) -> Unit,
+    onHuntEnergyRefillChanged: (HuntEnergyRefill) -> Unit,
     onEnableAccessibility: () -> Unit,
     onPrepare: () -> Unit,
     onPauseOrResume: () -> Unit,
     onStop: () -> Unit,
+    onPrepareHunt: () -> Unit,
+    onPauseOrResumeHunt: () -> Unit,
+    onStopHunt: () -> Unit,
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -168,7 +201,9 @@ private fun OrbitDashboard(
                         config = state.config,
                         canStart = state.environment.canPrepare &&
                             state.config.hasPurchaseTarget &&
-                            !state.automation.isRunning,
+                            !state.automation.isRunning &&
+                            !state.huntAutomation.isRunning &&
+                            state.huntAutomation.phase != HuntPhase.PAUSED,
                         automation = state.automation,
                         onBuyCovenantChanged = onBuyCovenantChanged,
                         onBuyMysticChanged = onBuyMysticChanged,
@@ -177,6 +212,23 @@ private fun OrbitDashboard(
                         onPrepare = onPrepare,
                         onPauseOrResume = onPauseOrResume,
                         onStop = onStop,
+                    )
+                    HuntCard(
+                        config = state.huntConfig,
+                        automation = state.huntAutomation,
+                        canStart = state.environment.canPrepare &&
+                            state.huntAutomation.templatesReady &&
+                            !state.huntAutomation.isRunning &&
+                            state.huntAutomation.phase != HuntPhase.PAUSED &&
+                            !state.automation.isRunning &&
+                            state.automation.phase != AutomationPhase.PAUSED,
+                        onDifficultyChanged = onHuntDifficultyChanged,
+                        onManagedBattleChanged = onHuntManagedBattleChanged,
+                        onRunCountChanged = onHuntRunCountChanged,
+                        onEnergyRefillChanged = onHuntEnergyRefillChanged,
+                        onPrepare = onPrepareHunt,
+                        onPauseOrResume = onPauseOrResumeHunt,
+                        onStop = onStopHunt,
                     )
                 }
                 Column(
@@ -333,6 +385,137 @@ private fun AutomationCard(
 }
 
 @Composable
+private fun HuntCard(
+    config: HuntConfig,
+    automation: HuntStatus,
+    canStart: Boolean,
+    onDifficultyChanged: (HuntDifficulty) -> Unit,
+    onManagedBattleChanged: (Boolean) -> Unit,
+    onRunCountChanged: (Int) -> Unit,
+    onEnergyRefillChanged: (HuntEnergyRefill) -> Unit,
+    onPrepare: () -> Unit,
+    onPauseOrResume: () -> Unit,
+    onStop: () -> Unit,
+) {
+    OrbitCard {
+        Text(
+            "自动讨伐",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.height(14.dp))
+        Text("讨伐难度", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            HuntDifficulty.entries.forEach { difficulty ->
+                ChoiceButton(
+                    label = difficulty.displayName(),
+                    selected = config.difficulty == difficulty,
+                    onClick = { onDifficultyChanged(difficulty) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        ToggleRow(
+            title = "托管战斗",
+            subtitle = "自动设置并监控游戏内托管战斗",
+            checked = config.managedBattle,
+            onCheckedChange = onManagedBattleChanged,
+        )
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 12.dp),
+            color = MaterialTheme.colorScheme.outlineVariant,
+        )
+        Text("讨伐次数", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = config.runCount.toString(),
+            onValueChange = { raw ->
+                raw.filter(Char::isDigit).toIntOrNull()?.let(onRunCountChanged)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            supportingText = { Text("范围 1–10,000；达到次数后安全停止") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text("行动力补充", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        HuntEnergyRefill.entries.chunked(2).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { refill ->
+                    ChoiceButton(
+                        label = refill.displayName(),
+                        selected = config.energyRefill == refill,
+                        onClick = { onEnergyRefillChanged(refill) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        Spacer(Modifier.height(4.dp))
+        if (automation.isRunning || automation.phase == HuntPhase.PAUSED) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Button(
+                    onClick = onPauseOrResume,
+                    modifier = Modifier.weight(1f),
+                    colors = whiteButtonColors(),
+                    border = whiteButtonBorder(),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                ) {
+                    Text(if (automation.phase == HuntPhase.PAUSED) "继续" else "暂停")
+                }
+                OutlinedButton(
+                    onClick = onStop,
+                    modifier = Modifier.weight(1f),
+                    colors = whiteOutlinedButtonColors(danger = true),
+                    border = whiteButtonBorder(danger = true),
+                ) {
+                    Text("停止")
+                }
+            }
+        } else {
+            Button(
+                onClick = onPrepare,
+                enabled = canStart,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                colors = whiteButtonColors(),
+                border = whiteButtonBorder(),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+            ) {
+                Text("准备讨伐", fontWeight = FontWeight.Bold)
+            }
+        }
+        if (automation.phase != HuntPhase.IDLE) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                automation.message,
+                color = if (automation.phase == HuntPhase.ERROR) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+@Composable
 private fun EnvironmentCard(
     environment: EnvironmentStatus,
     onEnableAccessibility: () -> Unit,
@@ -455,6 +638,40 @@ private fun ToggleRow(
 }
 
 @Composable
+private fun ChoiceButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier,
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (selected) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.outlineVariant
+            },
+        ),
+    ) {
+        Text(
+            label,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
 private fun CheckRow(
     title: String,
     ready: Boolean,
@@ -522,6 +739,18 @@ private fun whiteButtonBorder(danger: Boolean = false) = BorderStroke(
     1.dp,
     if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant,
 )
+
+private fun HuntDifficulty.displayName(): String = when (this) {
+    HuntDifficulty.HELL -> "地狱"
+    HuntDifficulty.OTHERWORLD -> "异界"
+}
+
+private fun HuntEnergyRefill.displayName(): String = when (this) {
+    HuntEnergyRefill.DISABLED -> "不补充"
+    HuntEnergyRefill.LEIF_ONLY -> "仅生命之叶"
+    HuntEnergyRefill.SKYSTONE_ONLY -> "仅天空石"
+    HuntEnergyRefill.LEIF_THEN_SKYSTONE -> "叶子后天空石"
+}
 
 private fun formatDuration(durationMs: Long): String {
     val totalSeconds = durationMs.coerceAtLeast(0L) / 1000

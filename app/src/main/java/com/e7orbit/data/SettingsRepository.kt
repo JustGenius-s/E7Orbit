@@ -10,6 +10,9 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.e7orbit.model.HuntConfig
+import com.e7orbit.model.HuntDifficulty
+import com.e7orbit.model.HuntEnergyRefill
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
 import java.io.IOException
@@ -35,6 +38,23 @@ class SettingsRepository(
         ).normalized()
     }
 
+    val huntConfig: Flow<HuntConfig> = dataStore.safeData.map { preferences ->
+        HuntConfig(
+            difficulty = preferences[Keys.HUNT_DIFFICULTY]
+                ?.let { stored ->
+                    runCatching { HuntDifficulty.valueOf(stored) }.getOrNull()
+                }
+                ?: HuntDifficulty.HELL,
+            managedBattle = preferences[Keys.HUNT_MANAGED_BATTLE] ?: true,
+            runCount = preferences[Keys.HUNT_RUN_COUNT] ?: 20,
+            energyRefill = preferences[Keys.HUNT_ENERGY_REFILL]
+                ?.let { stored ->
+                    runCatching { HuntEnergyRefill.valueOf(stored) }.getOrNull()
+                }
+                ?: HuntEnergyRefill.LEIF_ONLY,
+        ).normalized()
+    }
+
     val lastSummary: Flow<RunSummary> = dataStore.safeData.map { preferences ->
         RunSummary(
             completedRefreshes = preferences[Keys.LAST_REFRESHES] ?: 0,
@@ -55,6 +75,16 @@ class SettingsRepository(
             preferences[Keys.BUY_MYSTIC] = normalized.buyMysticMedals
             preferences[Keys.MAX_REFRESHES] = normalized.maxRefreshes
             preferences[Keys.MATCH_THRESHOLD] = normalized.matchThreshold
+        }
+    }
+
+    suspend fun saveHuntConfig(config: HuntConfig) {
+        val normalized = config.normalized()
+        dataStore.edit { preferences ->
+            preferences[Keys.HUNT_DIFFICULTY] = normalized.difficulty.name
+            preferences[Keys.HUNT_MANAGED_BATTLE] = normalized.managedBattle
+            preferences[Keys.HUNT_RUN_COUNT] = normalized.runCount
+            preferences[Keys.HUNT_ENERGY_REFILL] = normalized.energyRefill.name
         }
     }
 
@@ -85,6 +115,10 @@ class SettingsRepository(
         val BUY_MYSTIC = booleanPreferencesKey("buy_mystic")
         val MAX_REFRESHES = intPreferencesKey("max_refreshes")
         val MATCH_THRESHOLD = doublePreferencesKey("match_threshold")
+        val HUNT_DIFFICULTY = stringPreferencesKey("hunt_difficulty")
+        val HUNT_MANAGED_BATTLE = booleanPreferencesKey("hunt_managed_battle")
+        val HUNT_RUN_COUNT = intPreferencesKey("hunt_run_count")
+        val HUNT_ENERGY_REFILL = stringPreferencesKey("hunt_energy_refill")
         val LAST_REFRESHES = intPreferencesKey("last_refreshes")
         val LAST_PAGES_SCANNED = intPreferencesKey("last_pages_scanned")
         val LAST_COVENANT = intPreferencesKey("last_covenant")

@@ -34,6 +34,7 @@ class AutomationRuntime(
     private val logger: OrbitLogger = NoOpOrbitLogger,
     private val captureReady: () -> Boolean = { true },
     private val clock: AutomationClock = SystemAutomationClock,
+    private val runCoordinator: AutomationRunCoordinator? = null,
 ) : AutomationController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val startMutex = Mutex()
@@ -123,6 +124,14 @@ class AutomationRuntime(
                     return
                 }
             }
+            if (runCoordinator?.tryAcquire(AutomationKind.SHOP) == false) {
+                rejectStart(
+                    normalized,
+                    StopReason.INVALID_CONFIGURATION,
+                    "其他自动化正在运行",
+                )
+                return
+            }
 
             settingsRepository.saveConfig(normalized)
             paused.value = false
@@ -204,6 +213,7 @@ class AutomationRuntime(
     fun shutdown() {
         logger.info("runtime.shutdown")
         runJob?.cancel()
+        runCoordinator?.release(AutomationKind.SHOP)
         scope.cancel()
     }
 
@@ -287,6 +297,9 @@ class AutomationRuntime(
                 stopReason = StopReason.INTERNAL_ERROR,
             )
             persistSummary(finalStats, StopReason.INTERNAL_ERROR)
+        } finally {
+            runJob = null
+            runCoordinator?.release(AutomationKind.SHOP)
         }
     }
 
@@ -323,6 +336,7 @@ class AutomationRuntime(
         )
         runJob?.cancel(CancellationException(message))
         runJob = null
+        runCoordinator?.release(AutomationKind.SHOP)
         paused.value = false
         val finalStats = _status.value.stats.copy(
             finishedAtElapsedMs = clock.elapsedRealtime(),
