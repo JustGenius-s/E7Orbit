@@ -171,14 +171,25 @@ class OpenCvShopVision(
         action: ShopAction,
     ): MatchResult {
         val match = withSource(frame) { source ->
-            val template = when (action) {
-                ShopAction.OPEN_SECRET_SHOP -> TemplateIds.SHOP_LOBBY_SECRET_SHOP
-                ShopAction.CONFIRM_PURCHASE -> TemplateIds.CONFIRM_PURCHASE
-                ShopAction.REFRESH -> TemplateIds.REFRESH_BUTTON
-                ShopAction.CONFIRM_REFRESH -> TemplateIds.CONFIRM_REFRESH
-                ShopAction.DISMISS_ERROR -> TemplateIds.RESOURCE_INSUFFICIENT
+            when (action) {
+                ShopAction.OPEN_MAIN_MENU -> bestOf(
+                    source,
+                    TemplateIds.GLOBAL_MENU_BUTTON,
+                    TemplateIds.GLOBAL_MENU_BUTTON_PLAIN,
+                )
+
+                ShopAction.RETURN_HOME -> bestMatch(source, TemplateIds.GLOBAL_RETURN_HOME)
+                ShopAction.OPEN_SECRET_SHOP ->
+                    bestMatch(source, TemplateIds.SHOP_LOBBY_SECRET_SHOP)
+
+                ShopAction.CONFIRM_PURCHASE ->
+                    bestMatch(source, TemplateIds.CONFIRM_PURCHASE)
+
+                ShopAction.REFRESH -> bestMatch(source, TemplateIds.REFRESH_BUTTON)
+                ShopAction.CONFIRM_REFRESH -> bestMatch(source, TemplateIds.CONFIRM_REFRESH)
+                ShopAction.DISMISS_ERROR ->
+                    bestMatch(source, TemplateIds.RESOURCE_INSUFFICIENT)
             }
-            bestMatch(source, template)
         }
         val scaled = match.scaleToFrame(frame)
         logger.debug(
@@ -304,6 +315,14 @@ class OpenCvShopVision(
             sourceRegion.release()
         }
     }
+
+    private fun bestOf(
+        source: Mat,
+        vararg templateIds: String,
+    ): MatchResult = templateIds
+        .map { templateId -> bestMatch(source, templateId) }
+        .maxByOrNull { match -> match.confidence }
+        ?: MatchResult(matched = false)
 
     private fun allMatches(
         source: Mat,

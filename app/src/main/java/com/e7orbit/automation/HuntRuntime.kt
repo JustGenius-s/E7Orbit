@@ -34,13 +34,14 @@ class HuntRuntime(
     private val captureReady: () -> Boolean = { true },
     private val clock: AutomationClock = SystemAutomationClock,
     private val runCoordinator: AutomationRunCoordinator? = null,
+    private val homeNavigator: HomeNavigator? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val startMutex = Mutex()
     private val gatewayRef = AtomicReference<ScreenGateway?>()
     private val paused = MutableStateFlow(false)
     private val _status = MutableStateFlow(
-        HuntStatus(templatesReady = vision.health().isReady),
+        HuntStatus(templatesReady = templatesReady()),
     )
     val status: StateFlow<HuntStatus> = _status.asStateFlow()
 
@@ -70,6 +71,7 @@ class HuntRuntime(
             val normalized = config.normalized()
             val gateway = gatewayRef.get()
             val health = vision.health()
+            val navigationHealth = homeNavigator?.health()
             when {
                 gateway == null -> {
                     rejectStart(
@@ -89,11 +91,11 @@ class HuntRuntime(
                     return
                 }
 
-                !health.isReady -> {
+                !health.isReady || navigationHealth?.isReady == false -> {
                     rejectStart(
                         normalized,
                         HuntStopReason.TEMPLATES_MISSING,
-                        "讨伐识图模板未就绪：${health.missingTemplateIds.joinToString()}",
+                        "讨伐识图模板未就绪：${missingTemplates().joinToString()}",
                     )
                     return
                 }
@@ -113,9 +115,9 @@ class HuntRuntime(
                 phase = HuntPhase.WAITING_FOR_LOBBY,
                 config = normalized,
                 stats = HuntStats(startedAtElapsedMs = clock.elapsedRealtime()),
-                message = "等待游戏大厅",
+                message = "正在定位游戏主页",
                 serviceReady = true,
-                templatesReady = true,
+                templatesReady = templatesReady(),
             )
             runJob = scope.launch { runMachine(normalized, gateway) }
         }
@@ -163,14 +165,14 @@ class HuntRuntime(
         _status.value = HuntStatus(
             config = current.config,
             serviceReady = gatewayRef.get() != null,
-            templatesReady = vision.health().isReady,
+            templatesReady = templatesReady(),
         )
     }
 
     fun refreshHealth() {
         _status.value = _status.value.copy(
             serviceReady = gatewayRef.get() != null,
-            templatesReady = vision.health().isReady,
+            templatesReady = templatesReady(),
         )
     }
 
@@ -189,6 +191,7 @@ class HuntRuntime(
             visionConfig = visionConfig,
             clock = clock,
             logger = logger,
+            homeNavigator = homeNavigator,
         )
         try {
             val result = machine.run(
@@ -242,9 +245,17 @@ class HuntRuntime(
             message = message,
             stopReason = reason,
             serviceReady = gatewayRef.get() != null,
-            templatesReady = vision.health().isReady,
+            templatesReady = templatesReady(),
         )
     }
+
+    private fun templatesReady(): Boolean =
+        vision.health().isReady && (homeNavigator?.health()?.isReady ?: true)
+
+    private fun missingTemplates(): List<String> = buildList {
+        addAll(vision.health().missingTemplateIds)
+        homeNavigator?.health()?.missingTemplateIds?.let(::addAll)
+    }.distinct()
 
     private fun stopWithReason(
         reason: HuntStopReason,

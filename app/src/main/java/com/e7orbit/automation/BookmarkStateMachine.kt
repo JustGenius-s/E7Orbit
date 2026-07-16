@@ -35,6 +35,7 @@ class BookmarkStateMachine(
     private val visionConfig: VisionConfig,
     private val clock: AutomationClock = SystemAutomationClock,
     private val logger: OrbitLogger = NoOpOrbitLogger,
+    private val homeNavigator: HomeNavigator? = null,
 ) {
     suspend fun run(
         config: RunConfig,
@@ -65,6 +66,12 @@ class BookmarkStateMachine(
         }
 
         return try {
+            navigateHomeIfNeeded(
+                gateway = gateway,
+                awaitRunPermission = awaitRunPermission,
+                publish = ::publish,
+                onDiagnostic = onDiagnostic,
+            )
             publish(AutomationPhase.WAITING_FOR_SHOP, "等待主页或秘密商店")
             when (
                 waitForAnyPage(
@@ -400,6 +407,36 @@ class BookmarkStateMachine(
             )
         }
         return currentStats
+    }
+
+    private suspend fun navigateHomeIfNeeded(
+        gateway: ScreenGateway,
+        awaitRunPermission: suspend () -> Unit,
+        publish: (AutomationPhase, String, Double?) -> Unit,
+        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
+    ) {
+        val navigator = homeNavigator ?: return
+        try {
+            navigator.ensureHome(
+                gateway = gateway,
+                awaitRunPermission = awaitRunPermission,
+                onStatus = { message ->
+                    publish(AutomationPhase.WAITING_FOR_SHOP, message, null)
+                },
+                onDiagnostic = onDiagnostic,
+            )
+        } catch (error: HomeNavigationException) {
+            throw MachineStop(
+                reason = when (error.failure) {
+                    HomeNavigationFailure.SCREENSHOT_FAILED -> StopReason.SCREENSHOT_FAILED
+                    HomeNavigationFailure.INVALID_RESOLUTION -> StopReason.INVALID_RESOLUTION
+                    HomeNavigationFailure.LOW_CONFIDENCE -> StopReason.LOW_CONFIDENCE
+                    HomeNavigationFailure.TIMEOUT -> StopReason.TIMEOUT
+                    HomeNavigationFailure.GESTURE_FAILED -> StopReason.GESTURE_FAILED
+                },
+                message = error.message ?: "返回主页失败",
+            )
+        }
     }
 
     private suspend fun tapAction(

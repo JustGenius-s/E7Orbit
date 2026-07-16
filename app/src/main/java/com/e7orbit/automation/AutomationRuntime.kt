@@ -35,6 +35,7 @@ class AutomationRuntime(
     private val captureReady: () -> Boolean = { true },
     private val clock: AutomationClock = SystemAutomationClock,
     private val runCoordinator: AutomationRunCoordinator? = null,
+    private val homeNavigator: HomeNavigator? = null,
 ) : AutomationController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val startMutex = Mutex()
@@ -139,7 +140,7 @@ class AutomationRuntime(
                 phase = AutomationPhase.WAITING_FOR_SHOP,
                 config = normalized,
                 stats = RunStats(startedAtElapsedMs = clock.elapsedRealtime()),
-                message = "等待主页或秘密商店",
+                message = "正在定位游戏主页",
                 serviceReady = true,
                 templatesReady = vision.health().isReady,
             )
@@ -226,6 +227,7 @@ class AutomationRuntime(
             visionConfig = visionConfig,
             clock = clock,
             logger = logger,
+            homeNavigator = homeNavigator,
         )
         try {
             val result = machine.run(

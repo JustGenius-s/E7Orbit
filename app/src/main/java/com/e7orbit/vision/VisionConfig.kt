@@ -42,6 +42,9 @@ data class TemplateConfig(
 )
 
 object TemplateIds {
+    const val GLOBAL_MENU_BUTTON = "global_menu_button"
+    const val GLOBAL_MENU_BUTTON_PLAIN = "global_menu_button_plain"
+    const val GLOBAL_RETURN_HOME = "global_return_home"
     const val SHOP_LOBBY_SECRET_SHOP = "shop_lobby_secret_shop"
     const val SHOP_ANCHOR = "shop_anchor"
     const val COVENANT_ITEM = "covenant_item"

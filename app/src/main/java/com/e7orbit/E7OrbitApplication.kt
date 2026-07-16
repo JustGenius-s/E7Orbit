@@ -5,6 +5,7 @@ import android.content.Context
 import com.e7orbit.automation.AutomationRuntime
 import com.e7orbit.automation.AutomationRunCoordinator
 import com.e7orbit.automation.HuntRuntime
+import com.e7orbit.automation.HomeNavigator
 import com.e7orbit.capture.ProjectionCaptureRepository
 import com.e7orbit.data.DiagnosticStore
 import com.e7orbit.data.SettingsRepository
@@ -60,6 +61,10 @@ object AppGraph {
         templateRepository = TemplateRepository(appContext, openCvReady)
         val runCoordinator = AutomationRunCoordinator()
         val vision = OpenCvShopVision(templateRepository, logger)
+        val homeNavigator = HomeNavigator(
+            vision = vision,
+            logger = logger,
+        )
         automationRuntime = AutomationRuntime(
             vision = vision,
             visionConfig = templateRepository.config,
@@ -68,6 +73,7 @@ object AppGraph {
             logger = logger,
             captureReady = { projectionCapture.isReady.value },
             runCoordinator = runCoordinator,
+            homeNavigator = homeNavigator,
         )
         huntRuntime = HuntRuntime(
             vision = OpenCvHuntVision(templateRepository, logger),
@@ -77,6 +83,7 @@ object AppGraph {
             logger = logger,
             captureReady = { projectionCapture.isReady.value },
             runCoordinator = runCoordinator,
+            homeNavigator = homeNavigator,
         )
         initialized = true
     }

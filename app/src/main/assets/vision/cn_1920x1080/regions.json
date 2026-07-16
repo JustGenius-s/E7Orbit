@@ -12,6 +12,24 @@
   },
   "templates": [
     {
+      "id": "global_menu_button",
+      "file": "global_menu_button.png",
+      "region": { "left": 940, "top": 0, "right": 1024, "bottom": 90 },
+      "threshold": 0.88
+    },
+    {
+      "id": "global_menu_button_plain",
+      "file": "global_menu_button_plain.png",
+      "region": { "left": 940, "top": 0, "right": 1024, "bottom": 90 },
+      "threshold": 0.88
+    },
+    {
+      "id": "global_return_home",
+      "file": "global_return_home.png",
+      "region": { "left": 820, "top": 400, "right": 960, "bottom": 530 },
+      "threshold": 0.88
+    },
+    {
       "id": "shop_lobby_secret_shop",
       "file": "shop_lobby_secret_shop.png",
       "region": { "left": 0, "top": 190, "right": 130, "bottom": 330 },

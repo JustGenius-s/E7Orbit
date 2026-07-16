@@ -171,6 +171,8 @@ enum class ShopPage {
 }
 
 enum class ShopAction {
+    OPEN_MAIN_MENU,
+    RETURN_HOME,
     OPEN_SECRET_SHOP,
     CONFIRM_PURCHASE,
     REFRESH,

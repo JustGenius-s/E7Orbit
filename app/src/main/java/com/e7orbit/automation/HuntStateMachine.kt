@@ -29,6 +29,7 @@ class HuntStateMachine(
     private val visionConfig: VisionConfig,
     private val clock: AutomationClock = SystemAutomationClock,
     private val logger: OrbitLogger = NoOpOrbitLogger,
+    private val homeNavigator: HomeNavigator? = null,
 ) {
     suspend fun run(
         config: HuntConfig,
@@ -66,6 +67,13 @@ class HuntStateMachine(
                     "非托管战斗结算素材尚未配置",
                 )
             }
+
+            navigateHomeIfNeeded(
+                gateway = gateway,
+                awaitRunPermission = awaitRunPermission,
+                publish = ::publish,
+                onDiagnostic = onDiagnostic,
+            )
 
             while (stats.completedRuns < config.runCount) {
                 publish(HuntPhase.WAITING_FOR_LOBBY, "等待游戏大厅")
@@ -312,6 +320,36 @@ class HuntStateMachine(
         awaitRunPermission = awaitRunPermission,
         onDiagnostic = onDiagnostic,
     )
+
+    private suspend fun navigateHomeIfNeeded(
+        gateway: ScreenGateway,
+        awaitRunPermission: suspend () -> Unit,
+        publish: (HuntPhase, String, Double?) -> Unit,
+        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
+    ) {
+        val navigator = homeNavigator ?: return
+        try {
+            navigator.ensureHome(
+                gateway = gateway,
+                awaitRunPermission = awaitRunPermission,
+                onStatus = { message ->
+                    publish(HuntPhase.WAITING_FOR_LOBBY, message, null)
+                },
+                onDiagnostic = onDiagnostic,
+            )
+        } catch (error: HomeNavigationException) {
+            throw MachineStop(
+                reason = when (error.failure) {
+                    HomeNavigationFailure.SCREENSHOT_FAILED -> HuntStopReason.SCREENSHOT_FAILED
+                    HomeNavigationFailure.INVALID_RESOLUTION -> HuntStopReason.INVALID_RESOLUTION
+                    HomeNavigationFailure.LOW_CONFIDENCE -> HuntStopReason.LOW_CONFIDENCE
+                    HomeNavigationFailure.TIMEOUT -> HuntStopReason.TIMEOUT
+                    HomeNavigationFailure.GESTURE_FAILED -> HuntStopReason.GESTURE_FAILED
+                },
+                message = error.message ?: "返回主页失败",
+            )
+        }
+    }
 
     private suspend fun waitForAnyPage(
         expected: Set<HuntPage>,
