@@ -2,7 +2,6 @@ package com.e7orbit.automation
 
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
-import com.e7orbit.model.GestureResult
 import com.e7orbit.model.HuntConfig
 import com.e7orbit.model.HuntDifficulty
 import com.e7orbit.model.HuntDungeon
@@ -10,12 +9,14 @@ import com.e7orbit.model.HuntPage
 import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStats
 import com.e7orbit.model.HuntStopReason
+import com.e7orbit.model.MAX_SUPPORTED_HUNT_RUNS
 import com.e7orbit.model.REFERENCE_HEIGHT
 import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import com.e7orbit.vision.VisionConfig
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 
 data class HuntMachineResult(
     val reason: HuntStopReason,
@@ -39,6 +40,13 @@ class HuntStateMachine(
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ): HuntMachineResult {
         var stats = HuntStats(startedAtElapsedMs = clock.elapsedRealtime())
+        val operations = OperationExecutor(
+            gateway = gateway,
+            clock = clock,
+            awaitRunPermission = awaitRunPermission,
+            onDiagnostic = { frame, reason -> onDiagnostic(frame, "hunt_$reason") },
+            logger = logger,
+        )
 
         fun publish(
             phase: HuntPhase,
@@ -92,7 +100,12 @@ class HuntStateMachine(
                 }
 
                 publish(HuntPhase.OPENING_BATTLE, "进入战斗")
-                tapPoint(Points.LOBBY_BATTLE, "进入战斗失败", gateway, awaitRunPermission)
+                tapPoint(
+                    point = Points.LOBBY_BATTLE,
+                    operationId = "hunt.open_battle",
+                    operations = operations,
+                    policy = OperationPolicy.reconciliationRequired(),
+                )
                 waitForPage(
                     expected = HuntPage.BATTLE_MENU,
                     timeoutMs = PAGE_TIMEOUT_MS,
@@ -102,7 +115,12 @@ class HuntStateMachine(
                 )
 
                 publish(HuntPhase.OPENING_HUNT, "进入讨伐")
-                tapPoint(Points.BATTLE_MENU_HUNT, "进入讨伐失败", gateway, awaitRunPermission)
+                tapPoint(
+                    point = Points.BATTLE_MENU_HUNT,
+                    operationId = "hunt.open_selection",
+                    operations = operations,
+                    policy = OperationPolicy.reconciliationRequired(),
+                )
                 waitForPage(
                     expected = HuntPage.HUNT_SELECTION,
                     timeoutMs = PAGE_TIMEOUT_MS,
@@ -116,12 +134,18 @@ class HuntStateMachine(
                     dungeon = config.dungeon,
                     gateway = gateway,
                     awaitRunPermission = awaitRunPermission,
+                    operations = operations,
                     onDiagnostic = onDiagnostic,
                 )
                 clock.delay(AFTER_TAP_DELAY_MS)
 
                 publish(HuntPhase.SELECTING_DIFFICULTY, "选择地狱")
-                tapPoint(Points.HELL, "选择地狱难度失败", gateway, awaitRunPermission)
+                tapPoint(
+                    point = Points.HELL,
+                    operationId = "hunt.select_hell",
+                    operations = operations,
+                    policy = OperationPolicy.reconciliationRequired(),
+                )
                 val teamPage = waitForAnyPage(
                     expected = setOf(HuntPage.TEAM_QUICK_BATTLE, HuntPage.TEAM_READY),
                     timeoutMs = PAGE_TIMEOUT_MS,
@@ -133,10 +157,10 @@ class HuntStateMachine(
                 if (teamPage == HuntPage.TEAM_QUICK_BATTLE) {
                     publish(HuntPhase.DISABLING_QUICK_BATTLE, "关闭快速战斗")
                     tapPoint(
-                        Points.QUICK_BATTLE_TOGGLE,
-                        "关闭快速战斗失败",
-                        gateway,
-                        awaitRunPermission,
+                        point = Points.QUICK_BATTLE_TOGGLE,
+                        operationId = "hunt.disable_quick_battle",
+                        operations = operations,
+                        policy = OperationPolicy.reconciliationRequired(),
                     )
                     waitForPage(
                         expected = HuntPage.TEAM_READY,
@@ -153,10 +177,10 @@ class HuntStateMachine(
                 }
                 if (!managedEnabled) {
                     tapPoint(
-                        Points.MANAGED_CHECKBOX,
-                        "开启托管战斗失败",
-                        gateway,
-                        awaitRunPermission,
+                        point = Points.MANAGED_CHECKBOX,
+                        operationId = "hunt.enable_managed_battle",
+                        operations = operations,
+                        policy = OperationPolicy.reconciliationRequired(),
                     )
                     clock.delay(AFTER_TAP_DELAY_MS)
                     val verified = captureChecked(gateway).useFrame { frame ->
@@ -171,18 +195,32 @@ class HuntStateMachine(
                 }
 
                 publish(HuntPhase.STARTING_BATTLE, "开始讨伐")
-                tapPoint(Points.START_BATTLE, "开始讨伐失败", gateway, awaitRunPermission)
-                publish(HuntPhase.WAITING_FOR_BATTLE_CONTROLS, "等待战斗托管面板")
-                waitForPage(
-                    expected = HuntPage.BATTLE_CONTROLS,
-                    timeoutMs = BATTLE_START_TIMEOUT_MS,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
-                    onDiagnostic = onDiagnostic,
+                tapPoint(
+                    point = Points.START_BATTLE,
+                    operationId = "hunt.start_battle",
+                    operations = operations,
+                    policy = OperationPolicy.externalLongRunning(),
                 )
+                publish(HuntPhase.WAITING_FOR_BATTLE_CONTROLS, "等待战斗托管面板")
+                requireConfirmedEffect(
+                    uncertainMessage = "已点击开始讨伐，但未能确认战斗状态；讨伐可能已经开始",
+                ) {
+                    waitForPage(
+                        expected = HuntPage.BATTLE_CONTROLS,
+                        timeoutMs = BATTLE_START_TIMEOUT_MS,
+                        gateway = gateway,
+                        awaitRunPermission = awaitRunPermission,
+                        onDiagnostic = onDiagnostic,
+                    )
+                }
 
                 publish(HuntPhase.DELEGATING_BATTLE, "转交托管")
-                tapPoint(Points.DELEGATE_WINDOW, "打开托管确认失败", gateway, awaitRunPermission)
+                tapPoint(
+                    point = Points.DELEGATE_WINDOW,
+                    operationId = "hunt.open_delegation",
+                    operations = operations,
+                    policy = OperationPolicy.reconciliationRequired(),
+                )
                 waitForPage(
                     expected = HuntPage.DELEGATION_CONFIRMATION,
                     timeoutMs = PAGE_TIMEOUT_MS,
@@ -193,25 +231,29 @@ class HuntStateMachine(
 
                 publish(HuntPhase.CONFIRMING_DELEGATION, "确认托管")
                 tapPoint(
-                    Points.CONFIRM_DELEGATION,
-                    "确认托管失败",
-                    gateway,
-                    awaitRunPermission,
+                    point = Points.CONFIRM_DELEGATION,
+                    operationId = "hunt.confirm_delegation",
+                    operations = operations,
+                    policy = OperationPolicy.externalLongRunning(),
                 )
-                waitForPage(
-                    expected = HuntPage.LOBBY_MANAGED,
-                    timeoutMs = PAGE_TIMEOUT_MS,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
-                    onDiagnostic = onDiagnostic,
-                )
+                requireConfirmedEffect(
+                    uncertainMessage = "已点击确认托管，但未能确认托管状态；托管可能已经开始",
+                ) {
+                    waitForPage(
+                        expected = HuntPage.LOBBY_MANAGED,
+                        timeoutMs = PAGE_TIMEOUT_MS,
+                        gateway = gateway,
+                        awaitRunPermission = awaitRunPermission,
+                        onDiagnostic = onDiagnostic,
+                    )
+                }
 
                 publish(HuntPhase.MANAGED_IN_LOBBY, "讨伐托管中")
                 tapPoint(
-                    Points.MANAGED_STATUS,
-                    "打开托管状态失败",
-                    gateway,
-                    awaitRunPermission,
+                    point = Points.MANAGED_STATUS,
+                    operationId = "hunt.open_managed_status",
+                    operations = operations,
+                    policy = OperationPolicy.reconciliationRequired(),
                 )
                 waitForAnyPage(
                     expected = setOf(HuntPage.MANAGED_PANEL, HuntPage.MANAGED_COMPLETE),
@@ -222,69 +264,111 @@ class HuntStateMachine(
                 )
                 clock.delay(MANAGED_PANEL_OPEN_DELAY_MS)
 
-                val targetInBatch = minOf(MAX_MANAGED_BATCH, config.runCount - stats.completedRuns)
+                val targetInBatch = minOf(
+                    MAX_SUPPORTED_HUNT_RUNS,
+                    config.runCount - stats.completedRuns,
+                )
                 var observedInBatch = 0
-                var previousSignature = captureChecked(gateway).useFrame { frame ->
-                    vision.managedProgressSignature(frame)
-                }
-                val batchStartedAt = clock.elapsedRealtime()
-                while (clock.elapsedRealtime() - batchStartedAt < MANAGED_BATCH_TIMEOUT_MS) {
-                    awaitRunPermission()
-                    val observation = captureChecked(gateway).useFrame { frame ->
-                        vision.detectPage(frame) to vision.managedProgressSignature(frame)
-                    }
-                    if (observation.first == HuntPage.MANAGED_COMPLETE) {
-                        val completed = minOf(targetInBatch, observedInBatch + 1)
-                        val unobserved = (completed - observedInBatch).coerceAtLeast(0)
-                        stats = stats.copy(
-                            completedRuns = stats.completedRuns + unobserved,
-                        )
-                        publish(
-                            HuntPhase.MANAGED_IN_LOBBY,
-                            "本批已完成 $completed 次",
-                        )
-                        break
-                    }
-
-                    if (observation.second != previousSignature) {
-                        previousSignature = observation.second
-                        observedInBatch += 1
-                        stats = stats.copy(completedRuns = stats.completedRuns + 1)
-                        publish(
-                            HuntPhase.MANAGED_IN_LOBBY,
-                            "托管中 ${stats.completedRuns}/${config.runCount}",
-                        )
-                        if (observedInBatch >= targetInBatch) {
-                            tapPoint(
-                                Points.STOP_MANAGED,
-                                "停止托管失败",
-                                gateway,
-                                awaitRunPermission,
+                var previousSignature = operations.capture("hunt.managed_progress_baseline")
+                    .useFrame { frame -> vision.managedProgressSignature(frame) }
+                var candidateSignature: Long? = null
+                var candidateStablePolls = 0
+                try {
+                    operations.waitUntil<Unit>(
+                        operationId = "hunt.managed_batch",
+                        timeoutMs = MANAGED_BATCH_TIMEOUT_MS,
+                        pollIntervalMs = MANAGED_POLL_INTERVAL_MS,
+                        diagnosticReason = "managed_batch_timeout",
+                    ) {
+                        val observation = operations.capture("hunt.observe_managed_progress")
+                            .useFrame { frame ->
+                                vision.detectPage(frame) to
+                                    vision.managedProgressSignature(frame)
+                            }
+                        if (observation.first == HuntPage.MANAGED_COMPLETE) {
+                            if (observedInBatch < targetInBatch) {
+                                diagnose(
+                                    gateway,
+                                    "managed_progress_uncertain_${observedInBatch}_of_$targetInBatch",
+                                    onDiagnostic,
+                                )
+                                throw MachineStop(
+                                    HuntStopReason.LOW_CONFIDENCE,
+                                    "托管已结束，但只能确认 $observedInBatch/$targetInBatch 次；" +
+                                        "为避免超额讨伐已停止，请核对实际次数",
+                                )
+                            }
+                            publish(
+                                HuntPhase.MANAGED_IN_LOBBY,
+                                "本批已完成 $observedInBatch 次",
                             )
-                            waitForPage(
-                                expected = HuntPage.MANAGED_COMPLETE,
-                                timeoutMs = PAGE_TIMEOUT_MS,
-                                gateway = gateway,
-                                awaitRunPermission = awaitRunPermission,
-                                onDiagnostic = onDiagnostic,
-                            )
-                            break
+                            return@waitUntil Unit
                         }
+
+                        val signature = observation.second
+                        if (signature == previousSignature) {
+                            candidateSignature = null
+                            candidateStablePolls = 0
+                        } else if (signature == candidateSignature) {
+                            candidateStablePolls += 1
+                        } else {
+                            candidateSignature = signature
+                            candidateStablePolls = 1
+                        }
+
+                        if (candidateStablePolls >= PROGRESS_SIGNATURE_STABLE_POLLS) {
+                            previousSignature = requireNotNull(candidateSignature)
+                            candidateSignature = null
+                            candidateStablePolls = 0
+                            observedInBatch += 1
+                            stats = stats.copy(completedRuns = stats.completedRuns + 1)
+                            publish(
+                                HuntPhase.MANAGED_IN_LOBBY,
+                                "托管中 ${stats.completedRuns}/${config.runCount}",
+                            )
+                            if (observedInBatch >= targetInBatch) {
+                                tapPoint(
+                                    point = Points.STOP_MANAGED,
+                                    operationId = "hunt.stop_managed",
+                                    operations = operations,
+                                    policy = OperationPolicy.externalLongRunning(),
+                                )
+                                requireConfirmedEffect(
+                                    uncertainMessage =
+                                        "已请求停止托管，但未能确认停止结果；" +
+                                            "游戏中的托管可能仍在运行",
+                                ) {
+                                    waitForPage(
+                                        expected = HuntPage.MANAGED_COMPLETE,
+                                        timeoutMs = PAGE_TIMEOUT_MS,
+                                        gateway = gateway,
+                                        awaitRunPermission = awaitRunPermission,
+                                        onDiagnostic = onDiagnostic,
+                                    )
+                                }
+                                return@waitUntil Unit
+                            }
+                        }
+                        null
                     }
-                    clock.delay(MANAGED_POLL_INTERVAL_MS)
-                }
-                if (clock.elapsedRealtime() - batchStartedAt >= MANAGED_BATCH_TIMEOUT_MS) {
-                    throw MachineStop(HuntStopReason.TIMEOUT, "等待托管战斗完成超时")
+                } catch (error: OperationExecutionException) {
+                    if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
+                        stopManagedAfterTimeout(
+                            operations = operations,
+                            gateway = gateway,
+                            awaitRunPermission = awaitRunPermission,
+                            onDiagnostic = onDiagnostic,
+                        )
+                    }
+                    throw error
                 }
 
                 if (stats.completedRuns < config.runCount) {
-                    tapPoint(
-                        Points.CLOSE_MANAGED_PANEL,
-                        "关闭托管结果失败",
-                        gateway,
-                        awaitRunPermission,
+                    throw MachineStop(
+                        HuntStopReason.LOW_CONFIDENCE,
+                        "本批只能确认 ${stats.completedRuns}/${config.runCount} 次；" +
+                            "当前进度识别不支持安全开启下一批，已停止以避免超额讨伐",
                     )
-                    clock.delay(AFTER_TAP_DELAY_MS)
                 }
             }
 
@@ -302,6 +386,23 @@ class HuntStateMachine(
                 reason = stop.reason,
                 stats = stats,
                 message = stop.message ?: "自动讨伐已停止",
+                successful = false,
+            )
+        } catch (error: OperationExecutionException) {
+            val reason = error.failure.kind.toHuntStopReason()
+            logger.warn(
+                "hunt.machine.operation_failed",
+                "operation" to error.failure.operationId,
+                "kind" to error.failure.kind,
+                "message" to error.message,
+                "completedRuns" to stats.completedRuns,
+            )
+            diagnose(gateway, reason.name, onDiagnostic)
+            stats = stats.copy(finishedAtElapsedMs = clock.elapsedRealtime())
+            HuntMachineResult(
+                reason = reason,
+                stats = stats,
+                message = error.message ?: "自动讨伐操作失败",
                 successful = false,
             )
         }
@@ -345,6 +446,8 @@ class HuntStateMachine(
                     HomeNavigationFailure.LOW_CONFIDENCE -> HuntStopReason.LOW_CONFIDENCE
                     HomeNavigationFailure.TIMEOUT -> HuntStopReason.TIMEOUT
                     HomeNavigationFailure.GESTURE_FAILED -> HuntStopReason.GESTURE_FAILED
+                    HomeNavigationFailure.UNCERTAIN_EFFECT ->
+                        HuntStopReason.UNCERTAIN_EFFECT
                 },
                 message = error.message ?: "返回主页失败",
             )
@@ -358,56 +461,54 @@ class HuntStateMachine(
         awaitRunPermission: suspend () -> Unit,
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ): HuntPage {
-        val startedAt = clock.elapsedRealtime()
-        while (clock.elapsedRealtime() - startedAt < timeoutMs) {
-            awaitRunPermission()
-            val page = captureChecked(gateway).useFrame { frame ->
-                vision.detectPage(frame)
-            }
-            if (page in expected) return page
-            clock.delay(PAGE_POLL_INTERVAL_MS)
-        }
-        diagnose(gateway, "wait_${expected.joinToString("_")}", onDiagnostic)
-        throw MachineStop(
-            HuntStopReason.TIMEOUT,
-            "等待 ${expected.joinToString("/")} 超时",
+        val operations = OperationExecutor(
+            gateway = gateway,
+            clock = clock,
+            awaitRunPermission = awaitRunPermission,
+            onDiagnostic = { frame, reason -> onDiagnostic(frame, "hunt_$reason") },
+            logger = logger,
         )
+        val expectedLabel = expected.joinToString("_")
+        try {
+            return operations.waitUntil(
+                operationId = "hunt.wait_${expectedLabel.lowercase()}",
+                timeoutMs = timeoutMs,
+                pollIntervalMs = PAGE_POLL_INTERVAL_MS,
+                diagnosticReason = "wait_$expectedLabel",
+            ) {
+                operations.capture("hunt.observe_page").useFrame { frame ->
+                    vision.detectPage(frame).takeIf { it in expected }
+                }
+            }
+        } catch (error: OperationExecutionException) {
+            if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
+                throw MachineStop(
+                    HuntStopReason.TIMEOUT,
+                    "等待 ${expected.joinToString("/")} 超时",
+                )
+            }
+            throw error
+        }
     }
 
     private suspend fun tapPoint(
-        normalizedPoint: ScreenPoint,
-        failureMessage: String,
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
+        point: ScreenPoint,
+        operationId: String,
+        operations: OperationExecutor,
+        policy: OperationPolicy,
     ) {
-        val point = normalizedPoint.toCapturePoint()
-        repeat(GESTURE_MAX_ATTEMPTS) { attempt ->
-            awaitRunPermission()
-            when (val result = gateway.tap(point)) {
-                GestureResult.COMPLETED -> return
-                GestureResult.CANCELLED -> {
-                    if (attempt < GESTURE_MAX_ATTEMPTS - 1) {
-                        clock.delay(GESTURE_RETRY_DELAY_MS)
-                    } else {
-                        throw MachineStop(
-                            HuntStopReason.GESTURE_FAILED,
-                            "$failureMessage：$result",
-                        )
-                    }
-                }
-
-                GestureResult.REJECTED -> throw MachineStop(
-                    HuntStopReason.GESTURE_FAILED,
-                    "$failureMessage：$result",
-                )
-            }
-        }
+        operations.tap(
+            operationId = operationId,
+            point = point.toCapturePoint(),
+            policy = policy,
+        )
     }
 
     private suspend fun selectDungeon(
         dungeon: HuntDungeon,
         gateway: ScreenGateway,
         awaitRunPermission: suspend () -> Unit,
+        operations: OperationExecutor,
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ) {
         suspend fun findAndTap(): Boolean {
@@ -424,10 +525,10 @@ class HuntStateMachine(
             val center = match.center
             if (!match.matched || center == null) return false
             tapPoint(
-                normalizedPoint = center,
-                failureMessage = "选择${dungeon.displayName}失败",
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
+                point = center,
+                operationId = "hunt.select_${dungeon.name.lowercase()}",
+                operations = operations,
+                policy = OperationPolicy.reconciliationRequired(),
             )
             return true
         }
@@ -438,9 +539,8 @@ class HuntStateMachine(
             swipePoint(
                 from = Points.DUNGEON_SCROLL_TOP,
                 to = Points.DUNGEON_SCROLL_BOTTOM,
-                failureMessage = "重置地下城列表失败",
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
+                operationId = "hunt.reset_dungeon_list",
+                operations = operations,
             )
             clock.delay(AFTER_DUNGEON_SCROLL_DELAY_MS)
         }
@@ -451,9 +551,8 @@ class HuntStateMachine(
                 swipePoint(
                     from = Points.DUNGEON_SCROLL_BOTTOM,
                     to = Points.DUNGEON_SCROLL_TOP,
-                    failureMessage = "滚动地下城列表失败",
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
+                    operationId = "hunt.scroll_dungeon_list",
+                    operations = operations,
                 )
                 clock.delay(AFTER_DUNGEON_SCROLL_DELAY_MS)
             }
@@ -469,44 +568,23 @@ class HuntStateMachine(
     private suspend fun swipePoint(
         from: ScreenPoint,
         to: ScreenPoint,
-        failureMessage: String,
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
+        operationId: String,
+        operations: OperationExecutor,
     ) {
-        val captureFrom = from.toCapturePoint()
-        val captureTo = to.toCapturePoint()
-        repeat(GESTURE_MAX_ATTEMPTS) { attempt ->
-            awaitRunPermission()
-            when (
-                val result = gateway.swipe(
-                    from = captureFrom,
-                    to = captureTo,
-                    durationMs = DUNGEON_SCROLL_DURATION_MS,
-                )
-            ) {
-                GestureResult.COMPLETED -> return
-                GestureResult.CANCELLED -> {
-                    if (attempt < GESTURE_MAX_ATTEMPTS - 1) {
-                        clock.delay(GESTURE_RETRY_DELAY_MS)
-                    } else {
-                        throw MachineStop(
-                            HuntStopReason.GESTURE_FAILED,
-                            "$failureMessage：$result",
-                        )
-                    }
-                }
-
-                GestureResult.REJECTED -> throw MachineStop(
-                    HuntStopReason.GESTURE_FAILED,
-                    "$failureMessage：$result",
-                )
-            }
-        }
+        operations.swipe(
+            operationId = operationId,
+            from = from.toCapturePoint(),
+            to = to.toCapturePoint(),
+            durationMs = DUNGEON_SCROLL_DURATION_MS,
+            policy = OperationPolicy.idempotent(),
+        )
     }
 
     private suspend fun captureChecked(gateway: ScreenGateway): ScreenFrame {
         val frame = try {
             gateway.capture()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             throw MachineStop(
                 HuntStopReason.SCREENSHOT_FAILED,
@@ -528,9 +606,11 @@ class HuntStateMachine(
         reason: String,
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ) {
-        runCatching {
+        try {
             gateway.capture().useFrame { frame -> onDiagnostic(frame, "hunt_$reason") }
-        }.onFailure { error ->
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
             logger.error("hunt.diagnostic.capture_failed", error, "reason" to reason)
         }
     }
@@ -546,6 +626,107 @@ class HuntStateMachine(
         block(this)
     } finally {
         close()
+    }
+
+    private fun ExecutionFailureKind.toHuntStopReason(): HuntStopReason = when (this) {
+        ExecutionFailureKind.SCREENSHOT_FAILED -> HuntStopReason.SCREENSHOT_FAILED
+        ExecutionFailureKind.INVALID_RESOLUTION -> HuntStopReason.INVALID_RESOLUTION
+        ExecutionFailureKind.GESTURE_FAILED -> HuntStopReason.GESTURE_FAILED
+        ExecutionFailureKind.UNCERTAIN_EFFECT -> HuntStopReason.UNCERTAIN_EFFECT
+        ExecutionFailureKind.TIMEOUT -> HuntStopReason.TIMEOUT
+    }
+
+    private suspend fun requireConfirmedEffect(
+        uncertainMessage: String,
+        block: suspend () -> Unit,
+    ) {
+        try {
+            block()
+        } catch (stop: MachineStop) {
+            if (stop.reason == HuntStopReason.TIMEOUT) {
+                throw MachineStop(HuntStopReason.UNCERTAIN_EFFECT, uncertainMessage)
+            }
+            throw stop
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            logger.error(
+                "hunt.operation.postcondition_failed",
+                error,
+                "message" to uncertainMessage,
+            )
+            throw MachineStop(HuntStopReason.UNCERTAIN_EFFECT, uncertainMessage)
+        }
+    }
+
+    private suspend fun stopManagedAfterTimeout(
+        operations: OperationExecutor,
+        gateway: ScreenGateway,
+        awaitRunPermission: suspend () -> Unit,
+        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
+    ): Nothing {
+        val page = try {
+            operations.capture("hunt.reconcile_managed_timeout").useFrame { frame ->
+                vision.detectPage(frame)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            logger.error("hunt.managed_timeout.reconcile_failed", error)
+            throw MachineStop(
+                HuntStopReason.UNCERTAIN_EFFECT,
+                "托管监控已超时，且无法确认游戏状态；托管可能仍在运行，请立即检查",
+            )
+        }
+
+        when (page) {
+            HuntPage.MANAGED_COMPLETE -> throw MachineStop(
+                HuntStopReason.LOW_CONFIDENCE,
+                "托管监控超时后检测到托管已结束，但完成次数无法确认，请核对实际次数",
+            )
+
+            HuntPage.MANAGED_PANEL -> {
+                try {
+                    tapPoint(
+                        point = Points.STOP_MANAGED,
+                        operationId = "hunt.stop_managed_after_timeout",
+                        operations = operations,
+                        policy = OperationPolicy.externalLongRunning(),
+                    )
+                    requireConfirmedEffect(
+                        uncertainMessage =
+                            "托管监控已超时，已请求停止但无法确认结果；托管可能仍在运行",
+                    ) {
+                        waitForPage(
+                            expected = HuntPage.MANAGED_COMPLETE,
+                            timeoutMs = PAGE_TIMEOUT_MS,
+                            gateway = gateway,
+                            awaitRunPermission = awaitRunPermission,
+                            onDiagnostic = onDiagnostic,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (stop: MachineStop) {
+                    throw stop
+                } catch (error: OperationExecutionException) {
+                    logger.error("hunt.managed_timeout.stop_failed", error)
+                    throw MachineStop(
+                        HuntStopReason.UNCERTAIN_EFFECT,
+                        "托管监控已超时，停止操作结果不确定；托管可能仍在运行，请立即检查",
+                    )
+                }
+                throw MachineStop(
+                    HuntStopReason.TIMEOUT,
+                    "托管监控已超时，已确认停止托管，请核对实际完成次数",
+                )
+            }
+
+            else -> throw MachineStop(
+                HuntStopReason.UNCERTAIN_EFFECT,
+                "托管监控已超时，当前页面无法确认；托管可能仍在运行，请立即检查",
+            )
+        }
     }
 
     private class MachineStop(
@@ -566,11 +747,9 @@ class HuntStateMachine(
         val CONFIRM_DELEGATION = ScreenPoint(600, 369)
         val MANAGED_STATUS = ScreenPoint(765, 30)
         val STOP_MANAGED = ScreenPoint(347, 433)
-        val CLOSE_MANAGED_PANEL = ScreenPoint(512, 553)
     }
 
     private companion object {
-        const val MAX_MANAGED_BATCH = 30
         const val WAIT_FOR_LOBBY_TIMEOUT_MS = 5 * 60 * 1000L
         const val PAGE_TIMEOUT_MS = 20_000L
         const val BATTLE_START_TIMEOUT_MS = 90_000L
@@ -583,7 +762,6 @@ class HuntStateMachine(
         const val DUNGEON_SCROLL_DURATION_MS = 500L
         const val DUNGEON_RESET_SWIPES = 2
         const val DUNGEON_SEARCH_PAGES = 4
-        const val GESTURE_MAX_ATTEMPTS = 3
-        const val GESTURE_RETRY_DELAY_MS = 160L
+        const val PROGRESS_SIGNATURE_STABLE_POLLS = 2
     }
 }

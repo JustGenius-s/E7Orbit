@@ -1,7 +1,9 @@
 package com.e7orbit.automation
 
 import com.e7orbit.model.AutomationStatus
+import com.e7orbit.model.GameLocation
 import com.e7orbit.model.GestureResult
+import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntPage
 import com.e7orbit.model.MatchResult
@@ -21,6 +23,23 @@ interface ScreenGateway {
         to: ScreenPoint,
         durationMs: Long,
     ): GestureResult
+}
+
+internal class SwitchingScreenGateway(
+    private val currentGateway: () -> ScreenGateway?,
+) : ScreenGateway {
+    override suspend fun capture(): ScreenFrame = current().capture()
+
+    override suspend fun tap(point: ScreenPoint): GestureResult = current().tap(point)
+
+    override suspend fun swipe(
+        from: ScreenPoint,
+        to: ScreenPoint,
+        durationMs: Long,
+    ): GestureResult = current().swipe(from, to, durationMs)
+
+    private fun current(): ScreenGateway = currentGateway()
+        ?: throw ScreenCaptureException("无障碍服务当前不可用")
 }
 
 data class VisionHealth(
@@ -45,6 +64,15 @@ interface ShopVision {
     suspend fun findAction(
         frame: ScreenFrame,
         action: ShopAction,
+    ): MatchResult
+}
+
+interface GlobalUiVision {
+    fun navigationHealth(): VisionHealth
+    suspend fun detectLocation(frame: ScreenFrame): GameLocation
+    suspend fun findGlobalAction(
+        frame: ScreenFrame,
+        action: GlobalAction,
     ): MatchResult
 }
 

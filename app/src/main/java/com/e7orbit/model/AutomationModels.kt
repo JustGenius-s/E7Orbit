@@ -89,6 +89,7 @@ enum class StopReason {
     TIMEOUT,
     SCREENSHOT_FAILED,
     GESTURE_FAILED,
+    UNCERTAIN_EFFECT,
     INTERNAL_ERROR,
 }
 
@@ -153,6 +154,16 @@ enum class ItemType {
     MYSTIC_MEDAL,
 }
 
+enum class GameLocation {
+    LOBBY,
+    UNKNOWN,
+}
+
+enum class GlobalAction {
+    OPEN_MENU,
+    RETURN_TO_LOBBY,
+}
+
 data class PurchaseTarget(
     val type: ItemType,
     val itemBounds: ScreenRect,
@@ -171,8 +182,6 @@ enum class ShopPage {
 }
 
 enum class ShopAction {
-    OPEN_MAIN_MENU,
-    RETURN_HOME,
     OPEN_SECRET_SHOP,
     CONFIRM_PURCHASE,
     REFRESH,

@@ -3,10 +3,14 @@ package com.e7orbit.model
 import android.os.SystemClock
 import kotlinx.serialization.Serializable
 
+const val MAX_SUPPORTED_HUNT_RUNS = 30
+
 @Serializable
-enum class HuntDifficulty {
-    HELL,
-    OTHERWORLD,
+enum class HuntDifficulty(
+    val isSupported: Boolean,
+) {
+    HELL(isSupported = true),
+    OTHERWORLD(isSupported = false),
 }
 
 @Serializable
@@ -21,11 +25,13 @@ enum class HuntDungeon(
 }
 
 @Serializable
-enum class HuntEnergyRefill {
-    DISABLED,
-    LEIF_ONLY,
-    SKYSTONE_ONLY,
-    LEIF_THEN_SKYSTONE,
+enum class HuntEnergyRefill(
+    val isSupported: Boolean,
+) {
+    DISABLED(isSupported = true),
+    LEIF_ONLY(isSupported = false),
+    SKYSTONE_ONLY(isSupported = false),
+    LEIF_THEN_SKYSTONE(isSupported = false),
 }
 
 @Serializable
@@ -34,10 +40,15 @@ data class HuntConfig(
     val difficulty: HuntDifficulty = HuntDifficulty.HELL,
     val managedBattle: Boolean = true,
     val runCount: Int = 20,
-    val energyRefill: HuntEnergyRefill = HuntEnergyRefill.LEIF_ONLY,
+    val energyRefill: HuntEnergyRefill = HuntEnergyRefill.DISABLED,
 ) {
     fun normalized(): HuntConfig = copy(
-        runCount = runCount.coerceIn(1, 10_000),
+        difficulty = difficulty.takeIf { it.isSupported }
+            ?: HuntDifficulty.HELL,
+        managedBattle = true,
+        runCount = runCount.coerceIn(1, MAX_SUPPORTED_HUNT_RUNS),
+        energyRefill = energyRefill.takeIf { it.isSupported }
+            ?: HuntEnergyRefill.DISABLED,
     )
 }
 
@@ -86,6 +97,7 @@ enum class HuntStopReason {
     TIMEOUT,
     SCREENSHOT_FAILED,
     GESTURE_FAILED,
+    UNCERTAIN_EFFECT,
     INTERNAL_ERROR,
 }
 

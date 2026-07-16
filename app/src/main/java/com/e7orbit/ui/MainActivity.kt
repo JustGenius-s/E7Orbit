@@ -204,6 +204,7 @@ private fun OrbitDashboard(
                     AutomationCard(
                         config = state.config,
                         canStart = state.environment.canPrepare &&
+                            state.automation.templatesReady &&
                             state.config.hasPurchaseTarget &&
                             !state.automation.isRunning &&
                             !state.huntAutomation.isRunning &&
@@ -438,8 +439,9 @@ private fun HuntCard(
         ) {
             HuntDifficulty.entries.forEach { difficulty ->
                 ChoiceButton(
-                    label = difficulty.displayName(),
+                    label = difficulty.displayName(includeAvailability = true),
                     selected = config.difficulty == difficulty,
+                    enabled = difficulty.isSupported,
                     onClick = { onDifficultyChanged(difficulty) },
                     modifier = Modifier.weight(1f),
                 )
@@ -448,8 +450,9 @@ private fun HuntCard(
         Spacer(Modifier.height(8.dp))
         ToggleRow(
             title = "托管战斗",
-            subtitle = "自动设置并监控游戏内托管战斗",
+            subtitle = "当前仅支持托管战斗；普通战斗开发中",
             checked = config.managedBattle,
+            enabled = false,
             onCheckedChange = onManagedBattleChanged,
         )
         HorizontalDivider(
@@ -465,7 +468,7 @@ private fun HuntCard(
             },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            supportingText = { Text("范围 1–10,000；达到次数后安全停止") },
+            supportingText = { Text("当前支持单批 1–30 次；达到次数后安全停止") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         )
         Spacer(Modifier.height(8.dp))
@@ -478,8 +481,9 @@ private fun HuntCard(
             ) {
                 row.forEach { refill ->
                     ChoiceButton(
-                        label = refill.displayName(),
+                        label = refill.displayName(includeAvailability = true),
                         selected = config.energyRefill == refill,
+                        enabled = refill.isSupported,
                         onClick = { onEnergyRefillChanged(refill) },
                         modifier = Modifier.weight(1f),
                     )
@@ -691,6 +695,7 @@ private fun ToggleRow(
     title: String,
     subtitle: String,
     checked: Boolean,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -710,6 +715,7 @@ private fun ToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = MaterialTheme.colorScheme.surface,
                 checkedTrackColor = MaterialTheme.colorScheme.onSurface,
@@ -728,9 +734,11 @@ private fun ChoiceButton(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     OutlinedButton(
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier,
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = if (selected) {
@@ -825,16 +833,20 @@ private fun whiteButtonBorder(danger: Boolean = false) = BorderStroke(
     if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant,
 )
 
-private fun HuntDifficulty.displayName(): String = when (this) {
+private fun HuntDifficulty.displayName(includeAvailability: Boolean = false): String = when (this) {
     HuntDifficulty.HELL -> "地狱"
-    HuntDifficulty.OTHERWORLD -> "异界"
+    HuntDifficulty.OTHERWORLD -> if (includeAvailability) "异界 · 开发中" else "异界"
 }
 
-private fun HuntEnergyRefill.displayName(): String = when (this) {
+private fun HuntEnergyRefill.displayName(includeAvailability: Boolean = false): String = when (this) {
     HuntEnergyRefill.DISABLED -> "不补充"
-    HuntEnergyRefill.LEIF_ONLY -> "仅生命之叶"
-    HuntEnergyRefill.SKYSTONE_ONLY -> "仅天空石"
-    HuntEnergyRefill.LEIF_THEN_SKYSTONE -> "叶子后天空石"
+    HuntEnergyRefill.LEIF_ONLY -> if (includeAvailability) "生命之叶 · 开发中" else "仅生命之叶"
+    HuntEnergyRefill.SKYSTONE_ONLY -> if (includeAvailability) "天空石 · 开发中" else "仅天空石"
+    HuntEnergyRefill.LEIF_THEN_SKYSTONE -> if (includeAvailability) {
+        "叶子后天空石 · 开发中"
+    } else {
+        "叶子后天空石"
+    }
 }
 
 private fun formatDuration(durationMs: Long): String {

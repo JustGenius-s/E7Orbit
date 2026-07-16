@@ -24,10 +24,16 @@
       "threshold": 0.88
     },
     {
-      "id": "global_return_home",
+      "id": "global_return_to_lobby",
       "file": "global_return_home.png",
       "region": { "left": 820, "top": 400, "right": 960, "bottom": 530 },
       "threshold": 0.88
+    },
+    {
+      "id": "global_lobby_anchor",
+      "file": "shop_lobby_secret_shop.png",
+      "region": { "left": 0, "top": 190, "right": 130, "bottom": 330 },
+      "threshold": 0.84
     },
     {
       "id": "shop_lobby_secret_shop",

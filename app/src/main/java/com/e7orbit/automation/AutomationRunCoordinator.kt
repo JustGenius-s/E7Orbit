@@ -1,5 +1,6 @@
 package com.e7orbit.automation
 
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 enum class AutomationKind {
@@ -7,15 +8,24 @@ enum class AutomationKind {
     HUNT,
 }
 
+class RunLease internal constructor(
+    val kind: AutomationKind,
+    internal val token: Long,
+)
+
 class AutomationRunCoordinator {
-    private val active = AtomicReference<AutomationKind?>()
+    private val nextToken = AtomicLong(0L)
+    private val active = AtomicReference<RunLease?>()
 
-    fun tryAcquire(kind: AutomationKind): Boolean =
-        active.compareAndSet(null, kind) || active.get() == kind
-
-    fun release(kind: AutomationKind) {
-        active.compareAndSet(kind, null)
+    fun tryAcquire(kind: AutomationKind): RunLease? {
+        val lease = RunLease(
+            kind = kind,
+            token = nextToken.incrementAndGet(),
+        )
+        return lease.takeIf { active.compareAndSet(null, it) }
     }
 
-    fun activeKind(): AutomationKind? = active.get()
+    fun release(lease: RunLease): Boolean = active.compareAndSet(lease, null)
+
+    fun activeKind(): AutomationKind? = active.get()?.kind
 }

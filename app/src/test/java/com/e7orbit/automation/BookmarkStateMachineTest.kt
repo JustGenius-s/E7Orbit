@@ -116,6 +116,69 @@ class BookmarkStateMachineTest {
     }
 
     @Test
+    fun doesNotRetryCancelledRefreshConfirmation() = runTest {
+        val vision = FakeVision(
+            pages = listOf(
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.REFRESH_CONFIRMATION,
+            ),
+            targets = listOf(emptyList(), emptyList()),
+        )
+        val gateway = FakeGateway(
+            tapResults = listOf(
+                GestureResult.COMPLETED,
+                GestureResult.CANCELLED,
+                GestureResult.COMPLETED,
+            ),
+        )
+
+        val result = machine(vision).run(
+            config = RunConfig(maxRefreshes = 1),
+            gateway = gateway,
+            awaitRunPermission = {},
+            onStatus = { _, _, _, _ -> },
+            onDiagnostic = { _, _ -> },
+        )
+
+        assertFalse(result.successful)
+        assertEquals(StopReason.UNCERTAIN_EFFECT, result.reason)
+        assertEquals(2, gateway.taps)
+        assertEquals(0, result.stats.completedRefreshes)
+    }
+
+    @Test
+    fun treatsUnconfirmedCompletedRefreshAsUncertainEffect() = runTest {
+        val vision = FakeVision(
+            pages = listOf(
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.REFRESH_CONFIRMATION,
+            ),
+            targets = listOf(emptyList(), emptyList()),
+            fallbackPage = ShopPage.REFRESH_CONFIRMATION,
+        )
+        val gateway = FakeGateway()
+
+        val result = machine(vision).run(
+            config = RunConfig(maxRefreshes = 1),
+            gateway = gateway,
+            awaitRunPermission = {},
+            onStatus = { _, _, _, _ -> },
+            onDiagnostic = { _, _ -> },
+        )
+
+        assertFalse(result.successful)
+        assertEquals(StopReason.UNCERTAIN_EFFECT, result.reason)
+        assertTrue(result.message.contains("天空石可能已消耗"))
+        assertEquals(2, gateway.taps)
+    }
+
+    @Test
     fun verifiesAndCountsPurchaseBeforeRefreshing() = runTest {
         val covenant = PurchaseTarget(
             type = ItemType.COVENANT_BOOKMARK,
@@ -160,6 +223,46 @@ class BookmarkStateMachineTest {
         assertEquals(100.0, result.stats.covenantRatePercent, 0.001)
         assertTrue(gateway.taps >= 3)
         assertEquals(1, gateway.swipes)
+    }
+
+    @Test
+    fun doesNotRetryCancelledPurchaseConfirmation() = runTest {
+        val covenant = PurchaseTarget(
+            type = ItemType.COVENANT_BOOKMARK,
+            itemBounds = ScreenRect(500, 200, 620, 300),
+            purchaseButton = ScreenPoint(1700, 250),
+            confidence = 0.98,
+            rowIndex = 2,
+        )
+        val vision = FakeVision(
+            pages = listOf(
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.SHOP,
+                ShopPage.PURCHASE_CONFIRMATION,
+            ),
+            targets = listOf(listOf(covenant), listOf(covenant)),
+        )
+        val gateway = FakeGateway(
+            tapResults = listOf(
+                GestureResult.COMPLETED,
+                GestureResult.CANCELLED,
+                GestureResult.COMPLETED,
+            ),
+        )
+
+        val result = machine(vision).run(
+            config = RunConfig(maxRefreshes = 1),
+            gateway = gateway,
+            awaitRunPermission = {},
+            onStatus = { _, _, _, _ -> },
+            onDiagnostic = { _, _ -> },
+        )
+
+        assertFalse(result.successful)
+        assertEquals(StopReason.UNCERTAIN_EFFECT, result.reason)
+        assertEquals(2, gateway.taps)
+        assertEquals(0, result.stats.covenantBookmarksBought)
     }
 
     @Test
@@ -292,6 +395,7 @@ private class FakeGateway(
 private class FakeVision(
     pages: List<ShopPage>,
     targets: List<List<PurchaseTarget>>,
+    private val fallbackPage: ShopPage = ShopPage.SHOP,
 ) : ShopVision {
     private val pages = ArrayDeque(pages)
     private val targets = ArrayDeque(targets)
@@ -305,7 +409,7 @@ private class FakeVision(
     )
 
     override suspend fun detectPage(frame: ScreenFrame): ShopPage =
-        pages.pollFirst() ?: ShopPage.SHOP
+        pages.pollFirst() ?: fallbackPage
 
     override suspend fun findTargets(
         frame: ScreenFrame,

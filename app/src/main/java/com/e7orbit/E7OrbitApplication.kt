@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import com.e7orbit.automation.AutomationRuntime
 import com.e7orbit.automation.AutomationRunCoordinator
+import com.e7orbit.automation.GlobalUiVision
 import com.e7orbit.automation.HuntRuntime
 import com.e7orbit.automation.HomeNavigator
 import com.e7orbit.capture.ProjectionCaptureRepository
@@ -60,13 +61,14 @@ object AppGraph {
         diagnosticStore = DiagnosticStore(appContext)
         templateRepository = TemplateRepository(appContext, openCvReady)
         val runCoordinator = AutomationRunCoordinator()
-        val vision = OpenCvShopVision(templateRepository, logger)
+        val shopVision = OpenCvShopVision(templateRepository, logger)
+        val globalUiVision: GlobalUiVision = shopVision
         val homeNavigator = HomeNavigator(
-            vision = vision,
+            vision = globalUiVision,
             logger = logger,
         )
         automationRuntime = AutomationRuntime(
-            vision = vision,
+            vision = shopVision,
             visionConfig = templateRepository.config,
             settingsRepository = settingsRepository,
             diagnosticStore = diagnosticStore,

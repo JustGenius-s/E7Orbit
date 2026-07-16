@@ -5,7 +5,6 @@ import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
 import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.COVENANT_BOOKMARK_GOLD_COST
-import com.e7orbit.model.GestureResult
 import com.e7orbit.model.ItemType
 import com.e7orbit.model.MYSTIC_MEDAL_GOLD_COST
 import com.e7orbit.model.REFERENCE_HEIGHT
@@ -22,6 +21,7 @@ import com.e7orbit.vision.VisionConfig
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.CancellationException
 
 data class MachineResult(
     val reason: StopReason,
@@ -45,6 +45,13 @@ class BookmarkStateMachine(
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ): MachineResult {
         var stats = RunStats(startedAtElapsedMs = clock.elapsedRealtime())
+        val operations = OperationExecutor(
+            gateway = gateway,
+            clock = clock,
+            awaitRunPermission = awaitRunPermission,
+            onDiagnostic = onDiagnostic,
+            logger = logger,
+        )
         logger.info(
             "machine.started",
             "maxRefreshes" to config.maxRefreshes,
@@ -86,8 +93,8 @@ class BookmarkStateMachine(
                     publish(AutomationPhase.WAITING_FOR_SHOP, "从主页进入秘密商店")
                     tapAction(
                         action = ShopAction.OPEN_SECRET_SHOP,
-                        gateway = gateway,
-                        awaitRunPermission = awaitRunPermission,
+                        operations = operations,
+                        policy = OperationPolicy.reconciliationRequired(),
                         failureMessage = "未找到主页秘密商店入口",
                     )
                     waitForPage(
@@ -126,6 +133,7 @@ class BookmarkStateMachine(
                     stats = stats,
                     gateway = gateway,
                     awaitRunPermission = awaitRunPermission,
+                    operations = operations,
                     publish = ::publish,
                     onDiagnostic = onDiagnostic,
                 )
@@ -134,16 +142,13 @@ class BookmarkStateMachine(
                 publish(AutomationPhase.SCANNING_BOTTOM, "滑动并扫描下半页")
                 val scrollFrom = visionConfig.scrollFrom.toCapturePoint()
                 val scrollTo = visionConfig.scrollTo.toCapturePoint()
-                val scrollResult = performGestureWithRetry(
-                    message = "商店滑动失败",
-                    awaitRunPermission = awaitRunPermission,
-                ) {
-                    gateway.swipe(
-                        from = scrollFrom,
-                        to = scrollTo,
-                        durationMs = SCROLL_DURATION_MS,
-                    )
-                }
+                val scrollResult = operations.swipe(
+                    operationId = "shop.scroll",
+                    from = scrollFrom,
+                    to = scrollTo,
+                    durationMs = SCROLL_DURATION_MS,
+                    policy = OperationPolicy.idempotent(),
+                )
                 logger.info(
                     "gesture.scroll",
                     "from" to "${scrollFrom.x},${scrollFrom.y}",
@@ -157,6 +162,7 @@ class BookmarkStateMachine(
                     stats = stats,
                     gateway = gateway,
                     awaitRunPermission = awaitRunPermission,
+                    operations = operations,
                     publish = ::publish,
                     onDiagnostic = onDiagnostic,
                 )
@@ -165,8 +171,8 @@ class BookmarkStateMachine(
                 publish(AutomationPhase.REFRESHING, "准备刷新秘密商店")
                 tapAction(
                     action = ShopAction.REFRESH,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
+                    operations = operations,
+                    policy = OperationPolicy.reconciliationRequired(),
                     failureMessage = "未找到刷新按钮",
                 )
                 when (
@@ -194,19 +200,23 @@ class BookmarkStateMachine(
 
                 tapAction(
                     action = ShopAction.CONFIRM_REFRESH,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
+                    operations = operations,
+                    policy = OperationPolicy.reconciliationRequired(),
                     failureMessage = "未找到刷新确认按钮",
                 )
                 publish(AutomationPhase.WAITING_FOR_REFRESH, "等待新商品加载")
-                waitForPage(
-                    expected = ShopPage.SHOP,
-                    timeoutMs = PAGE_TIMEOUT_MS,
-                    consecutiveMatches = 2,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
-                    onDiagnostic = onDiagnostic,
-                )
+                requireConfirmedEffect(
+                    uncertainMessage = "已点击刷新确认，但未能确认刷新结果；天空石可能已消耗",
+                ) {
+                    waitForPage(
+                        expected = ShopPage.SHOP,
+                        timeoutMs = PAGE_TIMEOUT_MS,
+                        consecutiveMatches = 2,
+                        gateway = gateway,
+                        awaitRunPermission = awaitRunPermission,
+                        onDiagnostic = onDiagnostic,
+                    )
+                }
                 stats = stats.copy(
                     completedRefreshes = stats.completedRefreshes + 1,
                 )
@@ -234,6 +244,23 @@ class BookmarkStateMachine(
                 message = stop.message ?: "自动化已停止",
                 successful = false,
             )
+        } catch (error: OperationExecutionException) {
+            val reason = error.failure.kind.toStopReason()
+            logger.warn(
+                "machine.operation_failed",
+                "operation" to error.failure.operationId,
+                "kind" to error.failure.kind,
+                "message" to error.message,
+                "refreshes" to stats.completedRefreshes,
+            )
+            diagnose(gateway, reason.name, onDiagnostic)
+            stats = stats.copy(finishedAtElapsedMs = clock.elapsedRealtime())
+            MachineResult(
+                reason = reason,
+                stats = stats,
+                message = error.message ?: "自动化操作失败",
+                successful = false,
+            )
         }
     }
 
@@ -242,6 +269,7 @@ class BookmarkStateMachine(
         stats: RunStats,
         gateway: ScreenGateway,
         awaitRunPermission: suspend () -> Unit,
+        operations: OperationExecutor,
         publish: (AutomationPhase, String, Double?) -> Unit,
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ): RunStats {
@@ -264,6 +292,8 @@ class BookmarkStateMachine(
                 else -> {
                     try {
                         onDiagnostic(frame, "unknown_page_scan_${frame.sequence}")
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (error: Throwable) {
                         logger.error(
                             "diagnostic.save_failed",
@@ -313,12 +343,11 @@ class BookmarkStateMachine(
                 "购买${currentTarget.type.displayName()}",
                 currentTarget.confidence,
             )
-            val purchaseResult = performGestureWithRetry(
-                message = "购买按钮点击失败",
-                awaitRunPermission = awaitRunPermission,
-            ) {
-                gateway.tap(currentTarget.purchaseButton)
-            }
+            val purchaseResult = operations.tap(
+                operationId = "shop.open_purchase_confirmation",
+                point = currentTarget.purchaseButton,
+                policy = OperationPolicy.reconciliationRequired(),
+            )
             logger.info(
                 "gesture.purchase_button",
                 "type" to currentTarget.type,
@@ -377,18 +406,22 @@ class BookmarkStateMachine(
 
             tapAction(
                 action = ShopAction.CONFIRM_PURCHASE,
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
+                operations = operations,
+                policy = OperationPolicy.reconciliationRequired(),
                 failureMessage = "未找到购买确认按钮",
             )
-            waitForPage(
-                expected = ShopPage.SHOP,
-                timeoutMs = PAGE_TIMEOUT_MS,
-                consecutiveMatches = 1,
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
-                onDiagnostic = onDiagnostic,
-            )
+            requireConfirmedEffect(
+                uncertainMessage = "已点击购买确认，但未能确认购买结果；金币可能已消耗",
+            ) {
+                waitForPage(
+                    expected = ShopPage.SHOP,
+                    timeoutMs = PAGE_TIMEOUT_MS,
+                    consecutiveMatches = 1,
+                    gateway = gateway,
+                    awaitRunPermission = awaitRunPermission,
+                    onDiagnostic = onDiagnostic,
+                )
+            }
             currentStats = when (currentTarget.type) {
                 ItemType.COVENANT_BOOKMARK -> currentStats.copy(
                     covenantBookmarksBought = currentStats.covenantBookmarksBought + 1,
@@ -433,6 +466,7 @@ class BookmarkStateMachine(
                     HomeNavigationFailure.LOW_CONFIDENCE -> StopReason.LOW_CONFIDENCE
                     HomeNavigationFailure.TIMEOUT -> StopReason.TIMEOUT
                     HomeNavigationFailure.GESTURE_FAILED -> StopReason.GESTURE_FAILED
+                    HomeNavigationFailure.UNCERTAIN_EFFECT -> StopReason.UNCERTAIN_EFFECT
                 },
                 message = error.message ?: "返回主页失败",
             )
@@ -441,11 +475,11 @@ class BookmarkStateMachine(
 
     private suspend fun tapAction(
         action: ShopAction,
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
+        operations: OperationExecutor,
+        policy: OperationPolicy,
         failureMessage: String,
     ) {
-        val actionMatch = captureChecked(gateway).use { frame ->
+        val actionMatch = operations.capture("shop.find_${action.name.lowercase()}").use { frame ->
             vision.findAction(frame, action)
         }
         val point = actionMatch.center
@@ -459,12 +493,11 @@ class BookmarkStateMachine(
         if (!actionMatch.matched || point == null) {
             throw MachineStop(StopReason.LOW_CONFIDENCE, failureMessage)
         }
-        val result = performGestureWithRetry(
-            message = failureMessage,
-            awaitRunPermission = awaitRunPermission,
-        ) {
-            gateway.tap(point)
-        }
+        val result = operations.tap(
+            operationId = "shop.${action.name.lowercase()}",
+            point = point,
+            policy = policy,
+        )
         logger.info(
             "gesture.action",
             "action" to action,
@@ -483,41 +516,64 @@ class BookmarkStateMachine(
     ) {
         var count = 0
         var unknownDiagnosticSaved = false
-        val startedAt = clock.elapsedRealtime()
-        while (clock.elapsedRealtime() - startedAt < timeoutMs) {
-            awaitRunPermission()
-            val page = captureChecked(gateway).use { frame ->
-                val detected = vision.detectPage(frame)
-                logger.debug(
-                    "wait.page",
-                    "sequence" to frame.sequence,
-                    "expected" to expected,
-                    "detected" to detected,
-                    "matchCount" to count,
-                )
-                if (detected == ShopPage.UNKNOWN && !unknownDiagnosticSaved) {
-                    try {
-                        onDiagnostic(frame, "unknown_wait_${expected.name}_${frame.sequence}")
-                        unknownDiagnosticSaved = true
-                    } catch (error: Throwable) {
-                        logger.error(
-                            "diagnostic.save_failed",
-                            error,
+        val operations = OperationExecutor(
+            gateway = gateway,
+            clock = clock,
+            awaitRunPermission = awaitRunPermission,
+            onDiagnostic = onDiagnostic,
+            logger = logger,
+        )
+        try {
+            operations.waitUntil<Unit>(
+                operationId = "shop.wait_${expected.name.lowercase()}",
+                timeoutMs = timeoutMs,
+                pollIntervalMs = POLL_INTERVAL_MS,
+                diagnosticReason = "wait_${expected.name}",
+            ) {
+                val page = operations.capture("shop.observe_${expected.name.lowercase()}")
+                    .use { frame ->
+                        val detected = vision.detectPage(frame)
+                        logger.debug(
+                            "wait.page",
                             "sequence" to frame.sequence,
+                            "expected" to expected,
+                            "detected" to detected,
+                            "matchCount" to count,
                         )
+                        if (detected == ShopPage.UNKNOWN && !unknownDiagnosticSaved) {
+                            try {
+                                onDiagnostic(
+                                    frame,
+                                    "unknown_wait_${expected.name}_${frame.sequence}",
+                                )
+                                unknownDiagnosticSaved = true
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                logger.error(
+                                    "diagnostic.save_failed",
+                                    error,
+                                    "sequence" to frame.sequence,
+                                )
+                            }
+                        }
+                        detected
                     }
+                if (page == ShopPage.RESOURCE_INSUFFICIENT) {
+                    throw MachineStop(
+                        StopReason.RESOURCE_INSUFFICIENT,
+                        "资源不足，已停止",
+                    )
                 }
-                detected
+                count = if (page == expected) count + 1 else 0
+                Unit.takeIf { count >= consecutiveMatches }
             }
-            if (page == ShopPage.RESOURCE_INSUFFICIENT) {
-                throw MachineStop(StopReason.RESOURCE_INSUFFICIENT, "资源不足，已停止")
+        } catch (error: OperationExecutionException) {
+            if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
+                throw MachineStop(StopReason.TIMEOUT, "等待 ${expected.name} 超时")
             }
-            count = if (page == expected) count + 1 else 0
-            if (count >= consecutiveMatches) return
-            clock.delay(POLL_INTERVAL_MS)
+            throw error
         }
-        diagnose(gateway, "wait_${expected.name}", onDiagnostic)
-        throw MachineStop(StopReason.TIMEOUT, "等待 ${expected.name} 超时")
     }
 
     private suspend fun waitForAnyPage(
@@ -528,41 +584,58 @@ class BookmarkStateMachine(
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ): ShopPage {
         var unknownDiagnosticSaved = false
-        val startedAt = clock.elapsedRealtime()
-        while (clock.elapsedRealtime() - startedAt < timeoutMs) {
-            awaitRunPermission()
-            val page = captureChecked(gateway).use { frame ->
-                val detected = vision.detectPage(frame)
-                logger.debug(
-                    "wait.any_page",
-                    "sequence" to frame.sequence,
-                    "expected" to expected.joinToString(),
-                    "detected" to detected,
-                )
-                if (detected == ShopPage.UNKNOWN && !unknownDiagnosticSaved) {
-                    try {
-                        onDiagnostic(frame, "unknown_wait_any_${frame.sequence}")
-                        unknownDiagnosticSaved = true
-                    } catch (error: Throwable) {
-                        logger.error(
-                            "diagnostic.save_failed",
-                            error,
-                            "sequence" to frame.sequence,
-                        )
+        val operations = OperationExecutor(
+            gateway = gateway,
+            clock = clock,
+            awaitRunPermission = awaitRunPermission,
+            onDiagnostic = onDiagnostic,
+            logger = logger,
+        )
+        try {
+            return operations.waitUntil(
+                operationId = "shop.wait_any_page",
+                timeoutMs = timeoutMs,
+                pollIntervalMs = POLL_INTERVAL_MS,
+                diagnosticReason = "wait_any_page",
+            ) {
+                operations.capture("shop.observe_any_page").use { frame ->
+                    val detected = vision.detectPage(frame)
+                    logger.debug(
+                        "wait.any_page",
+                        "sequence" to frame.sequence,
+                        "expected" to expected.joinToString(),
+                        "detected" to detected,
+                    )
+                    if (detected == ShopPage.UNKNOWN && !unknownDiagnosticSaved) {
+                        try {
+                            onDiagnostic(frame, "unknown_wait_any_${frame.sequence}")
+                            unknownDiagnosticSaved = true
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Throwable) {
+                            logger.error(
+                                "diagnostic.save_failed",
+                                error,
+                                "sequence" to frame.sequence,
+                            )
+                        }
                     }
+                    detected.takeIf { it in expected }
                 }
-                detected
             }
-            if (page in expected) return page
-            clock.delay(POLL_INTERVAL_MS)
+        } catch (error: OperationExecutionException) {
+            if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
+                throw MachineStop(StopReason.TIMEOUT, "等待页面变化超时")
+            }
+            throw error
         }
-        diagnose(gateway, "wait_any_page", onDiagnostic)
-        throw MachineStop(StopReason.TIMEOUT, "等待页面变化超时")
     }
 
     private suspend fun captureChecked(gateway: ScreenGateway): ScreenFrame {
         val frame = try {
             gateway.capture()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             throw MachineStop(
                 StopReason.SCREENSHOT_FAILED,
@@ -592,37 +665,12 @@ class BookmarkStateMachine(
         return frame
     }
 
-    private suspend fun performGestureWithRetry(
-        message: String,
-        awaitRunPermission: suspend () -> Unit,
-        gesture: suspend () -> GestureResult,
-    ): GestureResult {
-        repeat(GESTURE_MAX_ATTEMPTS) { attemptIndex ->
-            awaitRunPermission()
-            val result = gesture()
-            if (result == GestureResult.COMPLETED) return result
-            if (
-                result != GestureResult.CANCELLED ||
-                attemptIndex == GESTURE_MAX_ATTEMPTS - 1
-            ) {
-                throw MachineStop(StopReason.GESTURE_FAILED, "$message：$result")
-            }
-            logger.warn(
-                "gesture.cancelled_retrying",
-                "message" to message,
-                "attempt" to attemptIndex + 1,
-            )
-            clock.delay(GESTURE_RETRY_DELAY_MS)
-        }
-        error("不可达的手势重试状态")
-    }
-
     private suspend fun diagnose(
         gateway: ScreenGateway,
         reason: String,
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ) {
-        runCatching {
+        try {
             gateway.capture().use { frame ->
                 onDiagnostic(frame, reason)
                 logger.info(
@@ -631,7 +679,9 @@ class BookmarkStateMachine(
                     "sequence" to frame.sequence,
                 )
             }
-        }.onFailure { error ->
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
             logger.error("diagnostic.capture_failed", error, "reason" to reason)
         }
     }
@@ -646,6 +696,37 @@ class BookmarkStateMachine(
         y = (y.toDouble() / visionConfig.referenceHeight * REFERENCE_HEIGHT).roundToInt(),
     )
 
+    private fun ExecutionFailureKind.toStopReason(): StopReason = when (this) {
+        ExecutionFailureKind.SCREENSHOT_FAILED -> StopReason.SCREENSHOT_FAILED
+        ExecutionFailureKind.INVALID_RESOLUTION -> StopReason.INVALID_RESOLUTION
+        ExecutionFailureKind.GESTURE_FAILED -> StopReason.GESTURE_FAILED
+        ExecutionFailureKind.UNCERTAIN_EFFECT -> StopReason.UNCERTAIN_EFFECT
+        ExecutionFailureKind.TIMEOUT -> StopReason.TIMEOUT
+    }
+
+    private suspend fun requireConfirmedEffect(
+        uncertainMessage: String,
+        block: suspend () -> Unit,
+    ) {
+        try {
+            block()
+        } catch (stop: MachineStop) {
+            if (stop.reason == StopReason.TIMEOUT) {
+                throw MachineStop(StopReason.UNCERTAIN_EFFECT, uncertainMessage)
+            }
+            throw stop
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            logger.error(
+                "operation.postcondition_failed",
+                error,
+                "message" to uncertainMessage,
+            )
+            throw MachineStop(StopReason.UNCERTAIN_EFFECT, uncertainMessage)
+        }
+    }
+
     private class MachineStop(
         val reason: StopReason,
         message: String,
@@ -658,8 +739,6 @@ class BookmarkStateMachine(
         const val POLL_INTERVAL_MS = 450L
         const val SCROLL_DURATION_MS = 500L
         const val AFTER_SCROLL_DELAY_MS = 800L
-        const val GESTURE_MAX_ATTEMPTS = 3
-        const val GESTURE_RETRY_DELAY_MS = 160L
         const val TARGET_REVALIDATE_TOLERANCE_PX = 100
     }
 }

@@ -44,7 +44,8 @@ data class TemplateConfig(
 object TemplateIds {
     const val GLOBAL_MENU_BUTTON = "global_menu_button"
     const val GLOBAL_MENU_BUTTON_PLAIN = "global_menu_button_plain"
-    const val GLOBAL_RETURN_HOME = "global_return_home"
+    const val GLOBAL_RETURN_TO_LOBBY = "global_return_to_lobby"
+    const val GLOBAL_LOBBY_ANCHOR = "global_lobby_anchor"
     const val SHOP_LOBBY_SECRET_SHOP = "shop_lobby_secret_shop"
     const val SHOP_ANCHOR = "shop_anchor"
     const val COVENANT_ITEM = "covenant_item"
@@ -75,4 +76,27 @@ object TemplateIds {
     const val HUNT_MANAGED_STATUS = "hunt_managed_status"
     const val HUNT_MANAGED_COMPLETE = "hunt_managed_complete"
     const val HUNT_MANAGED_PANEL = "hunt_managed_panel"
+}
+
+object TemplateRequirements {
+    val GLOBAL_NAVIGATION: Set<String> = setOf(
+        TemplateIds.GLOBAL_MENU_BUTTON,
+        TemplateIds.GLOBAL_MENU_BUTTON_PLAIN,
+        TemplateIds.GLOBAL_RETURN_TO_LOBBY,
+        TemplateIds.GLOBAL_LOBBY_ANCHOR,
+    )
+
+    val SECRET_SHOP: Set<String> = setOf(
+        TemplateIds.SHOP_LOBBY_SECRET_SHOP,
+        TemplateIds.SHOP_ANCHOR,
+        TemplateIds.COVENANT_ITEM,
+        TemplateIds.MYSTIC_ITEM,
+        TemplateIds.PURCHASE_BUTTON,
+        TemplateIds.COVENANT_CONFIRM,
+        TemplateIds.MYSTIC_CONFIRM,
+        TemplateIds.CONFIRM_PURCHASE,
+        TemplateIds.REFRESH_BUTTON,
+        TemplateIds.REFRESH_DIALOG,
+        TemplateIds.CONFIRM_REFRESH,
+    )
 }

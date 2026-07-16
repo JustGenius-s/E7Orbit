@@ -9,15 +9,21 @@ import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunStats
 import com.e7orbit.model.RunSummary
+import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.StopReason
 import com.e7orbit.vision.VisionConfig
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,29 +32,86 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class AutomationRuntime(
+internal interface ShopRuntimePersistence {
+    suspend fun saveConfig(config: RunConfig)
+    suspend fun saveSummary(summary: RunSummary)
+}
+
+internal fun interface ShopRuntimeDiagnosticSink {
+    suspend fun save(frame: ScreenFrame, reason: String): String?
+}
+
+private class RepositoryShopRuntimePersistence(
+    private val repository: SettingsRepository,
+) : ShopRuntimePersistence {
+    override suspend fun saveConfig(config: RunConfig) = repository.saveConfig(config)
+
+    override suspend fun saveSummary(summary: RunSummary) = repository.saveSummary(summary)
+}
+
+private class StoreShopRuntimeDiagnosticSink(
+    private val store: DiagnosticStore,
+) : ShopRuntimeDiagnosticSink {
+    override suspend fun save(frame: ScreenFrame, reason: String): String =
+        store.save(frame, reason).absolutePath
+}
+
+class AutomationRuntime internal constructor(
     private val vision: ShopVision,
     private val visionConfig: VisionConfig,
-    private val settingsRepository: SettingsRepository,
-    private val diagnosticStore: DiagnosticStore,
+    private val persistence: ShopRuntimePersistence,
+    private val diagnosticSink: ShopRuntimeDiagnosticSink,
     private val logger: OrbitLogger = NoOpOrbitLogger,
     private val captureReady: () -> Boolean = { true },
     private val clock: AutomationClock = SystemAutomationClock,
     private val runCoordinator: AutomationRunCoordinator? = null,
     private val homeNavigator: HomeNavigator? = null,
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : AutomationController {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    constructor(
+        vision: ShopVision,
+        visionConfig: VisionConfig,
+        settingsRepository: SettingsRepository,
+        diagnosticStore: DiagnosticStore,
+        logger: OrbitLogger = NoOpOrbitLogger,
+        captureReady: () -> Boolean = { true },
+        clock: AutomationClock = SystemAutomationClock,
+        runCoordinator: AutomationRunCoordinator? = null,
+        homeNavigator: HomeNavigator? = null,
+    ) : this(
+        vision = vision,
+        visionConfig = visionConfig,
+        persistence = RepositoryShopRuntimePersistence(settingsRepository),
+        diagnosticSink = StoreShopRuntimeDiagnosticSink(diagnosticStore),
+        logger = logger,
+        captureReady = captureReady,
+        clock = clock,
+        runCoordinator = runCoordinator,
+        homeNavigator = homeNavigator,
+        dispatcher = Dispatchers.Default,
+    )
+
+    private class ActiveRun(
+        val lease: RunLease,
+        val job: Job,
+    ) {
+        val stopRequested = AtomicBoolean(false)
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val startMutex = Mutex()
+    private val coordinator = runCoordinator ?: AutomationRunCoordinator()
     private val gatewayRef = AtomicReference<ScreenGateway?>()
+    private val sessionGateway = SwitchingScreenGateway(gatewayRef::get)
+    private val activeRunRef = AtomicReference<ActiveRun?>()
     private val paused = MutableStateFlow(false)
     private val _status = MutableStateFlow(
         AutomationStatus(
-            templatesReady = vision.health().isReady,
+            templatesReady = templatesReady(),
         ),
     )
     override val status: StateFlow<AutomationStatus> = _status.asStateFlow()
 
-    private var runJob: Job? = null
     private var phaseBeforePause = AutomationPhase.IDLE
 
     fun attachGateway(gateway: ScreenGateway) {
@@ -58,7 +121,10 @@ class AutomationRuntime(
     }
 
     fun detachGateway(gateway: ScreenGateway) {
-        gatewayRef.compareAndSet(gateway, null)
+        if (!gatewayRef.compareAndSet(gateway, null)) {
+            logger.debug("runtime.gateway.detach_ignored")
+            return
+        }
         _status.value = _status.value.copy(serviceReady = false)
         logger.warn("runtime.gateway.detached", "phase" to _status.value.phase)
         if (_status.value.isRunning || _status.value.phase == AutomationPhase.PAUSED) {
@@ -72,10 +138,15 @@ class AutomationRuntime(
 
     override suspend fun start(config: RunConfig) {
         startMutex.withLock {
-            if (runJob?.isActive == true) return
+            activeRunRef.get()?.let { activeRun ->
+                if (!_status.value.isTerminal) return
+                activeRun.job.join()
+                completeRun(activeRun)
+            }
             val normalized = config.normalized()
             val gateway = gatewayRef.get()
-            val health = vision.health()
+            val templatesReady = templatesReady()
+            val missingTemplates = missingTemplates()
             logger.info(
                 "runtime.start.requested",
                 "covenant" to normalized.buyCovenantBookmarks,
@@ -84,8 +155,8 @@ class AutomationRuntime(
                 "threshold" to normalized.matchThreshold,
                 "gatewayReady" to (gateway != null),
                 "captureReady" to captureReady(),
-                "templatesReady" to health.isReady,
-                "missingTemplates" to health.missingTemplateIds.joinToString(),
+                "templatesReady" to templatesReady,
+                "missingTemplates" to missingTemplates.joinToString(),
             )
 
             when {
@@ -116,16 +187,17 @@ class AutomationRuntime(
                     return
                 }
 
-                !health.isReady -> {
+                !templatesReady -> {
                     rejectStart(
                         normalized,
                         StopReason.TEMPLATES_MISSING,
-                        "识图模板未就绪：${vision.health().missingTemplateIds.joinToString()}",
+                        "识图模板未就绪：${missingTemplates.joinToString()}",
                     )
                     return
                 }
             }
-            if (runCoordinator?.tryAcquire(AutomationKind.SHOP) == false) {
+            val lease = coordinator.tryAcquire(AutomationKind.SHOP)
+            if (lease == null) {
                 rejectStart(
                     normalized,
                     StopReason.INVALID_CONFIGURATION,
@@ -134,7 +206,6 @@ class AutomationRuntime(
                 return
             }
 
-            settingsRepository.saveConfig(normalized)
             paused.value = false
             _status.value = AutomationStatus(
                 phase = AutomationPhase.WAITING_FOR_SHOP,
@@ -142,11 +213,21 @@ class AutomationRuntime(
                 stats = RunStats(startedAtElapsedMs = clock.elapsedRealtime()),
                 message = "正在定位游戏主页",
                 serviceReady = true,
-                templatesReady = vision.health().isReady,
+                templatesReady = templatesReady,
             )
-            runJob = scope.launch {
-                runMachine(normalized, gateway)
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                runSession(
+                    config = normalized,
+                    gateway = sessionGateway,
+                    lease = lease,
+                )
             }
+            val activeRun = ActiveRun(lease = lease, job = job)
+            job.invokeOnCompletion { completeRun(activeRun) }
+            check(activeRunRef.compareAndSet(null, activeRun)) {
+                "Automation run was installed concurrently"
+            }
+            job.start()
             logger.info("runtime.start.accepted")
         }
     }
@@ -177,9 +258,24 @@ class AutomationRuntime(
 
     override fun stop() {
         logger.info("runtime.stop.requested", "phase" to _status.value.phase)
+        val currentPhase = _status.value.phase
+            .takeUnless { it == AutomationPhase.PAUSED }
+            ?: phaseBeforePause
+        val uncertainMessage = when (currentPhase) {
+            AutomationPhase.VERIFYING_PURCHASE ->
+                "已停止；购买确认可能刚刚生效，请核对物品与金币"
+            AutomationPhase.REFRESHING,
+            AutomationPhase.WAITING_FOR_REFRESH,
+            -> "已停止；刷新确认可能刚刚生效，请核对天空石与商店页面"
+            else -> null
+        }
         stopWithReason(
-            reason = StopReason.USER_STOPPED,
-            message = "已由用户停止",
+            reason = if (uncertainMessage == null) {
+                StopReason.USER_STOPPED
+            } else {
+                StopReason.UNCERTAIN_EFFECT
+            },
+            message = uncertainMessage ?: "已由用户停止",
             phase = AutomationPhase.COMPLETED,
         )
     }
@@ -187,8 +283,12 @@ class AutomationRuntime(
     fun restart() {
         val current = _status.value
         if (!current.isTerminal) return
+        val runToAwait = activeRunRef.get()
         logger.info("runtime.restart.requested", "reason" to current.stopReason)
-        scope.launch { start(current.config) }
+        scope.launch {
+            awaitRunCompletion(runToAwait)
+            start(current.config)
+        }
     }
 
     fun dismissTerminalStatus() {
@@ -200,27 +300,59 @@ class AutomationRuntime(
             config = current.config,
             message = "尚未运行",
             serviceReady = gatewayRef.get() != null,
-            templatesReady = vision.health().isReady,
+            templatesReady = templatesReady(),
         )
     }
 
     fun refreshHealth() {
         _status.value = _status.value.copy(
             serviceReady = gatewayRef.get() != null,
-            templatesReady = vision.health().isReady,
+            templatesReady = templatesReady(),
         )
     }
 
     fun shutdown() {
         logger.info("runtime.shutdown")
-        runJob?.cancel()
-        runCoordinator?.release(AutomationKind.SHOP)
+        activeRunRef.get()?.let { activeRun ->
+            activeRun.stopRequested.set(true)
+            activeRun.job.cancel()
+        }
         scope.cancel()
+    }
+
+    private suspend fun runSession(
+        config: RunConfig,
+        gateway: ScreenGateway,
+        lease: RunLease,
+    ) {
+        try {
+            persistence.saveConfig(config)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            logger.error("runtime.config.save_failed", error)
+            publishIfCurrent(lease) { current ->
+                current.copy(
+                    phase = AutomationPhase.ERROR,
+                    message = "保存自动刷新设置失败：${error.message.orEmpty()}",
+                    stopReason = StopReason.INTERNAL_ERROR,
+                )
+            }
+            return
+        }
+
+        currentCoroutineContext().ensureActive()
+        runMachine(
+            config = config,
+            gateway = gateway,
+            lease = lease,
+        )
     }
 
     private suspend fun runMachine(
         config: RunConfig,
         gateway: ScreenGateway,
+        lease: RunLease,
     ) {
         val machine = BookmarkStateMachine(
             vision = vision,
@@ -248,20 +380,22 @@ class AutomationRuntime(
                         "confidence" to confidence,
                         "message" to message,
                     )
-                    _status.value = _status.value.copy(
-                        phase = if (paused.value) AutomationPhase.PAUSED else phase,
-                        stats = stats,
-                        message = message,
-                        lastConfidence = confidence,
-                    )
+                    publishIfCurrent(lease) { current ->
+                        current.copy(
+                            phase = if (paused.value) AutomationPhase.PAUSED else phase,
+                            stats = stats,
+                            message = message,
+                            lastConfidence = confidence,
+                        )
+                    }
                 },
                 onDiagnostic = { frame, reason ->
-                    val file = diagnosticStore.save(frame, reason)
+                    val file = diagnosticSink.save(frame, reason)
                     logger.info(
                         "diagnostic.saved",
                         "reason" to reason,
                         "sequence" to frame.sequence,
-                        "file" to file.absolutePath,
+                        "file" to file.orEmpty(),
                     )
                 },
             )
@@ -270,12 +404,14 @@ class AutomationRuntime(
             } else {
                 AutomationPhase.ERROR
             }
-            _status.value = _status.value.copy(
-                phase = terminalPhase,
-                stats = result.stats,
-                message = result.message,
-                stopReason = result.reason,
-            )
+            publishIfCurrent(lease) { current ->
+                current.copy(
+                    phase = terminalPhase,
+                    stats = result.stats,
+                    message = result.message,
+                    stopReason = result.reason,
+                )
+            }
             logger.info(
                 "runtime.finished",
                 "successful" to result.successful,
@@ -283,25 +419,26 @@ class AutomationRuntime(
                 "message" to result.message,
                 "refreshes" to result.stats.completedRefreshes,
             )
-            persistSummary(result.stats, result.reason)
+            if (canPublish(lease)) {
+                persistSummary(result.stats, result.reason)
+            }
         } catch (cancelled: CancellationException) {
             logger.warn("runtime.cancelled", "message" to cancelled.message)
             throw cancelled
         } catch (error: Throwable) {
             logger.error("runtime.failed", error, "phase" to _status.value.phase)
-            val finalStats = _status.value.stats.copy(
-                finishedAtElapsedMs = clock.elapsedRealtime(),
-            )
-            _status.value = _status.value.copy(
-                phase = AutomationPhase.ERROR,
-                stats = finalStats,
-                message = "运行异常：${error.message.orEmpty()}",
-                stopReason = StopReason.INTERNAL_ERROR,
-            )
-            persistSummary(finalStats, StopReason.INTERNAL_ERROR)
-        } finally {
-            runJob = null
-            runCoordinator?.release(AutomationKind.SHOP)
+            if (canPublish(lease)) {
+                val finalStats = _status.value.stats.copy(
+                    finishedAtElapsedMs = clock.elapsedRealtime(),
+                )
+                _status.value = _status.value.copy(
+                    phase = AutomationPhase.ERROR,
+                    stats = finalStats,
+                    message = "运行异常：${error.message.orEmpty()}",
+                    stopReason = StopReason.INTERNAL_ERROR,
+                )
+                persistSummary(finalStats, StopReason.INTERNAL_ERROR)
+            }
         }
     }
 
@@ -321,9 +458,17 @@ class AutomationRuntime(
             message = message,
             stopReason = reason,
             serviceReady = gatewayRef.get() != null,
-            templatesReady = vision.health().isReady,
+            templatesReady = templatesReady(),
         )
     }
+
+    private fun templatesReady(): Boolean =
+        vision.health().isReady && (homeNavigator?.health()?.isReady ?: true)
+
+    private fun missingTemplates(): List<String> = buildList {
+        addAll(vision.health().missingTemplateIds)
+        homeNavigator?.health()?.missingTemplateIds?.let(::addAll)
+    }.distinct()
 
     private fun stopWithReason(
         reason: StopReason,
@@ -336,9 +481,10 @@ class AutomationRuntime(
             "phase" to phase,
             "message" to message,
         )
-        runJob?.cancel(CancellationException(message))
-        runJob = null
-        runCoordinator?.release(AutomationKind.SHOP)
+        activeRunRef.get()?.let { activeRun ->
+            activeRun.stopRequested.set(true)
+            activeRun.job.cancel(CancellationException(message))
+        }
         paused.value = false
         val finalStats = _status.value.stats.copy(
             finishedAtElapsedMs = clock.elapsedRealtime(),
@@ -356,7 +502,7 @@ class AutomationRuntime(
         stats: RunStats,
         reason: StopReason,
     ) {
-        settingsRepository.saveSummary(
+        persistence.saveSummary(
             RunSummary(
                 completedRefreshes = stats.completedRefreshes,
                 shopPagesScanned = stats.shopPagesScanned,
@@ -367,6 +513,37 @@ class AutomationRuntime(
                 stopReason = reason.name,
                 completedAtEpochMs = System.currentTimeMillis(),
             ),
+        )
+    }
+
+    private fun canPublish(lease: RunLease): Boolean {
+        val activeRun = activeRunRef.get()
+        return activeRun?.lease == lease && !activeRun.stopRequested.get()
+    }
+
+    private inline fun publishIfCurrent(
+        lease: RunLease,
+        update: (AutomationStatus) -> AutomationStatus,
+    ) {
+        if (canPublish(lease)) {
+            _status.value = update(_status.value)
+        }
+    }
+
+    private suspend fun awaitRunCompletion(activeRun: ActiveRun?) {
+        activeRun ?: return
+        activeRun.job.join()
+        completeRun(activeRun)
+    }
+
+    private fun completeRun(activeRun: ActiveRun) {
+        val released = coordinator.release(activeRun.lease)
+        val removed = activeRunRef.compareAndSet(activeRun, null)
+        logger.debug(
+            "runtime.run.completed",
+            "lease" to activeRun.lease.token,
+            "removed" to removed,
+            "released" to released,
         )
     }
 }

@@ -9,14 +9,20 @@ import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStats
 import com.e7orbit.model.HuntStatus
 import com.e7orbit.model.HuntStopReason
+import com.e7orbit.model.ScreenFrame
 import com.e7orbit.vision.VisionConfig
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,27 +31,82 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class HuntRuntime(
+internal fun interface HuntRuntimePersistence {
+    suspend fun saveConfig(config: HuntConfig)
+}
+
+internal fun interface HuntRuntimeDiagnosticSink {
+    suspend fun save(frame: ScreenFrame, reason: String)
+}
+
+private class RepositoryHuntRuntimePersistence(
+    private val repository: SettingsRepository,
+) : HuntRuntimePersistence {
+    override suspend fun saveConfig(config: HuntConfig) = repository.saveHuntConfig(config)
+}
+
+private class StoreHuntRuntimeDiagnosticSink(
+    private val store: DiagnosticStore,
+) : HuntRuntimeDiagnosticSink {
+    override suspend fun save(frame: ScreenFrame, reason: String) {
+        store.save(frame, reason)
+    }
+}
+
+class HuntRuntime internal constructor(
     private val vision: HuntVision,
     private val visionConfig: VisionConfig,
-    private val settingsRepository: SettingsRepository,
-    private val diagnosticStore: DiagnosticStore,
+    private val persistence: HuntRuntimePersistence,
+    private val diagnosticSink: HuntRuntimeDiagnosticSink,
     private val logger: OrbitLogger = NoOpOrbitLogger,
     private val captureReady: () -> Boolean = { true },
     private val clock: AutomationClock = SystemAutomationClock,
     private val runCoordinator: AutomationRunCoordinator? = null,
     private val homeNavigator: HomeNavigator? = null,
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    constructor(
+        vision: HuntVision,
+        visionConfig: VisionConfig,
+        settingsRepository: SettingsRepository,
+        diagnosticStore: DiagnosticStore,
+        logger: OrbitLogger = NoOpOrbitLogger,
+        captureReady: () -> Boolean = { true },
+        clock: AutomationClock = SystemAutomationClock,
+        runCoordinator: AutomationRunCoordinator? = null,
+        homeNavigator: HomeNavigator? = null,
+    ) : this(
+        vision = vision,
+        visionConfig = visionConfig,
+        persistence = RepositoryHuntRuntimePersistence(settingsRepository),
+        diagnosticSink = StoreHuntRuntimeDiagnosticSink(diagnosticStore),
+        logger = logger,
+        captureReady = captureReady,
+        clock = clock,
+        runCoordinator = runCoordinator,
+        homeNavigator = homeNavigator,
+        dispatcher = Dispatchers.Default,
+    )
+
+    private class ActiveRun(
+        val lease: RunLease,
+        val job: Job,
+    ) {
+        val stopRequested = AtomicBoolean(false)
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val startMutex = Mutex()
+    private val coordinator = runCoordinator ?: AutomationRunCoordinator()
     private val gatewayRef = AtomicReference<ScreenGateway?>()
+    private val sessionGateway = SwitchingScreenGateway(gatewayRef::get)
+    private val activeRunRef = AtomicReference<ActiveRun?>()
     private val paused = MutableStateFlow(false)
     private val _status = MutableStateFlow(
         HuntStatus(templatesReady = templatesReady()),
     )
     val status: StateFlow<HuntStatus> = _status.asStateFlow()
 
-    private var runJob: Job? = null
     private var phaseBeforePause = HuntPhase.IDLE
 
     fun attachGateway(gateway: ScreenGateway) {
@@ -54,7 +115,7 @@ class HuntRuntime(
     }
 
     fun detachGateway(gateway: ScreenGateway) {
-        gatewayRef.compareAndSet(gateway, null)
+        if (!gatewayRef.compareAndSet(gateway, null)) return
         _status.value = _status.value.copy(serviceReady = false)
         if (_status.value.isRunning || _status.value.phase == HuntPhase.PAUSED) {
             stopWithReason(
@@ -67,7 +128,11 @@ class HuntRuntime(
 
     suspend fun start(config: HuntConfig) {
         startMutex.withLock {
-            if (runJob?.isActive == true) return
+            activeRunRef.get()?.let { activeRun ->
+                if (!_status.value.isTerminal) return
+                activeRun.job.join()
+                completeRun(activeRun)
+            }
             val normalized = config.normalized()
             val gateway = gatewayRef.get()
             val health = vision.health()
@@ -100,7 +165,8 @@ class HuntRuntime(
                     return
                 }
             }
-            if (runCoordinator?.tryAcquire(AutomationKind.HUNT) == false) {
+            val lease = coordinator.tryAcquire(AutomationKind.HUNT)
+            if (lease == null) {
                 rejectStart(
                     normalized,
                     HuntStopReason.INVALID_CONFIGURATION,
@@ -109,7 +175,6 @@ class HuntRuntime(
                 return
             }
 
-            settingsRepository.saveHuntConfig(normalized)
             paused.value = false
             _status.value = HuntStatus(
                 phase = HuntPhase.WAITING_FOR_LOBBY,
@@ -119,7 +184,19 @@ class HuntRuntime(
                 serviceReady = true,
                 templatesReady = templatesReady(),
             )
-            runJob = scope.launch { runMachine(normalized, gateway) }
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                runSession(
+                    config = normalized,
+                    gateway = sessionGateway,
+                    lease = lease,
+                )
+            }
+            val activeRun = ActiveRun(lease = lease, job = job)
+            job.invokeOnCompletion { completeRun(activeRun) }
+            check(activeRunRef.compareAndSet(null, activeRun)) {
+                "Hunt run was installed concurrently"
+            }
+            job.start()
         }
     }
 
@@ -146,9 +223,25 @@ class HuntRuntime(
     }
 
     fun stop() {
+        val currentPhase = _status.value.phase
+            .takeUnless { it == HuntPhase.PAUSED }
+            ?: phaseBeforePause
+        val uncertainMessage = when (currentPhase) {
+            HuntPhase.STARTING_BATTLE,
+            HuntPhase.WAITING_FOR_BATTLE_CONTROLS,
+            -> "已停止；讨伐可能已经开始并消耗行动力，请检查游戏"
+            HuntPhase.CONFIRMING_DELEGATION,
+            HuntPhase.MANAGED_IN_LOBBY,
+            -> "已停止；游戏内托管可能仍在运行，请立即检查"
+            else -> null
+        }
         stopWithReason(
-            reason = HuntStopReason.USER_STOPPED,
-            message = "已由用户停止",
+            reason = if (uncertainMessage == null) {
+                HuntStopReason.USER_STOPPED
+            } else {
+                HuntStopReason.UNCERTAIN_EFFECT
+            },
+            message = uncertainMessage ?: "已由用户停止",
             phase = HuntPhase.COMPLETED,
         )
     }
@@ -156,7 +249,11 @@ class HuntRuntime(
     fun restart() {
         val current = _status.value
         if (!current.isTerminal) return
-        scope.launch { start(current.config) }
+        val runToAwait = activeRunRef.get()
+        scope.launch {
+            awaitRunCompletion(runToAwait)
+            start(current.config)
+        }
     }
 
     fun dismissTerminalStatus() {
@@ -177,14 +274,46 @@ class HuntRuntime(
     }
 
     fun shutdown() {
-        runJob?.cancel()
-        runCoordinator?.release(AutomationKind.HUNT)
+        activeRunRef.get()?.let { activeRun ->
+            activeRun.stopRequested.set(true)
+            activeRun.job.cancel()
+        }
         scope.cancel()
+    }
+
+    private suspend fun runSession(
+        config: HuntConfig,
+        gateway: ScreenGateway,
+        lease: RunLease,
+    ) {
+        try {
+            persistence.saveConfig(config)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            logger.error("hunt.runtime.config.save_failed", error)
+            publishIfCurrent(lease) { current ->
+                current.copy(
+                    phase = HuntPhase.ERROR,
+                    message = "保存自动讨伐设置失败：${error.message.orEmpty()}",
+                    stopReason = HuntStopReason.INTERNAL_ERROR,
+                )
+            }
+            return
+        }
+
+        currentCoroutineContext().ensureActive()
+        runMachine(
+            config = config,
+            gateway = gateway,
+            lease = lease,
+        )
     }
 
     private suspend fun runMachine(
         config: HuntConfig,
         gateway: ScreenGateway,
+        lease: RunLease,
     ) {
         val machine = HuntStateMachine(
             vision = vision,
@@ -199,38 +328,41 @@ class HuntRuntime(
                 gateway = gateway,
                 awaitRunPermission = { paused.first { isPaused -> !isPaused } },
                 onStatus = { phase, stats, message, confidence ->
-                    _status.value = _status.value.copy(
-                        phase = if (paused.value) HuntPhase.PAUSED else phase,
-                        stats = stats,
-                        message = message,
-                        lastConfidence = confidence,
-                    )
+                    publishIfCurrent(lease) { current ->
+                        current.copy(
+                            phase = if (paused.value) HuntPhase.PAUSED else phase,
+                            stats = stats,
+                            message = message,
+                            lastConfidence = confidence,
+                        )
+                    }
                 },
                 onDiagnostic = { frame, reason ->
-                    diagnosticStore.save(frame, reason)
+                    diagnosticSink.save(frame, reason)
                 },
             )
-            _status.value = _status.value.copy(
-                phase = if (result.successful) HuntPhase.COMPLETED else HuntPhase.ERROR,
-                stats = result.stats,
-                message = result.message,
-                stopReason = result.reason,
-            )
+            publishIfCurrent(lease) { current ->
+                current.copy(
+                    phase = if (result.successful) HuntPhase.COMPLETED else HuntPhase.ERROR,
+                    stats = result.stats,
+                    message = result.message,
+                    stopReason = result.reason,
+                )
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
             logger.error("hunt.runtime.failed", error, "phase" to _status.value.phase)
-            _status.value = _status.value.copy(
-                phase = HuntPhase.ERROR,
-                stats = _status.value.stats.copy(
-                    finishedAtElapsedMs = clock.elapsedRealtime(),
-                ),
-                message = "自动讨伐异常：${error.message.orEmpty()}",
-                stopReason = HuntStopReason.INTERNAL_ERROR,
-            )
-        } finally {
-            runJob = null
-            runCoordinator?.release(AutomationKind.HUNT)
+            publishIfCurrent(lease) { current ->
+                current.copy(
+                    phase = HuntPhase.ERROR,
+                    stats = current.stats.copy(
+                        finishedAtElapsedMs = clock.elapsedRealtime(),
+                    ),
+                    message = "自动讨伐异常：${error.message.orEmpty()}",
+                    stopReason = HuntStopReason.INTERNAL_ERROR,
+                )
+            }
         }
     }
 
@@ -262,10 +394,11 @@ class HuntRuntime(
         message: String,
         phase: HuntPhase,
     ) {
-        runJob?.cancel(CancellationException(message))
-        runJob = null
+        activeRunRef.get()?.let { activeRun ->
+            activeRun.stopRequested.set(true)
+            activeRun.job.cancel(CancellationException(message))
+        }
         paused.value = false
-        runCoordinator?.release(AutomationKind.HUNT)
         _status.value = _status.value.copy(
             phase = phase,
             stats = _status.value.stats.copy(
@@ -273,6 +406,37 @@ class HuntRuntime(
             ),
             message = message,
             stopReason = reason,
+        )
+    }
+
+    private fun canPublish(lease: RunLease): Boolean {
+        val activeRun = activeRunRef.get()
+        return activeRun?.lease == lease && !activeRun.stopRequested.get()
+    }
+
+    private inline fun publishIfCurrent(
+        lease: RunLease,
+        update: (HuntStatus) -> HuntStatus,
+    ) {
+        if (canPublish(lease)) {
+            _status.value = update(_status.value)
+        }
+    }
+
+    private suspend fun awaitRunCompletion(activeRun: ActiveRun?) {
+        activeRun ?: return
+        activeRun.job.join()
+        completeRun(activeRun)
+    }
+
+    private fun completeRun(activeRun: ActiveRun) {
+        val released = coordinator.release(activeRun.lease)
+        val removed = activeRunRef.compareAndSet(activeRun, null)
+        logger.debug(
+            "hunt.runtime.run.completed",
+            "lease" to activeRun.lease.token,
+            "removed" to removed,
+            "released" to released,
         )
     }
 }

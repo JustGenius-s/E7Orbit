@@ -19,6 +19,7 @@ import com.e7orbit.model.RunSummary
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 private val Context.orbitDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -30,49 +31,55 @@ class SettingsRepository(
 ) {
     private val dataStore = context.applicationContext.orbitDataStore
 
-    val config: Flow<RunConfig> = dataStore.safeData.map { preferences ->
-        RunConfig(
-            buyCovenantBookmarks = preferences[Keys.BUY_COVENANT] ?: true,
-            buyMysticMedals = preferences[Keys.BUY_MYSTIC] ?: true,
-            maxRefreshes = preferences[Keys.MAX_REFRESHES] ?: 100,
-            matchThreshold = preferences[Keys.MATCH_THRESHOLD] ?: 0.92,
-        ).normalized()
-    }
+    val config: Flow<RunConfig> = dataStore.safeData
+        .map { preferences ->
+            RunConfig(
+                buyCovenantBookmarks = preferences[Keys.BUY_COVENANT] ?: true,
+                buyMysticMedals = preferences[Keys.BUY_MYSTIC] ?: true,
+                maxRefreshes = preferences[Keys.MAX_REFRESHES] ?: 100,
+                matchThreshold = preferences[Keys.MATCH_THRESHOLD] ?: 0.92,
+            ).normalized()
+        }
+        .distinctUntilChanged()
 
-    val huntConfig: Flow<HuntConfig> = dataStore.safeData.map { preferences ->
-        HuntConfig(
-            dungeon = preferences[Keys.HUNT_DUNGEON]
-                ?.let { stored ->
-                    runCatching { HuntDungeon.valueOf(stored) }.getOrNull()
-                }
-                ?: HuntDungeon.WYVERN,
-            difficulty = preferences[Keys.HUNT_DIFFICULTY]
-                ?.let { stored ->
-                    runCatching { HuntDifficulty.valueOf(stored) }.getOrNull()
-                }
-                ?: HuntDifficulty.HELL,
-            managedBattle = preferences[Keys.HUNT_MANAGED_BATTLE] ?: true,
-            runCount = preferences[Keys.HUNT_RUN_COUNT] ?: 20,
-            energyRefill = preferences[Keys.HUNT_ENERGY_REFILL]
-                ?.let { stored ->
-                    runCatching { HuntEnergyRefill.valueOf(stored) }.getOrNull()
-                }
-                ?: HuntEnergyRefill.LEIF_ONLY,
-        ).normalized()
-    }
+    val huntConfig: Flow<HuntConfig> = dataStore.safeData
+        .map { preferences ->
+            HuntConfig(
+                dungeon = preferences[Keys.HUNT_DUNGEON]
+                    ?.let { stored ->
+                        runCatching { HuntDungeon.valueOf(stored) }.getOrNull()
+                    }
+                    ?: HuntDungeon.WYVERN,
+                difficulty = preferences[Keys.HUNT_DIFFICULTY]
+                    ?.let { stored ->
+                        runCatching { HuntDifficulty.valueOf(stored) }.getOrNull()
+                    }
+                    ?: HuntDifficulty.HELL,
+                managedBattle = preferences[Keys.HUNT_MANAGED_BATTLE] ?: true,
+                runCount = preferences[Keys.HUNT_RUN_COUNT] ?: 20,
+                energyRefill = preferences[Keys.HUNT_ENERGY_REFILL]
+                    ?.let { stored ->
+                        runCatching { HuntEnergyRefill.valueOf(stored) }.getOrNull()
+                    }
+                    ?: HuntEnergyRefill.DISABLED,
+            ).normalized()
+        }
+        .distinctUntilChanged()
 
-    val lastSummary: Flow<RunSummary> = dataStore.safeData.map { preferences ->
-        RunSummary(
-            completedRefreshes = preferences[Keys.LAST_REFRESHES] ?: 0,
-            shopPagesScanned = preferences[Keys.LAST_PAGES_SCANNED] ?: 0,
-            covenantBookmarksBought = preferences[Keys.LAST_COVENANT] ?: 0,
-            mysticMedalsBought = preferences[Keys.LAST_MYSTIC] ?: 0,
-            goldSpent = preferences[Keys.LAST_GOLD_SPENT] ?: 0L,
-            elapsedMs = preferences[Keys.LAST_ELAPSED] ?: 0L,
-            stopReason = preferences[Keys.LAST_STOP_REASON] ?: "NONE",
-            completedAtEpochMs = preferences[Keys.LAST_COMPLETED_AT] ?: 0L,
-        )
-    }
+    val lastSummary: Flow<RunSummary> = dataStore.safeData
+        .map { preferences ->
+            RunSummary(
+                completedRefreshes = preferences[Keys.LAST_REFRESHES] ?: 0,
+                shopPagesScanned = preferences[Keys.LAST_PAGES_SCANNED] ?: 0,
+                covenantBookmarksBought = preferences[Keys.LAST_COVENANT] ?: 0,
+                mysticMedalsBought = preferences[Keys.LAST_MYSTIC] ?: 0,
+                goldSpent = preferences[Keys.LAST_GOLD_SPENT] ?: 0L,
+                elapsedMs = preferences[Keys.LAST_ELAPSED] ?: 0L,
+                stopReason = preferences[Keys.LAST_STOP_REASON] ?: "NONE",
+                completedAtEpochMs = preferences[Keys.LAST_COMPLETED_AT] ?: 0L,
+            )
+        }
+        .distinctUntilChanged()
 
     suspend fun saveConfig(config: RunConfig) {
         val normalized = config.normalized()

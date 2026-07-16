@@ -1,9 +1,12 @@
 package com.e7orbit.vision
 
+import com.e7orbit.automation.GlobalUiVision
 import com.e7orbit.automation.ShopVision
 import com.e7orbit.automation.VisionHealth
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
+import com.e7orbit.model.GameLocation
+import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.ItemType
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.PurchaseTarget
@@ -32,9 +35,53 @@ import kotlin.math.roundToInt
 class OpenCvShopVision(
     private val repository: TemplateRepository,
     private val logger: OrbitLogger = NoOpOrbitLogger,
-) : ShopVision {
+) : ShopVision, GlobalUiVision {
 
-    override fun health(): VisionHealth = repository.health()
+    override fun health(): VisionHealth = repository.health(TemplateRequirements.SECRET_SHOP)
+
+    override fun navigationHealth(): VisionHealth =
+        repository.health(TemplateRequirements.GLOBAL_NAVIGATION)
+
+    override suspend fun detectLocation(frame: ScreenFrame): GameLocation =
+        withSource(frame) { source ->
+            val lobby = bestMatch(source, TemplateIds.GLOBAL_LOBBY_ANCHOR)
+            val location = if (lobby.matched) GameLocation.LOBBY else GameLocation.UNKNOWN
+            logger.debug(
+                "vision.global_location",
+                "sequence" to frame.sequence,
+                "location" to location,
+                "lobby" to lobby.confidence,
+            )
+            location
+        }
+
+    override suspend fun findGlobalAction(
+        frame: ScreenFrame,
+        action: GlobalAction,
+    ): MatchResult {
+        val match = withSource(frame) { source ->
+            when (action) {
+                GlobalAction.OPEN_MENU -> bestOf(
+                    source,
+                    TemplateIds.GLOBAL_MENU_BUTTON,
+                    TemplateIds.GLOBAL_MENU_BUTTON_PLAIN,
+                )
+
+                GlobalAction.RETURN_TO_LOBBY ->
+                    bestMatch(source, TemplateIds.GLOBAL_RETURN_TO_LOBBY)
+            }
+        }
+        val scaled = match.scaleToFrame(frame)
+        logger.debug(
+            "vision.global_action",
+            "sequence" to frame.sequence,
+            "action" to action,
+            "matched" to scaled.matched,
+            "confidence" to scaled.confidence,
+            "center" to scaled.center?.let { "${it.x},${it.y}" },
+        )
+        return scaled
+    }
 
     override suspend fun detectPage(frame: ScreenFrame): ShopPage = withSource(frame) { source ->
         val resource = bestMatch(source, TemplateIds.RESOURCE_INSUFFICIENT)
@@ -172,13 +219,6 @@ class OpenCvShopVision(
     ): MatchResult {
         val match = withSource(frame) { source ->
             when (action) {
-                ShopAction.OPEN_MAIN_MENU -> bestOf(
-                    source,
-                    TemplateIds.GLOBAL_MENU_BUTTON,
-                    TemplateIds.GLOBAL_MENU_BUTTON_PLAIN,
-                )
-
-                ShopAction.RETURN_HOME -> bestMatch(source, TemplateIds.GLOBAL_RETURN_HOME)
                 ShopAction.OPEN_SECRET_SHOP ->
                     bestMatch(source, TemplateIds.SHOP_LOBBY_SECRET_SHOP)
 

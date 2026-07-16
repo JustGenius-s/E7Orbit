@@ -19,6 +19,7 @@ import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntEnergyRefill
 import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStatus
+import com.e7orbit.model.MAX_SUPPORTED_HUNT_RUNS
 import com.e7orbit.model.REFERENCE_HEIGHT
 import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.RunConfig
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 data class EnvironmentStatus(
@@ -39,15 +41,12 @@ data class EnvironmentStatus(
     val height: Int = 0,
     val projectionReady: Boolean = false,
     val openCvReady: Boolean = false,
-    val templatesReady: Boolean = false,
-    val missingTemplates: List<String> = emptyList(),
 ) {
     val canPrepare: Boolean
         get() = accessibilityEnabled &&
             gameInstalled &&
             resolutionReady &&
-            openCvReady &&
-            templatesReady
+            openCvReady
 }
 
 data class MainUiState(
@@ -59,14 +58,49 @@ data class MainUiState(
     val lastSummary: RunSummary = RunSummary(),
 )
 
+internal class PersistedDraft<T>(initialValue: T) {
+    private val mutableValue = MutableStateFlow(initialValue)
+    private var persistedValue = initialValue
+    private var pendingValue: T? = null
+    private var hasPendingValue = false
+
+    val state: StateFlow<T> = mutableValue
+    val value: T
+        get() = mutableValue.value
+
+    fun update(value: T): Boolean {
+        if (value == mutableValue.value) return false
+        pendingValue = value
+        hasPendingValue = true
+        mutableValue.value = value
+        return true
+    }
+
+    fun acceptPersisted(value: T) {
+        persistedValue = value
+        if (!hasPendingValue || pendingValue == value) {
+            mutableValue.value = value
+            pendingValue = null
+            hasPendingValue = false
+        }
+    }
+
+    fun rejectPending(value: T) {
+        if (!hasPendingValue || pendingValue != value) return
+        pendingValue = null
+        hasPendingValue = false
+        mutableValue.value = persistedValue
+    }
+}
+
 class MainViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
     private val runtime = AppGraph.automationRuntime
     private val huntRuntime = AppGraph.huntRuntime
     private val settings = AppGraph.settingsRepository
-    private val draftConfig = MutableStateFlow(RunConfig())
-    private val draftHuntConfig = MutableStateFlow(HuntConfig())
+    private val draftConfig = PersistedDraft(RunConfig())
+    private val draftHuntConfig = PersistedDraft(HuntConfig())
     private val environment = MutableStateFlow(readEnvironment())
     private val runtimeStatuses = combine(
         runtime.status,
@@ -74,8 +108,8 @@ class MainViewModel(
     ) { shop, hunt -> shop to hunt }
 
     val uiState: StateFlow<MainUiState> = combine(
-        draftConfig,
-        draftHuntConfig,
+        draftConfig.state,
+        draftHuntConfig.state,
         runtimeStatuses,
         environment,
         settings.lastSummary,
@@ -96,10 +130,14 @@ class MainViewModel(
 
     init {
         viewModelScope.launch {
-            settings.config.collect { saved -> draftConfig.value = saved }
+            settings.config.collect { saved ->
+                draftConfig.acceptPersisted(saved)
+            }
         }
         viewModelScope.launch {
-            settings.huntConfig.collect { saved -> draftHuntConfig.value = saved }
+            settings.huntConfig.collect { saved ->
+                draftHuntConfig.acceptPersisted(saved)
+            }
         }
         runtime.refreshHealth()
         huntRuntime.refreshHealth()
@@ -112,21 +150,19 @@ class MainViewModel(
     }
 
     fun setBuyCovenant(enabled: Boolean) {
-        draftConfig.value = draftConfig.value.copy(buyCovenantBookmarks = enabled)
+        updateConfig { copy(buyCovenantBookmarks = enabled) }
     }
 
     fun setBuyMystic(enabled: Boolean) {
-        draftConfig.value = draftConfig.value.copy(buyMysticMedals = enabled)
+        updateConfig { copy(buyMysticMedals = enabled) }
     }
 
     fun setMaxRefreshes(value: Int) {
-        draftConfig.value = draftConfig.value.copy(maxRefreshes = value.coerceIn(1, 10_000))
+        updateConfig { copy(maxRefreshes = value) }
     }
 
     fun setMatchThreshold(value: Double) {
-        draftConfig.value = draftConfig.value.copy(
-            matchThreshold = value.coerceIn(0.75, 0.99),
-        )
+        updateConfig { copy(matchThreshold = value) }
     }
 
     fun setHuntDifficulty(difficulty: HuntDifficulty) {
@@ -142,7 +178,7 @@ class MainViewModel(
     }
 
     fun setHuntRunCount(value: Int) {
-        updateHuntConfig { copy(runCount = value.coerceIn(1, 10_000)) }
+        updateHuntConfig { copy(runCount = value.coerceIn(1, MAX_SUPPORTED_HUNT_RUNS)) }
     }
 
     fun setHuntEnergyRefill(refill: HuntEnergyRefill) {
@@ -200,8 +236,34 @@ class MainViewModel(
 
     private fun updateHuntConfig(update: HuntConfig.() -> HuntConfig) {
         val updated = draftHuntConfig.value.update().normalized()
-        draftHuntConfig.value = updated
-        viewModelScope.launch { settings.saveHuntConfig(updated) }
+        if (!draftHuntConfig.update(updated)) return
+        viewModelScope.launch {
+            try {
+                settings.saveHuntConfig(updated)
+                draftHuntConfig.acceptPersisted(updated)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                AppGraph.logger.error("settings.hunt.save_failed", error)
+                draftHuntConfig.rejectPending(updated)
+            }
+        }
+    }
+
+    private fun updateConfig(update: RunConfig.() -> RunConfig) {
+        val updated = draftConfig.value.update().normalized()
+        if (!draftConfig.update(updated)) return
+        viewModelScope.launch {
+            try {
+                settings.saveConfig(updated)
+                draftConfig.acceptPersisted(updated)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                AppGraph.logger.error("settings.shop.save_failed", error)
+                draftConfig.rejectPending(updated)
+            }
+        }
     }
 
     private fun launchGame() {
@@ -233,7 +295,6 @@ class MainViewModel(
         } catch (_: PackageManager.NameNotFoundException) {
             false
         }
-        val visionHealth = AppGraph.templateRepository.health()
         return EnvironmentStatus(
             accessibilityEnabled = accessibilityEnabled,
             gameInstalled = gameInstalled,
@@ -243,8 +304,6 @@ class MainViewModel(
             height = height,
             projectionReady = AppGraph.projectionCapture.isReady.value,
             openCvReady = AppGraph.openCvReady,
-            templatesReady = visionHealth.isReady,
-            missingTemplates = visionHealth.missingTemplateIds,
         )
     }
 }

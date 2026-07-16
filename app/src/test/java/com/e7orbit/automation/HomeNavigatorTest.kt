@@ -1,15 +1,14 @@
 package com.e7orbit.automation
 
+import com.e7orbit.model.GameLocation
 import com.e7orbit.model.GestureResult
+import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.MatchResult
-import com.e7orbit.model.PurchaseTarget
-import com.e7orbit.model.RunConfig
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import com.e7orbit.model.ScreenRect
-import com.e7orbit.model.ShopAction
-import com.e7orbit.model.ShopPage
 import java.util.ArrayDeque
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -17,11 +16,11 @@ import org.junit.Test
 class HomeNavigatorTest {
     @Test
     fun opensMenuAndReturnsHomeFromUnknownPage() = runTest {
-        val vision = FakeHomeVision(
-            pages = listOf(
-                ShopPage.UNKNOWN,
-                ShopPage.LOBBY,
-                ShopPage.LOBBY,
+        val vision = FakeGlobalUiVision(
+            locations = listOf(
+                GameLocation.UNKNOWN,
+                GameLocation.LOBBY,
+                GameLocation.LOBBY,
             ),
         )
         val gateway = FakeHomeGateway()
@@ -39,55 +38,87 @@ class HomeNavigatorTest {
 
         assertEquals(
             listOf(
-                ShopAction.RETURN_HOME,
-                ShopAction.OPEN_MAIN_MENU,
-                ShopAction.RETURN_HOME,
+                GlobalAction.RETURN_TO_LOBBY,
+                GlobalAction.OPEN_MENU,
+                GlobalAction.RETURN_TO_LOBBY,
             ),
             vision.actions,
         )
         assertEquals(2, gateway.taps)
     }
 
-    private class FakeHomeVision(
-        pages: List<ShopPage>,
-    ) : ShopVision {
-        private val pages = ArrayDeque(pages)
-        val actions = mutableListOf<ShopAction>()
-        private var returnHomeChecks = 0
-
-        override fun health(): VisionHealth = VisionHealth(
+    @Test
+    fun exposesOnlyGlobalNavigationHealth() {
+        val health = VisionHealth(
             openCvReady = true,
-            loadedTemplates = 2,
-            requiredTemplates = 2,
-            missingTemplateIds = emptyList(),
+            loadedTemplates = 20,
+            requiredTemplates = 4,
+            missingTemplateIds = listOf("global_lobby_anchor"),
+        )
+        val navigator = HomeNavigator(
+            vision = FakeGlobalUiVision(
+                locations = emptyList(),
+                health = health,
+            ),
         )
 
-        override suspend fun detectPage(frame: ScreenFrame): ShopPage =
-            pages.pollFirst() ?: ShopPage.LOBBY
+        assertEquals(health, navigator.health())
+    }
 
-        override suspend fun findTargets(
-            frame: ScreenFrame,
-            config: RunConfig,
-        ): List<PurchaseTarget> = emptyList()
+    @Test
+    fun propagatesCaptureCancellation() = runTest {
+        val navigator = HomeNavigator(
+            vision = FakeGlobalUiVision(locations = emptyList()),
+            clock = FakeHomeClock(),
+        )
+        var cancelled = false
 
-        override suspend fun verifyPurchase(
-            frame: ScreenFrame,
-            target: PurchaseTarget,
-        ): MatchResult = MatchResult(matched = false)
+        try {
+            navigator.ensureHome(
+                gateway = FakeHomeGateway(
+                    captureError = CancellationException("stopped"),
+                ),
+                awaitRunPermission = {},
+                onStatus = {},
+                onDiagnostic = { _, _ -> },
+            )
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
 
-        override suspend fun findAction(
+        assertEquals(true, cancelled)
+    }
+
+    private class FakeGlobalUiVision(
+        locations: List<GameLocation>,
+        private val health: VisionHealth = VisionHealth(
+            openCvReady = true,
+            loadedTemplates = 4,
+            requiredTemplates = 4,
+            missingTemplateIds = emptyList(),
+        ),
+    ) : GlobalUiVision {
+        private val locations = ArrayDeque(locations)
+        val actions = mutableListOf<GlobalAction>()
+        private var returnHomeChecks = 0
+
+        override fun navigationHealth(): VisionHealth = health
+
+        override suspend fun detectLocation(frame: ScreenFrame): GameLocation =
+            locations.pollFirst() ?: GameLocation.LOBBY
+
+        override suspend fun findGlobalAction(
             frame: ScreenFrame,
-            action: ShopAction,
+            action: GlobalAction,
         ): MatchResult {
             actions += action
             val matched = when (action) {
-                ShopAction.RETURN_HOME -> {
+                GlobalAction.RETURN_TO_LOBBY -> {
                     returnHomeChecks += 1
                     returnHomeChecks > 1
                 }
 
-                ShopAction.OPEN_MAIN_MENU -> true
-                else -> false
+                GlobalAction.OPEN_MENU -> true
             }
             return MatchResult(
                 matched = matched,
@@ -97,16 +128,21 @@ class HomeNavigatorTest {
         }
     }
 
-    private class FakeHomeGateway : ScreenGateway {
+    private class FakeHomeGateway(
+        private val captureError: Throwable? = null,
+    ) : ScreenGateway {
         var taps = 0
 
-        override suspend fun capture(): ScreenFrame = ScreenFrame(
-            bitmap = null,
-            width = 1920,
-            height = 1080,
-            capturedAtElapsedMs = 0L,
-            sequence = 0L,
-        )
+        override suspend fun capture(): ScreenFrame {
+            captureError?.let { throw it }
+            return ScreenFrame(
+                bitmap = null,
+                width = 1920,
+                height = 1080,
+                capturedAtElapsedMs = 0L,
+                sequence = 0L,
+            )
+        }
 
         override suspend fun tap(point: ScreenPoint): GestureResult {
             taps += 1
