@@ -2,10 +2,13 @@ package com.e7orbit.automation
 
 import com.e7orbit.model.GestureResult
 import com.e7orbit.model.HuntConfig
+import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntPage
 import com.e7orbit.model.HuntStopReason
+import com.e7orbit.model.MatchResult
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
+import com.e7orbit.model.ScreenRect
 import com.e7orbit.vision.PointConfig
 import com.e7orbit.vision.VisionConfig
 import java.util.ArrayDeque
@@ -73,6 +76,15 @@ class HuntStateMachineTest {
 
         override suspend fun detectPage(frame: ScreenFrame): HuntPage =
             pages.removeFirst()
+
+        override suspend fun findDungeon(
+            frame: ScreenFrame,
+            dungeon: HuntDungeon,
+        ): MatchResult = MatchResult(
+            matched = true,
+            confidence = 1.0,
+            bounds = ScreenRect(850, 100, 950, 200),
+        )
 
         override suspend fun isManagedBattleEnabled(frame: ScreenFrame): Boolean =
             managedStates.removeFirst()

@@ -4,6 +4,7 @@ import com.e7orbit.automation.HuntVision
 import com.e7orbit.automation.VisionHealth
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
+import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntPage
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.ScreenFrame
@@ -47,13 +48,21 @@ class OpenCvHuntVision(
             bestMatch(source, TemplateIds.HUNT_SELECTION).matched ->
                 HuntPage.HUNT_SELECTION
 
-            bestMatch(source, TemplateIds.HUNT_BATTLE_MENU).matched ->
+            anyMatch(
+                source,
+                TemplateIds.HUNT_BATTLE_MENU,
+                TemplateIds.HUNT_BATTLE_MENU_EVENT,
+            ) ->
                 HuntPage.BATTLE_MENU
 
             bestMatch(source, TemplateIds.HUNT_MANAGED_STATUS).matched ->
                 HuntPage.LOBBY_MANAGED
 
-            bestMatch(source, TemplateIds.HUNT_LOBBY_BATTLE).matched ->
+            anyMatch(
+                source,
+                TemplateIds.HUNT_LOBBY_BATTLE,
+                TemplateIds.HUNT_LOBBY_BATTLE_EVENT,
+            ) ->
                 HuntPage.LOBBY
 
             else -> HuntPage.UNKNOWN
@@ -70,6 +79,22 @@ class OpenCvHuntVision(
         withSource(frame) { source ->
             bestMatch(source, TemplateIds.HUNT_REPEAT_ENABLED).matched
         }
+
+    override suspend fun findDungeon(
+        frame: ScreenFrame,
+        dungeon: HuntDungeon,
+    ): MatchResult = withSource(frame) { source ->
+        bestMatch(
+            source,
+            when (dungeon) {
+                HuntDungeon.WYVERN -> TemplateIds.HUNT_DUNGEON_WYVERN
+                HuntDungeon.GOLEM -> TemplateIds.HUNT_DUNGEON_GOLEM
+                HuntDungeon.BANSHEE -> TemplateIds.HUNT_DUNGEON_BANSHEE
+                HuntDungeon.AZIMANAK -> TemplateIds.HUNT_DUNGEON_AZIMANAK
+                HuntDungeon.CAIDES -> TemplateIds.HUNT_DUNGEON_CAIDES
+            },
+        )
+    }
 
     override suspend fun managedProgressSignature(frame: ScreenFrame): Long =
         withSource(frame) { source ->
@@ -184,6 +209,13 @@ class OpenCvHuntVision(
         }
     }
 
+    private fun anyMatch(
+        source: Mat,
+        vararg templateIds: String,
+    ): Boolean = templateIds.any { templateId ->
+        bestMatch(source, templateId).matched
+    }
+
     private fun ScreenRect.clamp(width: Int, height: Int): ScreenRect = ScreenRect(
         left = left.coerceIn(0, width - 1),
         top = top.coerceIn(0, height - 1),
@@ -194,8 +226,15 @@ class OpenCvHuntVision(
     private companion object {
         val REQUIRED_TEMPLATE_IDS = listOf(
             TemplateIds.HUNT_LOBBY_BATTLE,
+            TemplateIds.HUNT_LOBBY_BATTLE_EVENT,
             TemplateIds.HUNT_BATTLE_MENU,
+            TemplateIds.HUNT_BATTLE_MENU_EVENT,
             TemplateIds.HUNT_SELECTION,
+            TemplateIds.HUNT_DUNGEON_WYVERN,
+            TemplateIds.HUNT_DUNGEON_GOLEM,
+            TemplateIds.HUNT_DUNGEON_BANSHEE,
+            TemplateIds.HUNT_DUNGEON_AZIMANAK,
+            TemplateIds.HUNT_DUNGEON_CAIDES,
             TemplateIds.HUNT_QUICK_BATTLE,
             TemplateIds.HUNT_TEAM_READY,
             TemplateIds.HUNT_REPEAT_ENABLED,

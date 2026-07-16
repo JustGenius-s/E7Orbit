@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -59,6 +60,7 @@ import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.HuntConfig
 import com.e7orbit.model.HuntDifficulty
+import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntEnergyRefill
 import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStatus
@@ -112,6 +114,7 @@ class MainActivity : ComponentActivity() {
                     onBuyMysticChanged = viewModel::setBuyMystic,
                     onMaxRefreshChanged = viewModel::setMaxRefreshes,
                     onThresholdChanged = viewModel::setMatchThreshold,
+                    onHuntDungeonChanged = viewModel::setHuntDungeon,
                     onHuntDifficultyChanged = viewModel::setHuntDifficulty,
                     onHuntManagedBattleChanged = viewModel::setHuntManagedBattle,
                     onHuntRunCountChanged = viewModel::setHuntRunCount,
@@ -163,6 +166,7 @@ private fun OrbitDashboard(
     onBuyMysticChanged: (Boolean) -> Unit,
     onMaxRefreshChanged: (Int) -> Unit,
     onThresholdChanged: (Double) -> Unit,
+    onHuntDungeonChanged: (HuntDungeon) -> Unit,
     onHuntDifficultyChanged: (HuntDifficulty) -> Unit,
     onHuntManagedBattleChanged: (Boolean) -> Unit,
     onHuntRunCountChanged: (Int) -> Unit,
@@ -222,6 +226,7 @@ private fun OrbitDashboard(
                             state.huntAutomation.phase != HuntPhase.PAUSED &&
                             !state.automation.isRunning &&
                             state.automation.phase != AutomationPhase.PAUSED,
+                        onDungeonChanged = onHuntDungeonChanged,
                         onDifficultyChanged = onHuntDifficultyChanged,
                         onManagedBattleChanged = onHuntManagedBattleChanged,
                         onRunCountChanged = onHuntRunCountChanged,
@@ -389,6 +394,7 @@ private fun HuntCard(
     config: HuntConfig,
     automation: HuntStatus,
     canStart: Boolean,
+    onDungeonChanged: (HuntDungeon) -> Unit,
     onDifficultyChanged: (HuntDifficulty) -> Unit,
     onManagedBattleChanged: (Boolean) -> Unit,
     onRunCountChanged: (Int) -> Unit,
@@ -404,6 +410,26 @@ private fun HuntCard(
             fontWeight = FontWeight.Bold,
         )
         Spacer(Modifier.height(14.dp))
+        Text("地下城", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        HuntDungeon.entries.chunked(2).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { dungeon ->
+                    DungeonChoiceButton(
+                        dungeon = dungeon,
+                        selected = config.dungeon == dungeon,
+                        onClick = { onDungeonChanged(dungeon) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        Spacer(Modifier.height(4.dp))
         Text("讨伐难度", fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Row(
@@ -513,6 +539,65 @@ private fun HuntCard(
             )
         }
     }
+}
+
+@Composable
+private fun DungeonChoiceButton(
+    dungeon: HuntDungeon,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier,
+        contentPadding = PaddingValues(6.dp),
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ),
+        border = BorderStroke(
+            2.dp,
+            if (selected) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.outlineVariant
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Image(
+                painter = painterResource(dungeon.imageResource()),
+                contentDescription = dungeon.displayName,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop,
+            )
+            Spacer(Modifier.height(5.dp))
+            Text(
+                dungeon.displayName,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            )
+        }
+    }
+}
+
+private fun HuntDungeon.imageResource(): Int = when (this) {
+    HuntDungeon.WYVERN -> R.drawable.hunt_dungeon_wyvern
+    HuntDungeon.GOLEM -> R.drawable.hunt_dungeon_golem
+    HuntDungeon.BANSHEE -> R.drawable.hunt_dungeon_banshee
+    HuntDungeon.AZIMANAK -> R.drawable.hunt_dungeon_azimanak
+    HuntDungeon.CAIDES -> R.drawable.hunt_dungeon_caides
 }
 
 @Composable

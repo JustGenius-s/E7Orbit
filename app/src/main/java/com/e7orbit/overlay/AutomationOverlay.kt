@@ -254,7 +254,8 @@ class AutomationOverlay(
                 }
 
                 OverlayMode.HUNT ->
-                    "E7 Orbit，讨伐 ${huntStatus.stats.completedRuns}/${huntStatus.config.runCount}"
+                    "E7 Orbit，${huntStatus.config.dungeon.displayName} " +
+                        "${huntStatus.stats.completedRuns}/${huntStatus.config.runCount}"
             }
             animatePhaseProgress(activeProgress())
             invalidate()
@@ -938,7 +939,7 @@ class AutomationOverlay(
         HuntPhase.WAITING_FOR_LOBBY -> "大厅"
         HuntPhase.OPENING_BATTLE -> "战斗"
         HuntPhase.OPENING_HUNT -> "讨伐"
-        HuntPhase.SELECTING_BOSS -> "飞龙"
+        HuntPhase.SELECTING_BOSS -> "地下城"
         HuntPhase.SELECTING_DIFFICULTY -> "难度"
         HuntPhase.DISABLING_QUICK_BATTLE -> "快战"
         HuntPhase.CONFIGURING_MANAGED_BATTLE -> "托管"

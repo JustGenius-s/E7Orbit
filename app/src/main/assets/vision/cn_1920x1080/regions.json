@@ -89,8 +89,22 @@
       "required": false
     },
     {
+      "id": "hunt_lobby_battle_event",
+      "file": "hunt_lobby_battle_event.png",
+      "region": { "left": 900, "top": 190, "right": 1024, "bottom": 330 },
+      "threshold": 0.88,
+      "required": false
+    },
+    {
       "id": "hunt_battle_menu",
       "file": "hunt_battle_menu.png",
+      "region": { "left": 470, "top": 100, "right": 780, "bottom": 260 },
+      "threshold": 0.88,
+      "required": false
+    },
+    {
+      "id": "hunt_battle_menu_event",
+      "file": "hunt_battle_menu_event.png",
       "region": { "left": 470, "top": 100, "right": 780, "bottom": 260 },
       "threshold": 0.88,
       "required": false
@@ -100,6 +114,41 @@
       "file": "hunt_selection.png",
       "region": { "left": 760, "top": 40, "right": 1024, "bottom": 140 },
       "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_dungeon_wyvern",
+      "file": "hunt_dungeon_wyvern.png",
+      "region": { "left": 820, "top": 90, "right": 1024, "bottom": 576 },
+      "threshold": 0.82,
+      "required": false
+    },
+    {
+      "id": "hunt_dungeon_golem",
+      "file": "hunt_dungeon_golem.png",
+      "region": { "left": 820, "top": 90, "right": 1024, "bottom": 576 },
+      "threshold": 0.82,
+      "required": false
+    },
+    {
+      "id": "hunt_dungeon_banshee",
+      "file": "hunt_dungeon_banshee.png",
+      "region": { "left": 820, "top": 90, "right": 1024, "bottom": 576 },
+      "threshold": 0.82,
+      "required": false
+    },
+    {
+      "id": "hunt_dungeon_azimanak",
+      "file": "hunt_dungeon_azimanak.png",
+      "region": { "left": 820, "top": 90, "right": 1024, "bottom": 576 },
+      "threshold": 0.82,
+      "required": false
+    },
+    {
+      "id": "hunt_dungeon_caides",
+      "file": "hunt_dungeon_caides.png",
+      "region": { "left": 820, "top": 90, "right": 1024, "bottom": 576 },
+      "threshold": 0.82,
       "required": false
     },
     {

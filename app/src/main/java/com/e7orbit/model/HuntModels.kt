@@ -10,6 +10,17 @@ enum class HuntDifficulty {
 }
 
 @Serializable
+enum class HuntDungeon(
+    val displayName: String,
+) {
+    WYVERN("双足飞龙"),
+    GOLEM("魔像"),
+    BANSHEE("报丧妖"),
+    AZIMANAK("阿吉马纳克"),
+    CAIDES("卡戴斯"),
+}
+
+@Serializable
 enum class HuntEnergyRefill {
     DISABLED,
     LEIF_ONLY,
@@ -19,6 +30,7 @@ enum class HuntEnergyRefill {
 
 @Serializable
 data class HuntConfig(
+    val dungeon: HuntDungeon = HuntDungeon.WYVERN,
     val difficulty: HuntDifficulty = HuntDifficulty.HELL,
     val managedBattle: Boolean = true,
     val runCount: Int = 20,

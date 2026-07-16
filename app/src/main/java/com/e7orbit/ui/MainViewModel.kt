@@ -15,6 +15,7 @@ import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.E7_CN_PACKAGE
 import com.e7orbit.model.HuntConfig
 import com.e7orbit.model.HuntDifficulty
+import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntEnergyRefill
 import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStatus
@@ -130,6 +131,10 @@ class MainViewModel(
 
     fun setHuntDifficulty(difficulty: HuntDifficulty) {
         updateHuntConfig { copy(difficulty = difficulty) }
+    }
+
+    fun setHuntDungeon(dungeon: HuntDungeon) {
+        updateHuntConfig { copy(dungeon = dungeon) }
     }
 
     fun setHuntManagedBattle(enabled: Boolean) {

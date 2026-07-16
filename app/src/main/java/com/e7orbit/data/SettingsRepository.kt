@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.e7orbit.model.HuntConfig
 import com.e7orbit.model.HuntDifficulty
+import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntEnergyRefill
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
@@ -40,6 +41,11 @@ class SettingsRepository(
 
     val huntConfig: Flow<HuntConfig> = dataStore.safeData.map { preferences ->
         HuntConfig(
+            dungeon = preferences[Keys.HUNT_DUNGEON]
+                ?.let { stored ->
+                    runCatching { HuntDungeon.valueOf(stored) }.getOrNull()
+                }
+                ?: HuntDungeon.WYVERN,
             difficulty = preferences[Keys.HUNT_DIFFICULTY]
                 ?.let { stored ->
                     runCatching { HuntDifficulty.valueOf(stored) }.getOrNull()
@@ -81,6 +87,7 @@ class SettingsRepository(
     suspend fun saveHuntConfig(config: HuntConfig) {
         val normalized = config.normalized()
         dataStore.edit { preferences ->
+            preferences[Keys.HUNT_DUNGEON] = normalized.dungeon.name
             preferences[Keys.HUNT_DIFFICULTY] = normalized.difficulty.name
             preferences[Keys.HUNT_MANAGED_BATTLE] = normalized.managedBattle
             preferences[Keys.HUNT_RUN_COUNT] = normalized.runCount
@@ -115,6 +122,7 @@ class SettingsRepository(
         val BUY_MYSTIC = booleanPreferencesKey("buy_mystic")
         val MAX_REFRESHES = intPreferencesKey("max_refreshes")
         val MATCH_THRESHOLD = doublePreferencesKey("match_threshold")
+        val HUNT_DUNGEON = stringPreferencesKey("hunt_dungeon")
         val HUNT_DIFFICULTY = stringPreferencesKey("hunt_difficulty")
         val HUNT_MANAGED_BATTLE = booleanPreferencesKey("hunt_managed_battle")
         val HUNT_RUN_COUNT = intPreferencesKey("hunt_run_count")

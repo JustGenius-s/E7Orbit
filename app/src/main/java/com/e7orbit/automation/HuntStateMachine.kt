@@ -5,6 +5,7 @@ import com.e7orbit.logging.OrbitLogger
 import com.e7orbit.model.GestureResult
 import com.e7orbit.model.HuntConfig
 import com.e7orbit.model.HuntDifficulty
+import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntPage
 import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStats
@@ -102,8 +103,13 @@ class HuntStateMachine(
                     onDiagnostic = onDiagnostic,
                 )
 
-                publish(HuntPhase.SELECTING_BOSS, "选择双足飞龙")
-                tapPoint(Points.WYVERN, "选择双足飞龙失败", gateway, awaitRunPermission)
+                publish(HuntPhase.SELECTING_BOSS, "选择${config.dungeon.displayName}")
+                selectDungeon(
+                    dungeon = config.dungeon,
+                    gateway = gateway,
+                    awaitRunPermission = awaitRunPermission,
+                    onDiagnostic = onDiagnostic,
+                )
                 clock.delay(AFTER_TAP_DELAY_MS)
 
                 publish(HuntPhase.SELECTING_DIFFICULTY, "选择地狱")
@@ -360,6 +366,106 @@ class HuntStateMachine(
         }
     }
 
+    private suspend fun selectDungeon(
+        dungeon: HuntDungeon,
+        gateway: ScreenGateway,
+        awaitRunPermission: suspend () -> Unit,
+        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
+    ) {
+        suspend fun findAndTap(): Boolean {
+            awaitRunPermission()
+            val match = captureChecked(gateway).useFrame { frame ->
+                vision.findDungeon(frame, dungeon)
+            }
+            logger.debug(
+                "hunt.dungeon.match",
+                "dungeon" to dungeon,
+                "score" to match.confidence,
+                "matched" to match.matched,
+            )
+            val center = match.center
+            if (!match.matched || center == null) return false
+            tapPoint(
+                normalizedPoint = center,
+                failureMessage = "选择${dungeon.displayName}失败",
+                gateway = gateway,
+                awaitRunPermission = awaitRunPermission,
+            )
+            return true
+        }
+
+        if (findAndTap()) return
+
+        repeat(DUNGEON_RESET_SWIPES) {
+            swipePoint(
+                from = Points.DUNGEON_SCROLL_TOP,
+                to = Points.DUNGEON_SCROLL_BOTTOM,
+                failureMessage = "重置地下城列表失败",
+                gateway = gateway,
+                awaitRunPermission = awaitRunPermission,
+            )
+            clock.delay(AFTER_DUNGEON_SCROLL_DELAY_MS)
+        }
+
+        repeat(DUNGEON_SEARCH_PAGES) { pageIndex ->
+            if (findAndTap()) return
+            if (pageIndex < DUNGEON_SEARCH_PAGES - 1) {
+                swipePoint(
+                    from = Points.DUNGEON_SCROLL_BOTTOM,
+                    to = Points.DUNGEON_SCROLL_TOP,
+                    failureMessage = "滚动地下城列表失败",
+                    gateway = gateway,
+                    awaitRunPermission = awaitRunPermission,
+                )
+                clock.delay(AFTER_DUNGEON_SCROLL_DELAY_MS)
+            }
+        }
+
+        diagnose(gateway, "dungeon_${dungeon.name.lowercase()}_not_found", onDiagnostic)
+        throw MachineStop(
+            HuntStopReason.LOW_CONFIDENCE,
+            "未找到地下城：${dungeon.displayName}",
+        )
+    }
+
+    private suspend fun swipePoint(
+        from: ScreenPoint,
+        to: ScreenPoint,
+        failureMessage: String,
+        gateway: ScreenGateway,
+        awaitRunPermission: suspend () -> Unit,
+    ) {
+        val captureFrom = from.toCapturePoint()
+        val captureTo = to.toCapturePoint()
+        repeat(GESTURE_MAX_ATTEMPTS) { attempt ->
+            awaitRunPermission()
+            when (
+                val result = gateway.swipe(
+                    from = captureFrom,
+                    to = captureTo,
+                    durationMs = DUNGEON_SCROLL_DURATION_MS,
+                )
+            ) {
+                GestureResult.COMPLETED -> return
+                GestureResult.CANCELLED -> {
+                    if (attempt < GESTURE_MAX_ATTEMPTS - 1) {
+                        clock.delay(GESTURE_RETRY_DELAY_MS)
+                    } else {
+                        throw MachineStop(
+                            HuntStopReason.GESTURE_FAILED,
+                            "$failureMessage：$result",
+                        )
+                    }
+                }
+
+                GestureResult.REJECTED -> throw MachineStop(
+                    HuntStopReason.GESTURE_FAILED,
+                    "$failureMessage：$result",
+                )
+            }
+        }
+    }
+
     private suspend fun captureChecked(gateway: ScreenGateway): ScreenFrame {
         val frame = try {
             gateway.capture()
@@ -412,7 +518,8 @@ class HuntStateMachine(
     private object Points {
         val LOBBY_BATTLE = ScreenPoint(970, 260)
         val BATTLE_MENU_HUNT = ScreenPoint(625, 330)
-        val WYVERN = ScreenPoint(910, 190)
+        val DUNGEON_SCROLL_TOP = ScreenPoint(910, 155)
+        val DUNGEON_SCROLL_BOTTOM = ScreenPoint(910, 510)
         val HELL = ScreenPoint(705, 330)
         val QUICK_BATTLE_TOGGLE = ScreenPoint(994, 530)
         val MANAGED_CHECKBOX = ScreenPoint(474, 445)
@@ -434,6 +541,10 @@ class HuntStateMachine(
         const val MANAGED_POLL_INTERVAL_MS = 3_000L
         const val MANAGED_PANEL_OPEN_DELAY_MS = 1_000L
         const val AFTER_TAP_DELAY_MS = 800L
+        const val AFTER_DUNGEON_SCROLL_DELAY_MS = 900L
+        const val DUNGEON_SCROLL_DURATION_MS = 500L
+        const val DUNGEON_RESET_SWIPES = 2
+        const val DUNGEON_SEARCH_PAGES = 4
         const val GESTURE_MAX_ATTEMPTS = 3
         const val GESTURE_RETRY_DELAY_MS = 160L
     }

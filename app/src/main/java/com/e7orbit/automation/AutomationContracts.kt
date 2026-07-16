@@ -2,6 +2,7 @@ package com.e7orbit.automation
 
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.GestureResult
+import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntPage
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.PurchaseTarget
@@ -50,6 +51,7 @@ interface ShopVision {
 interface HuntVision {
     fun health(): VisionHealth
     suspend fun detectPage(frame: ScreenFrame): HuntPage
+    suspend fun findDungeon(frame: ScreenFrame, dungeon: HuntDungeon): MatchResult
     suspend fun isManagedBattleEnabled(frame: ScreenFrame): Boolean
     suspend fun managedProgressSignature(frame: ScreenFrame): Long
 }
