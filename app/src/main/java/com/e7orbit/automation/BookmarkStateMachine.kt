@@ -43,15 +43,28 @@ class BookmarkStateMachine(
         awaitRunPermission: suspend () -> Unit,
         onStatus: (AutomationPhase, RunStats, String, Double?) -> Unit,
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
-    ): MachineResult {
-        var stats = RunStats(startedAtElapsedMs = clock.elapsedRealtime())
-        val operations = OperationExecutor(
+    ): MachineResult = run(
+        config = config,
+        session = AutomationSession(
             gateway = gateway,
             clock = clock,
             awaitRunPermission = awaitRunPermission,
             onDiagnostic = onDiagnostic,
             logger = logger,
-        )
+        ),
+        onStatus = onStatus,
+    )
+
+    suspend fun run(
+        config: RunConfig,
+        session: AutomationSession,
+        onStatus: (AutomationPhase, RunStats, String, Double?) -> Unit,
+    ): MachineResult {
+        val gateway = session.gateway
+        val awaitRunPermission: suspend () -> Unit = session::awaitActive
+        val onDiagnostic: suspend (ScreenFrame, String) -> Unit = session::saveDiagnostic
+        var stats = RunStats(startedAtElapsedMs = clock.elapsedRealtime())
+        val operations = session.executor
         logger.info(
             "machine.started",
             "maxRefreshes" to config.maxRefreshes,
@@ -74,10 +87,8 @@ class BookmarkStateMachine(
 
         return try {
             navigateHomeIfNeeded(
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
+                session = session,
                 publish = ::publish,
-                onDiagnostic = onDiagnostic,
             )
             publish(AutomationPhase.WAITING_FOR_SHOP, "等待主页或秘密商店")
             when (
@@ -443,20 +454,16 @@ class BookmarkStateMachine(
     }
 
     private suspend fun navigateHomeIfNeeded(
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
+        session: AutomationSession,
         publish: (AutomationPhase, String, Double?) -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ) {
         val navigator = homeNavigator ?: return
         try {
             navigator.ensureHome(
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
+                session = session,
                 onStatus = { message ->
                     publish(AutomationPhase.WAITING_FOR_SHOP, message, null)
                 },
-                onDiagnostic = onDiagnostic,
             )
         } catch (error: HomeNavigationException) {
             throw MachineStop(

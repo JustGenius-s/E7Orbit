@@ -115,15 +115,63 @@ class OperationExecutorTest {
         assertEquals(2, probes)
     }
 
+    @Test
+    fun recordsCompletedGestureReceiptWithStableToken() = runTest {
+        val receipts = mutableListOf<GestureReceipt>()
+
+        executor(
+            gateway = FakeOperationGateway(),
+            onGestureReceipt = receipts::add,
+        ).tap(
+            operationId = "open_menu",
+            point = ScreenPoint(10, 10),
+            policy = OperationPolicy.reconciliationRequired(),
+        )
+
+        assertEquals(
+            listOf(GestureOutcome.DISPATCHING, GestureOutcome.COMPLETED),
+            receipts.map(GestureReceipt::outcome),
+        )
+        assertEquals(receipts.first().token, receipts.last().token)
+    }
+
+    @Test
+    fun recordsInterruptedUncertainGestureBeforePropagatingCancellation() = runTest {
+        val receipts = mutableListOf<GestureReceipt>()
+        val executor = executor(
+            gateway = FakeOperationGateway(
+                tapError = CancellationException("runtime stopped"),
+            ),
+            onGestureReceipt = receipts::add,
+        )
+
+        var cancelled = false
+        try {
+            executor.tap(
+                operationId = "confirm_refresh",
+                point = ScreenPoint(10, 10),
+                policy = OperationPolicy.reconciliationRequired(),
+            )
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+
+        assertTrue(cancelled)
+        assertEquals(GestureOutcome.INTERRUPTED, receipts.last().outcome)
+        assertTrue(receipts.last().effectMayBeUncertain)
+    }
+
     private fun executor(
         gateway: ScreenGateway,
         clock: FakeOperationClock = FakeOperationClock(),
         awaitRunPermission: suspend () -> Unit = {},
+        onGestureReceipt: (GestureReceipt) -> Unit = {},
     ) = OperationExecutor(
         gateway = gateway,
         clock = clock,
         awaitRunPermission = awaitRunPermission,
         onDiagnostic = { _, _ -> },
+        onGestureReceipt = onGestureReceipt,
     )
 
     private class FakeOperationGateway(

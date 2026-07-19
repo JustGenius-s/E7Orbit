@@ -2,6 +2,7 @@ package com.e7orbit.automation
 
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
+import com.e7orbit.model.DevicePoint
 import com.e7orbit.model.GameLocation
 import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.MatchResult
@@ -27,6 +28,10 @@ class HomeNavigator(
     private val clock: AutomationClock = SystemAutomationClock,
     private val logger: OrbitLogger = NoOpOrbitLogger,
 ) {
+    private val navigationWorkflow: Workflow<HomeWorkflowContext> by lazy {
+        buildNavigationWorkflow()
+    }
+
     fun health(): VisionHealth = vision.navigationHealth()
 
     suspend fun ensureHome(
@@ -35,108 +40,180 @@ class HomeNavigator(
         onStatus: (String) -> Unit,
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ) {
-        val executor = OperationExecutor(
-            gateway = gateway,
-            clock = clock,
-            awaitRunPermission = awaitRunPermission,
-            onDiagnostic = { frame, reason ->
-                onDiagnostic(frame, "home_navigation_$reason")
-            },
-            logger = logger,
+        ensureHome(
+            session = AutomationSession(
+                gateway = gateway,
+                clock = clock,
+                awaitRunPermission = awaitRunPermission,
+                onDiagnostic = onDiagnostic,
+                logger = logger,
+            ),
+            onStatus = onStatus,
+        )
+    }
+
+    suspend fun ensureHome(
+        session: AutomationSession,
+        onStatus: (String) -> Unit,
+    ) {
+        val context = HomeWorkflowContext(
+            navigator = this,
+            onStatus = onStatus,
         )
         try {
-            ensureHome(executor, onStatus)
+            navigationWorkflow.run(context, session)
+            logger.info(
+                "home.navigation.completed",
+                "session" to session.sessionId,
+                "gesture" to session.latestGestureReceipt()?.token?.value,
+            )
         } catch (error: OperationExecutionException) {
             throw error.asHomeNavigationException()
         }
     }
 
-    private suspend fun ensureHome(
-        executor: OperationExecutor,
-        onStatus: (String) -> Unit,
-    ) {
-        if (isHome(executor)) {
-            logger.debug("home.navigation.already_home")
-            return
+    private fun buildNavigationWorkflow(): Workflow<HomeWorkflowContext> =
+        workflow("home_navigation") {
+            defaults {
+                diagnoseOnFailure = true
+                maxAttempts = 1
+            }
+
+            stage("location") {
+                step("detect", effectSafety = EffectSafety.READ_ONLY) {
+                    execute {
+                        if (context.navigator.observeHome(session).confirmedOrNull() != null) {
+                            context.navigator.logger.debug("home.navigation.already_home")
+                            completeWorkflow()
+                        }
+                        context.returnHome = context.navigator
+                            .observeAction(session, GlobalAction.RETURN_TO_LOBBY)
+                            .confirmedOrNull()
+                    }
+                }
+            }
+
+            stage("menu") {
+                step(
+                    id = "open_if_needed",
+                    effectSafety = EffectSafety.RECONCILIATION_REQUIRED,
+                ) {
+                    execute {
+                        if (context.returnHome != null) return@execute
+                        context.onStatus("打开快捷菜单")
+                        val openMenu = context.navigator.waitForAction(
+                            session = session,
+                            action = GlobalAction.OPEN_MENU,
+                            timeoutMs = OPEN_MENU_TIMEOUT_MS,
+                        )
+                        context.navigator.tapMatch(
+                            session = session,
+                            operationId = "home.open_menu",
+                            match = openMenu,
+                            failureMessage = "打开快捷菜单失败",
+                        )
+                        session.clock.delay(AFTER_TAP_DELAY_MS)
+                        context.onStatus("选择返回主页")
+                        context.returnHome = context.navigator.waitForAction(
+                            session = session,
+                            action = GlobalAction.RETURN_TO_LOBBY,
+                            timeoutMs = MENU_OPEN_TIMEOUT_MS,
+                        )
+                    }
+                    recover {
+                        val observed = context.navigator
+                            .observeAction(session, GlobalAction.RETURN_TO_LOBBY)
+                            .confirmedOrNull()
+                        if (observed != null) {
+                            context.returnHome = observed
+                            StepRecovery.Recovered
+                        } else {
+                            StepRecovery.Fail
+                        }
+                    }
+                }
+            }
+
+            stage("return") {
+                step(
+                    id = "tap_and_verify",
+                    effectSafety = EffectSafety.RECONCILIATION_REQUIRED,
+                ) {
+                    execute {
+                        context.onStatus("正在返回游戏主页")
+                        val returnHome = context.returnHome ?: throw HomeNavigationException(
+                            HomeNavigationFailure.LOW_CONFIDENCE,
+                            "未找到返回主页按钮",
+                        )
+                        context.navigator.tapMatch(
+                            session = session,
+                            operationId = "home.return_to_lobby",
+                            match = returnHome,
+                            failureMessage = "返回主页失败",
+                        )
+                        context.onStatus("等待游戏主页加载")
+                        context.navigator.waitForHome(session)
+                    }
+                    recover {
+                        if (context.navigator.observeHome(session).confirmedOrNull() != null) {
+                            StepRecovery.Recovered
+                        } else {
+                            StepRecovery.Fail
+                        }
+                    }
+                }
+            }
         }
 
-        onStatus("正在返回游戏主页")
-        var returnHome = findAction(
-            action = GlobalAction.RETURN_TO_LOBBY,
-            executor = executor,
-        )
-        if (!returnHome.matched) {
-            onStatus("打开快捷菜单")
-            val openMenu = waitForAction(
-                action = GlobalAction.OPEN_MENU,
-                timeoutMs = OPEN_MENU_TIMEOUT_MS,
-                executor = executor,
-            )
-            tapMatch(
-                operationId = "home.open_menu",
-                match = openMenu,
-                failureMessage = "打开快捷菜单失败",
-                executor = executor,
-            )
-            clock.delay(AFTER_TAP_DELAY_MS)
-            onStatus("选择返回主页")
-            returnHome = waitForAction(
-                action = GlobalAction.RETURN_TO_LOBBY,
-                timeoutMs = MENU_OPEN_TIMEOUT_MS,
-                executor = executor,
-            )
+    private suspend fun observeHome(
+        session: AutomationSession,
+    ): Observation<GameLocation> = session.executor.capture("home.detect_location").use { frame ->
+        val location = vision.detectLocation(frame)
+        if (location == GameLocation.LOBBY) {
+            Observation.Confirmed(location)
+        } else {
+            Observation.Absent("当前不在主页")
         }
-
-        tapMatch(
-            operationId = "home.return_to_lobby",
-            match = returnHome,
-            failureMessage = "返回主页失败",
-            executor = executor,
-        )
-        onStatus("等待游戏主页加载")
-        waitForHome(executor)
-        logger.info("home.navigation.completed")
     }
 
-    private suspend fun isHome(
-        executor: OperationExecutor,
-    ): Boolean = executor.capture("home.detect_location").use { frame ->
-        vision.detectLocation(frame) == GameLocation.LOBBY
-    }
-
-    private suspend fun findAction(
+    private suspend fun observeAction(
+        session: AutomationSession,
         action: GlobalAction,
-        executor: OperationExecutor,
-    ): MatchResult = executor.capture("home.find_${action.name.lowercase()}").use { frame ->
-        vision.findGlobalAction(frame, action)
-    }
+    ): Observation<MatchResult> = session.executor
+        .capture("home.find_${action.name.lowercase()}")
+        .use { frame ->
+            val match = vision.findGlobalAction(frame, action)
+            if (match.matched && match.center != null) {
+                Observation.Confirmed(match, match.confidence)
+            } else {
+                Observation.Absent("未找到 ${action.name}")
+            }
+        }
 
     private suspend fun waitForAction(
+        session: AutomationSession,
         action: GlobalAction,
         timeoutMs: Long,
-        executor: OperationExecutor,
-    ): MatchResult = executor.waitUntil(
+    ): MatchResult = session.executor.waitUntil(
         operationId = "home.wait_${action.name.lowercase()}",
         timeoutMs = timeoutMs,
         pollIntervalMs = POLL_INTERVAL_MS,
-        diagnosticReason = "action_${action.name.lowercase()}_timeout",
+        diagnosticReason = "home_navigation_action_${action.name.lowercase()}_timeout",
     ) {
-        findAction(action, executor).takeIf { match ->
-            match.matched && match.center != null
-        }
+        observeAction(session, action).confirmedOrNull()
     }
 
     private suspend fun waitForHome(
-        executor: OperationExecutor,
+        session: AutomationSession,
     ) {
         var matches = 0
-        executor.waitUntil(
+        session.executor.waitUntil<Unit>(
             operationId = "home.wait_lobby",
             timeoutMs = HOME_TIMEOUT_MS,
             pollIntervalMs = POLL_INTERVAL_MS,
-            diagnosticReason = "home_timeout",
+            diagnosticReason = "home_navigation_home_timeout",
         ) {
-            if (isHome(executor)) {
+            if (observeHome(session).confirmedOrNull() != null) {
                 matches += 1
             } else {
                 matches = 0
@@ -146,18 +223,18 @@ class HomeNavigator(
     }
 
     private suspend fun tapMatch(
+        session: AutomationSession,
         operationId: String,
         match: MatchResult,
         failureMessage: String,
-        executor: OperationExecutor,
     ) {
         val point = match.center ?: throw HomeNavigationException(
             HomeNavigationFailure.LOW_CONFIDENCE,
             failureMessage,
         )
-        executor.tap(
+        session.executor.tap(
             operationId = operationId,
-            point = point,
+            point = DevicePoint.from(point),
             policy = OperationPolicy.reconciliationRequired(),
         )
     }
@@ -180,6 +257,12 @@ class HomeNavigator(
             cause = this,
         )
     }
+
+    private data class HomeWorkflowContext(
+        val navigator: HomeNavigator,
+        val onStatus: (String) -> Unit,
+        var returnHome: MatchResult? = null,
+    )
 
     private companion object {
         const val OPEN_MENU_TIMEOUT_MS = 30_000L

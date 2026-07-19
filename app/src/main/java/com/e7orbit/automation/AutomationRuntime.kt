@@ -65,6 +65,7 @@ class AutomationRuntime internal constructor(
     private val captureReady: () -> Boolean = { true },
     private val clock: AutomationClock = SystemAutomationClock,
     private val runCoordinator: AutomationRunCoordinator? = null,
+    private val sharedSessionManager: AutomationSessionManager? = null,
     private val homeNavigator: HomeNavigator? = null,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : AutomationController {
@@ -77,6 +78,7 @@ class AutomationRuntime internal constructor(
         captureReady: () -> Boolean = { true },
         clock: AutomationClock = SystemAutomationClock,
         runCoordinator: AutomationRunCoordinator? = null,
+        sessionManager: AutomationSessionManager? = null,
         homeNavigator: HomeNavigator? = null,
     ) : this(
         vision = vision,
@@ -87,20 +89,25 @@ class AutomationRuntime internal constructor(
         captureReady = captureReady,
         clock = clock,
         runCoordinator = runCoordinator,
+        sharedSessionManager = sessionManager,
         homeNavigator = homeNavigator,
         dispatcher = Dispatchers.Default,
     )
 
     private class ActiveRun(
-        val lease: RunLease,
+        val managedSession: ManagedAutomationSession,
         val job: Job,
     ) {
+        val lease: RunLease
+            get() = managedSession.lease
         val stopRequested = AtomicBoolean(false)
     }
 
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val startMutex = Mutex()
-    private val coordinator = runCoordinator ?: AutomationRunCoordinator()
+    private val sessionManager = sharedSessionManager ?: AutomationSessionManager(
+        runCoordinator ?: AutomationRunCoordinator(),
+    )
     private val gatewayRef = AtomicReference<ScreenGateway?>()
     private val sessionGateway = SwitchingScreenGateway(gatewayRef::get)
     private val activeRunRef = AtomicReference<ActiveRun?>()
@@ -196,8 +203,23 @@ class AutomationRuntime internal constructor(
                     return
                 }
             }
-            val lease = coordinator.tryAcquire(AutomationKind.SHOP)
-            if (lease == null) {
+            val managedSession = sessionManager.tryOpen(
+                kind = AutomationKind.SHOP,
+                gateway = sessionGateway,
+                clock = clock,
+                awaitRunPermission = { paused.first { isPaused -> !isPaused } },
+                onDiagnostic = { frame, reason ->
+                    val file = diagnosticSink.save(frame, reason)
+                    logger.info(
+                        "diagnostic.saved",
+                        "reason" to reason,
+                        "sequence" to frame.sequence,
+                        "file" to file.orEmpty(),
+                    )
+                },
+                logger = logger,
+            )
+            if (managedSession == null) {
                 rejectStart(
                     normalized,
                     StopReason.INVALID_CONFIGURATION,
@@ -218,14 +240,16 @@ class AutomationRuntime internal constructor(
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 runSession(
                     config = normalized,
-                    gateway = sessionGateway,
-                    lease = lease,
+                    session = managedSession.session,
+                    lease = managedSession.lease,
                 )
             }
-            val activeRun = ActiveRun(lease = lease, job = job)
+            val activeRun = ActiveRun(managedSession = managedSession, job = job)
             job.invokeOnCompletion { completeRun(activeRun) }
-            check(activeRunRef.compareAndSet(null, activeRun)) {
-                "Automation run was installed concurrently"
+            if (!activeRunRef.compareAndSet(null, activeRun)) {
+                job.cancel()
+                managedSession.close()
+                error("Automation run was installed concurrently")
             }
             job.start()
             logger.info("runtime.start.accepted")
@@ -322,7 +346,7 @@ class AutomationRuntime internal constructor(
 
     private suspend fun runSession(
         config: RunConfig,
-        gateway: ScreenGateway,
+        session: AutomationSession,
         lease: RunLease,
     ) {
         try {
@@ -344,14 +368,14 @@ class AutomationRuntime internal constructor(
         currentCoroutineContext().ensureActive()
         runMachine(
             config = config,
-            gateway = gateway,
+            session = session,
             lease = lease,
         )
     }
 
     private suspend fun runMachine(
         config: RunConfig,
-        gateway: ScreenGateway,
+        session: AutomationSession,
         lease: RunLease,
     ) {
         val machine = BookmarkStateMachine(
@@ -364,10 +388,7 @@ class AutomationRuntime internal constructor(
         try {
             val result = machine.run(
                 config = config,
-                gateway = gateway,
-                awaitRunPermission = {
-                    paused.first { isPaused -> !isPaused }
-                },
+                session = session,
                 onStatus = { phase, stats, message, confidence ->
                     logger.debug(
                         "runtime.status",
@@ -388,15 +409,6 @@ class AutomationRuntime internal constructor(
                             lastConfidence = confidence,
                         )
                     }
-                },
-                onDiagnostic = { frame, reason ->
-                    val file = diagnosticSink.save(frame, reason)
-                    logger.info(
-                        "diagnostic.saved",
-                        "reason" to reason,
-                        "sequence" to frame.sequence,
-                        "file" to file.orEmpty(),
-                    )
                 },
             )
             val terminalPhase = if (result.successful) {
@@ -537,13 +549,27 @@ class AutomationRuntime internal constructor(
     }
 
     private fun completeRun(activeRun: ActiveRun) {
-        val released = coordinator.release(activeRun.lease)
+        reconcileInterruptedGesture(activeRun)
+        val released = activeRun.managedSession.release()
         val removed = activeRunRef.compareAndSet(activeRun, null)
         logger.debug(
             "runtime.run.completed",
             "lease" to activeRun.lease.token,
             "removed" to removed,
             "released" to released,
+        )
+    }
+
+    private fun reconcileInterruptedGesture(activeRun: ActiveRun) {
+        if (!activeRun.stopRequested.get() || activeRunRef.get() !== activeRun) return
+        val receipt = activeRun.managedSession.session.latestGestureReceipt()
+            ?.takeIf(GestureReceipt::effectMayBeUncertain)
+            ?: return
+        val current = _status.value
+        if (current.stopReason == StopReason.UNCERTAIN_EFFECT) return
+        _status.value = current.copy(
+            stopReason = StopReason.UNCERTAIN_EFFECT,
+            message = "${current.message}；操作 ${receipt.operationId} 被中断后效果不确定，请核对游戏状态",
         )
     }
 }

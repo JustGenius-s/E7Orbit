@@ -38,15 +38,28 @@ class HuntStateMachine(
         awaitRunPermission: suspend () -> Unit,
         onStatus: (HuntPhase, HuntStats, String, Double?) -> Unit,
         onDiagnostic: suspend (ScreenFrame, String) -> Unit,
-    ): HuntMachineResult {
-        var stats = HuntStats(startedAtElapsedMs = clock.elapsedRealtime())
-        val operations = OperationExecutor(
+    ): HuntMachineResult = run(
+        config = config,
+        session = AutomationSession(
             gateway = gateway,
             clock = clock,
             awaitRunPermission = awaitRunPermission,
             onDiagnostic = { frame, reason -> onDiagnostic(frame, "hunt_$reason") },
             logger = logger,
-        )
+        ),
+        onStatus = onStatus,
+    )
+
+    suspend fun run(
+        config: HuntConfig,
+        session: AutomationSession,
+        onStatus: (HuntPhase, HuntStats, String, Double?) -> Unit,
+    ): HuntMachineResult {
+        val gateway = session.gateway
+        val awaitRunPermission: suspend () -> Unit = session::awaitActive
+        val onDiagnostic: suspend (ScreenFrame, String) -> Unit = session::saveDiagnostic
+        var stats = HuntStats(startedAtElapsedMs = clock.elapsedRealtime())
+        val operations = session.executor
 
         fun publish(
             phase: HuntPhase,
@@ -77,10 +90,8 @@ class HuntStateMachine(
             }
 
             navigateHomeIfNeeded(
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
+                session = session,
                 publish = ::publish,
-                onDiagnostic = onDiagnostic,
             )
 
             while (stats.completedRuns < config.runCount) {
@@ -423,20 +434,16 @@ class HuntStateMachine(
     )
 
     private suspend fun navigateHomeIfNeeded(
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
+        session: AutomationSession,
         publish: (HuntPhase, String, Double?) -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     ) {
         val navigator = homeNavigator ?: return
         try {
             navigator.ensureHome(
-                gateway = gateway,
-                awaitRunPermission = awaitRunPermission,
+                session = session,
                 onStatus = { message ->
                     publish(HuntPhase.WAITING_FOR_LOBBY, message, null)
                 },
-                onDiagnostic = onDiagnostic,
             )
         } catch (error: HomeNavigationException) {
             throw MachineStop(

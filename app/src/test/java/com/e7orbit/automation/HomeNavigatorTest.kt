@@ -11,6 +11,7 @@ import java.util.ArrayDeque
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeNavigatorTest {
@@ -89,6 +90,46 @@ class HomeNavigatorTest {
         assertEquals(true, cancelled)
     }
 
+    @Test
+    fun workflowReconcilesCancelledMenuGestureByReobservingUi() = runTest {
+        val vision = FakeGlobalUiVision(
+            locations = listOf(
+                GameLocation.UNKNOWN,
+                GameLocation.LOBBY,
+                GameLocation.LOBBY,
+            ),
+        )
+        val gateway = FakeHomeGateway(
+            tapResults = listOf(
+                GestureResult.CANCELLED,
+                GestureResult.COMPLETED,
+            ),
+        )
+        val clock = FakeHomeClock()
+        val session = AutomationSession(
+            gateway = gateway,
+            clock = clock,
+            awaitRunPermission = {},
+            onDiagnostic = { _, _ -> },
+        )
+
+        HomeNavigator(vision = vision, clock = clock).ensureHome(
+            session = session,
+            onStatus = {},
+        )
+
+        val checkpoints = session.checkpointHistory()
+        assertEquals(2, gateway.taps)
+        assertTrue(
+            checkpoints.any {
+                it.workflowId == "home_navigation" &&
+                    it.stepId == "menu.open_if_needed" &&
+                    it.state == WorkflowCheckpointState.RECOVERED
+            },
+        )
+        assertEquals(GestureOutcome.COMPLETED, session.latestGestureReceipt()?.outcome)
+    }
+
     private class FakeGlobalUiVision(
         locations: List<GameLocation>,
         private val health: VisionHealth = VisionHealth(
@@ -130,7 +171,9 @@ class HomeNavigatorTest {
 
     private class FakeHomeGateway(
         private val captureError: Throwable? = null,
+        tapResults: List<GestureResult> = emptyList(),
     ) : ScreenGateway {
+        private val tapResults = ArrayDeque(tapResults)
         var taps = 0
 
         override suspend fun capture(): ScreenFrame {
@@ -146,7 +189,7 @@ class HomeNavigatorTest {
 
         override suspend fun tap(point: ScreenPoint): GestureResult {
             taps += 1
-            return GestureResult.COMPLETED
+            return tapResults.pollFirst() ?: GestureResult.COMPLETED
         }
 
         override suspend fun swipe(

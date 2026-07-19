@@ -62,6 +62,7 @@ class HuntRuntime internal constructor(
     private val captureReady: () -> Boolean = { true },
     private val clock: AutomationClock = SystemAutomationClock,
     private val runCoordinator: AutomationRunCoordinator? = null,
+    private val sharedSessionManager: AutomationSessionManager? = null,
     private val homeNavigator: HomeNavigator? = null,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
@@ -74,6 +75,7 @@ class HuntRuntime internal constructor(
         captureReady: () -> Boolean = { true },
         clock: AutomationClock = SystemAutomationClock,
         runCoordinator: AutomationRunCoordinator? = null,
+        sessionManager: AutomationSessionManager? = null,
         homeNavigator: HomeNavigator? = null,
     ) : this(
         vision = vision,
@@ -84,20 +86,25 @@ class HuntRuntime internal constructor(
         captureReady = captureReady,
         clock = clock,
         runCoordinator = runCoordinator,
+        sharedSessionManager = sessionManager,
         homeNavigator = homeNavigator,
         dispatcher = Dispatchers.Default,
     )
 
     private class ActiveRun(
-        val lease: RunLease,
+        val managedSession: ManagedAutomationSession,
         val job: Job,
     ) {
+        val lease: RunLease
+            get() = managedSession.lease
         val stopRequested = AtomicBoolean(false)
     }
 
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val startMutex = Mutex()
-    private val coordinator = runCoordinator ?: AutomationRunCoordinator()
+    private val sessionManager = sharedSessionManager ?: AutomationSessionManager(
+        runCoordinator ?: AutomationRunCoordinator(),
+    )
     private val gatewayRef = AtomicReference<ScreenGateway?>()
     private val sessionGateway = SwitchingScreenGateway(gatewayRef::get)
     private val activeRunRef = AtomicReference<ActiveRun?>()
@@ -165,8 +172,15 @@ class HuntRuntime internal constructor(
                     return
                 }
             }
-            val lease = coordinator.tryAcquire(AutomationKind.HUNT)
-            if (lease == null) {
+            val managedSession = sessionManager.tryOpen(
+                kind = AutomationKind.HUNT,
+                gateway = sessionGateway,
+                clock = clock,
+                awaitRunPermission = { paused.first { isPaused -> !isPaused } },
+                onDiagnostic = { frame, reason -> diagnosticSink.save(frame, reason) },
+                logger = logger,
+            )
+            if (managedSession == null) {
                 rejectStart(
                     normalized,
                     HuntStopReason.INVALID_CONFIGURATION,
@@ -187,14 +201,16 @@ class HuntRuntime internal constructor(
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 runSession(
                     config = normalized,
-                    gateway = sessionGateway,
-                    lease = lease,
+                    session = managedSession.session,
+                    lease = managedSession.lease,
                 )
             }
-            val activeRun = ActiveRun(lease = lease, job = job)
+            val activeRun = ActiveRun(managedSession = managedSession, job = job)
             job.invokeOnCompletion { completeRun(activeRun) }
-            check(activeRunRef.compareAndSet(null, activeRun)) {
-                "Hunt run was installed concurrently"
+            if (!activeRunRef.compareAndSet(null, activeRun)) {
+                job.cancel()
+                managedSession.close()
+                error("Hunt run was installed concurrently")
             }
             job.start()
         }
@@ -283,7 +299,7 @@ class HuntRuntime internal constructor(
 
     private suspend fun runSession(
         config: HuntConfig,
-        gateway: ScreenGateway,
+        session: AutomationSession,
         lease: RunLease,
     ) {
         try {
@@ -305,14 +321,14 @@ class HuntRuntime internal constructor(
         currentCoroutineContext().ensureActive()
         runMachine(
             config = config,
-            gateway = gateway,
+            session = session,
             lease = lease,
         )
     }
 
     private suspend fun runMachine(
         config: HuntConfig,
-        gateway: ScreenGateway,
+        session: AutomationSession,
         lease: RunLease,
     ) {
         val machine = HuntStateMachine(
@@ -325,8 +341,7 @@ class HuntRuntime internal constructor(
         try {
             val result = machine.run(
                 config = config,
-                gateway = gateway,
-                awaitRunPermission = { paused.first { isPaused -> !isPaused } },
+                session = session,
                 onStatus = { phase, stats, message, confidence ->
                     publishIfCurrent(lease) { current ->
                         current.copy(
@@ -336,9 +351,6 @@ class HuntRuntime internal constructor(
                             lastConfidence = confidence,
                         )
                     }
-                },
-                onDiagnostic = { frame, reason ->
-                    diagnosticSink.save(frame, reason)
                 },
             )
             publishIfCurrent(lease) { current ->
@@ -430,13 +442,27 @@ class HuntRuntime internal constructor(
     }
 
     private fun completeRun(activeRun: ActiveRun) {
-        val released = coordinator.release(activeRun.lease)
+        reconcileInterruptedGesture(activeRun)
+        val released = activeRun.managedSession.release()
         val removed = activeRunRef.compareAndSet(activeRun, null)
         logger.debug(
             "hunt.runtime.run.completed",
             "lease" to activeRun.lease.token,
             "removed" to removed,
             "released" to released,
+        )
+    }
+
+    private fun reconcileInterruptedGesture(activeRun: ActiveRun) {
+        if (!activeRun.stopRequested.get() || activeRunRef.get() !== activeRun) return
+        val receipt = activeRun.managedSession.session.latestGestureReceipt()
+            ?.takeIf(GestureReceipt::effectMayBeUncertain)
+            ?: return
+        val current = _status.value
+        if (current.stopReason == HuntStopReason.UNCERTAIN_EFFECT) return
+        _status.value = current.copy(
+            stopReason = HuntStopReason.UNCERTAIN_EFFECT,
+            message = "${current.message}；操作 ${receipt.operationId} 被中断后效果不确定，请核对游戏状态",
         )
     }
 }

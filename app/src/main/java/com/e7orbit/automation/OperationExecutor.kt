@@ -2,11 +2,13 @@ package com.e7orbit.automation
 
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
+import com.e7orbit.model.DevicePoint
 import com.e7orbit.model.GestureResult
 import com.e7orbit.model.REFERENCE_HEIGHT
 import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 
 enum class EffectSafety {
@@ -81,6 +83,7 @@ class OperationExecutor(
     private val clock: AutomationClock,
     private val awaitRunPermission: suspend () -> Unit,
     private val onDiagnostic: suspend (ScreenFrame, String) -> Unit,
+    private val onGestureReceipt: (GestureReceipt) -> Unit = {},
     private val logger: OrbitLogger = NoOpOrbitLogger,
     private val expectedWidth: Int = REFERENCE_WIDTH,
     private val expectedHeight: Int = REFERENCE_HEIGHT,
@@ -128,6 +131,12 @@ class OperationExecutor(
         gateway.tap(point)
     }
 
+    suspend fun tap(
+        operationId: String,
+        point: DevicePoint,
+        policy: OperationPolicy,
+    ): GestureResult = tap(operationId, point.toScreenPoint(), policy)
+
     suspend fun swipe(
         operationId: String,
         from: ScreenPoint,
@@ -145,11 +154,35 @@ class OperationExecutor(
     ): GestureResult {
         repeat(policy.maxAttempts) { attempt ->
             awaitActive()
+            val token = GestureToken(nextGestureToken.incrementAndGet())
+            recordGesture(
+                token = token,
+                operationId = operationId,
+                attempt = attempt + 1,
+                policy = policy,
+                outcome = GestureOutcome.DISPATCHING,
+            )
             val result = try {
                 gesture()
             } catch (cancelled: CancellationException) {
+                recordGesture(
+                    token = token,
+                    operationId = operationId,
+                    attempt = attempt + 1,
+                    policy = policy,
+                    outcome = GestureOutcome.INTERRUPTED,
+                    detail = cancelled.message,
+                )
                 throw cancelled
             } catch (error: Exception) {
+                recordGesture(
+                    token = token,
+                    operationId = operationId,
+                    attempt = attempt + 1,
+                    policy = policy,
+                    outcome = GestureOutcome.FAILED,
+                    detail = error.message,
+                )
                 throw failure(
                     kind = ExecutionFailureKind.GESTURE_FAILED,
                     operationId = operationId,
@@ -157,6 +190,17 @@ class OperationExecutor(
                     cause = error,
                 )
             }
+            recordGesture(
+                token = token,
+                operationId = operationId,
+                attempt = attempt + 1,
+                policy = policy,
+                outcome = when (result) {
+                    GestureResult.COMPLETED -> GestureOutcome.COMPLETED
+                    GestureResult.CANCELLED -> GestureOutcome.CANCELLED
+                    GestureResult.REJECTED -> GestureOutcome.REJECTED
+                },
+            )
             if (result == GestureResult.COMPLETED) return result
 
             val attemptsRemain = attempt < policy.maxAttempts - 1
@@ -265,4 +309,37 @@ class OperationExecutor(
             cause = cause,
         ),
     )
+
+    private fun recordGesture(
+        token: GestureToken,
+        operationId: String,
+        attempt: Int,
+        policy: OperationPolicy,
+        outcome: GestureOutcome,
+        detail: String? = null,
+    ) {
+        val receipt = GestureReceipt(
+            token = token,
+            operationId = operationId,
+            attempt = attempt,
+            effectSafety = policy.effectSafety,
+            outcome = outcome,
+            recordedAtElapsedMs = clock.elapsedRealtime(),
+            detail = detail,
+        )
+        try {
+            onGestureReceipt(receipt)
+        } catch (error: Throwable) {
+            logger.error(
+                "operation.gesture_receipt.failed",
+                error,
+                "operation" to operationId,
+                "outcome" to outcome,
+            )
+        }
+    }
+
+    private companion object {
+        val nextGestureToken = AtomicLong(0L)
+    }
 }
