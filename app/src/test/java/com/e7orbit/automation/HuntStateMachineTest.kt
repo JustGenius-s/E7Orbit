@@ -40,24 +40,44 @@ class HuntStateMachineTest {
             progressSignatures = listOf(10L, 20L, 20L),
         )
         val gateway = FakeHuntGateway()
+        val clock = FakeHuntClock()
         val machine = HuntStateMachine(
             vision = vision,
             visionConfig = testVisionConfig(),
-            clock = FakeHuntClock(),
+            clock = clock,
+        )
+        val session = AutomationSession(
+            gateway = gateway,
+            clock = clock,
+            awaitRunPermission = {},
+            onDiagnostic = { _, _ -> },
         )
 
         val result = machine.run(
             config = HuntConfig(runCount = 1),
-            gateway = gateway,
-            awaitRunPermission = {},
+            session = session,
             onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
+        val checkpoints = session.checkpointHistory()
 
         assertTrue(result.successful)
         assertEquals(HuntStopReason.RUN_LIMIT_REACHED, result.reason)
         assertEquals(1, result.stats.completedRuns)
         assertEquals(11, gateway.taps)
+        assertTrue(
+            checkpoints.any {
+                it.workflowId == "hunt_managed" &&
+                    it.stepId == "battle.start_and_verify" &&
+                    it.runKey == "batch-1" &&
+                    it.state == WorkflowCheckpointState.SUCCEEDED
+            },
+        )
+        assertTrue(
+            checkpoints.any {
+                it.stepId == "managed.monitor_batch" &&
+                    it.state == WorkflowCheckpointState.SUCCEEDED
+            },
+        )
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.e7orbit.automation
 
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.Serializable
 
 @DslMarker
 annotation class AutomationWorkflowDsl
@@ -34,6 +35,7 @@ class ObservationException(
     message: String,
 ) : RuntimeException(message)
 
+@Serializable
 enum class WorkflowCheckpointState {
     STARTED,
     RETRYING,
@@ -42,9 +44,12 @@ enum class WorkflowCheckpointState {
     FAILED,
 }
 
+@Serializable
 data class WorkflowCheckpoint(
+    val runId: String = "",
     val workflowId: String,
     val stepId: String,
+    val runKey: String? = null,
     val state: WorkflowCheckpointState,
     val attempt: Int,
     val recordedAtElapsedMs: Long,
@@ -56,7 +61,8 @@ data class WorkflowCheckpoint(
 
 interface WorkflowCheckpointStore {
     suspend fun record(checkpoint: WorkflowCheckpoint)
-    suspend fun history(sessionId: Long): List<WorkflowCheckpoint>
+    suspend fun history(runId: String): List<WorkflowCheckpoint>
+    suspend fun recent(limit: Int): List<WorkflowCheckpoint>
 }
 
 class InMemoryWorkflowCheckpointStore : WorkflowCheckpointStore {
@@ -66,8 +72,13 @@ class InMemoryWorkflowCheckpointStore : WorkflowCheckpointStore {
         checkpoints += checkpoint
     }
 
-    override suspend fun history(sessionId: Long): List<WorkflowCheckpoint> =
-        checkpoints.filter { it.sessionId == sessionId }
+    override suspend fun history(runId: String): List<WorkflowCheckpoint> =
+        checkpoints.filter { it.runId == runId }
+
+    override suspend fun recent(limit: Int): List<WorkflowCheckpoint> {
+        require(limit >= 0) { "limit 不能为负数" }
+        return if (limit == 0) emptyList() else checkpoints.takeLast(limit)
+    }
 }
 
 data class WorkflowStepPolicy(
@@ -97,6 +108,7 @@ sealed interface StepRecovery {
 
 data class WorkflowRunResult(
     val workflowId: String,
+    val runKey: String?,
     val completedSteps: Int,
     val completedEarly: Boolean,
 )
@@ -105,9 +117,23 @@ class WorkflowStepScope<C> internal constructor(
     val context: C,
     val session: AutomationSession,
     val stepId: String,
+    private val gestureTokenAtStart: GestureToken?,
 ) {
+    val stepGestureReceipt: GestureReceipt?
+        get() = session.latestGestureReceipt()
+            ?.takeIf { receipt -> receipt.token != gestureTokenAtStart }
+
+    val hasIssuedGesture: Boolean
+        get() = stepGestureReceipt != null
+
     suspend fun <T> observe(observer: Observer<C, T>): Observation<T> =
         observer.observe(context, session)
+
+    suspend fun <ChildContext> run(
+        workflow: Workflow<ChildContext>,
+        childContext: ChildContext,
+        runKey: String? = null,
+    ): WorkflowRunResult = workflow.run(childContext, session, runKey)
 
     fun <T> requireConfirmed(
         observation: Observation<T>,
@@ -129,7 +155,9 @@ class Workflow<C> internal constructor(
     suspend fun run(
         context: C,
         session: AutomationSession,
+        runKey: String? = null,
     ): WorkflowRunResult {
+        require(runKey == null || runKey.isNotBlank()) { "runKey 不能为空" }
         var completedSteps = 0
         for (step in steps) {
             val gestureTokenAtStart = session.latestGestureReceipt()?.token
@@ -138,17 +166,24 @@ class Workflow<C> internal constructor(
                 session.recordCheckpoint(
                     step.checkpoint(
                         workflowId = id,
+                        runKey = runKey,
                         state = WorkflowCheckpointState.STARTED,
                         attempt = attempt,
                         session = session,
                     ),
                 )
-                val scope = WorkflowStepScope(context, session, step.id)
+                val scope = WorkflowStepScope(
+                    context = context,
+                    session = session,
+                    stepId = step.id,
+                    gestureTokenAtStart = gestureTokenAtStart,
+                )
                 try {
                     step.action(scope)
                     session.recordCheckpoint(
                         step.checkpoint(
                             workflowId = id,
+                            runKey = runKey,
                             state = WorkflowCheckpointState.SUCCEEDED,
                             attempt = attempt,
                             session = session,
@@ -160,6 +195,7 @@ class Workflow<C> internal constructor(
                     session.recordCheckpoint(
                         step.checkpoint(
                             workflowId = id,
+                            runKey = runKey,
                             state = WorkflowCheckpointState.SUCCEEDED,
                             attempt = attempt,
                             session = session,
@@ -168,6 +204,7 @@ class Workflow<C> internal constructor(
                     )
                     return WorkflowRunResult(
                         workflowId = id,
+                        runKey = runKey,
                         completedSteps = completedSteps + 1,
                         completedEarly = true,
                     )
@@ -184,6 +221,7 @@ class Workflow<C> internal constructor(
                             session.recordCheckpoint(
                                 step.checkpoint(
                                     workflowId = id,
+                                    runKey = runKey,
                                     state = WorkflowCheckpointState.RECOVERED,
                                     attempt = attempt,
                                     session = session,
@@ -196,11 +234,12 @@ class Workflow<C> internal constructor(
 
                         StepRecovery.RetrySafe -> {
                             if (attempt >= step.policy.maxAttempts) {
-                                failStep(step, session, attempt, error)
+                                failStep(step, session, runKey, attempt, error)
                             }
                             session.recordCheckpoint(
                                 step.checkpoint(
                                     workflowId = id,
+                                    runKey = runKey,
                                     state = WorkflowCheckpointState.RETRYING,
                                     attempt = attempt,
                                     session = session,
@@ -211,13 +250,20 @@ class Workflow<C> internal constructor(
                             attempt += 1
                         }
 
-                        StepRecovery.Fail -> failStep(step, session, attempt, error)
+                        StepRecovery.Fail -> failStep(
+                            step = step,
+                            session = session,
+                            runKey = runKey,
+                            attempt = attempt,
+                            error = error,
+                        )
                     }
                 }
             }
         }
         return WorkflowRunResult(
             workflowId = id,
+            runKey = runKey,
             completedSteps = completedSteps,
             completedEarly = false,
         )
@@ -242,12 +288,14 @@ class Workflow<C> internal constructor(
     private suspend fun failStep(
         step: WorkflowStep<C>,
         session: AutomationSession,
+        runKey: String?,
         attempt: Int,
         error: Throwable,
     ): Nothing {
         session.recordCheckpoint(
             step.checkpoint(
                 workflowId = id,
+                runKey = runKey,
                 state = WorkflowCheckpointState.FAILED,
                 attempt = attempt,
                 session = session,
@@ -363,6 +411,37 @@ fun <C> workflow(
     return WorkflowBuilder<C>(workflowId = id).apply(block).build()
 }
 
+/**
+ * Incremental adapter for state machines whose control flow is still dynamic.
+ *
+ * It records one strongly identified step through the same Workflow engine, so a
+ * legacy loop can migrate stage by stage without creating a second execution model.
+ */
+suspend fun <C> runWorkflowStep(
+    workflowId: String,
+    stepId: String,
+    context: C,
+    session: AutomationSession,
+    runKey: String? = null,
+    effectSafety: EffectSafety = EffectSafety.READ_ONLY,
+    diagnoseOnFailure: Boolean = false,
+    execute: suspend WorkflowStepScope<C>.() -> Unit,
+    recover: (suspend WorkflowStepScope<C>.(Throwable) -> StepRecovery)? = null,
+): WorkflowRunResult {
+    val workflow = workflow<C>(workflowId) {
+        step(stepId, effectSafety) {
+            policy {
+                this.diagnoseOnFailure = diagnoseOnFailure
+            }
+            execute(execute)
+            recover?.let { recoveryBlock ->
+                this.recover(recoveryBlock)
+            }
+        }
+    }
+    return workflow.run(context, session, runKey)
+}
+
 internal data class WorkflowStep<C>(
     val id: String,
     val policy: WorkflowStepPolicy,
@@ -371,6 +450,7 @@ internal data class WorkflowStep<C>(
 ) {
     fun checkpoint(
         workflowId: String,
+        runKey: String?,
         state: WorkflowCheckpointState,
         attempt: Int,
         session: AutomationSession,
@@ -378,6 +458,7 @@ internal data class WorkflowStep<C>(
     ): WorkflowCheckpoint = WorkflowCheckpoint(
         workflowId = workflowId,
         stepId = id,
+        runKey = runKey,
         state = state,
         attempt = attempt,
         recordedAtElapsedMs = session.clock.elapsedRealtime(),

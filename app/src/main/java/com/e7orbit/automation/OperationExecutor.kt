@@ -10,7 +10,9 @@ import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.Serializable
 
+@Serializable
 enum class EffectSafety {
     READ_ONLY,
     IDEMPOTENT,

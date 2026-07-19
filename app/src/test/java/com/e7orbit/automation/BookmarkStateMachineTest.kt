@@ -68,20 +68,34 @@ class BookmarkStateMachineTest {
             targets = listOf(emptyList(), emptyList()),
         )
         val machine = machine(vision)
+        val session = AutomationSession(
+            gateway = FakeGateway(),
+            clock = FakeClock(),
+            awaitRunPermission = {},
+            onDiagnostic = { _, _ -> },
+        )
 
         val result = machine.run(
             config = RunConfig(maxRefreshes = 1),
-            gateway = FakeGateway(),
-            awaitRunPermission = {},
+            session = session,
             onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
+        val checkpoints = session.checkpointHistory()
 
         assertTrue(result.successful)
         assertEquals(StopReason.REFRESH_LIMIT_REACHED, result.reason)
         assertEquals(1, result.stats.completedRefreshes)
         assertEquals(1, result.stats.shopPagesScanned)
         assertEquals(0L, result.stats.goldSpent)
+        assertTrue(checkpoints.any { it.workflowId == "bookmark_entry" })
+        assertTrue(
+            checkpoints.any {
+                it.workflowId == "bookmark_refresh" &&
+                    it.stepId == "refresh.confirm" &&
+                    it.runKey == "refresh-1" &&
+                    it.state == WorkflowCheckpointState.SUCCEEDED
+            },
+        )
     }
 
     @Test

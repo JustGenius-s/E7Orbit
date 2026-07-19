@@ -1,5 +1,8 @@
 package com.e7orbit.automation
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 @JvmInline
 value class GestureToken(
     val value: Long,

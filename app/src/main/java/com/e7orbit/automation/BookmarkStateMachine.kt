@@ -7,6 +7,7 @@ import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.COVENANT_BOOKMARK_GOLD_COST
 import com.e7orbit.model.ItemType
 import com.e7orbit.model.MYSTIC_MEDAL_GOLD_COST
+import com.e7orbit.model.PurchaseTarget
 import com.e7orbit.model.REFERENCE_HEIGHT
 import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.RunConfig
@@ -37,6 +38,16 @@ class BookmarkStateMachine(
     private val logger: OrbitLogger = NoOpOrbitLogger,
     private val homeNavigator: HomeNavigator? = null,
 ) {
+    private val shopEntryWorkflow: Workflow<BookmarkWorkflowContext> by lazy {
+        buildShopEntryWorkflow()
+    }
+    private val shopRefreshWorkflow: Workflow<BookmarkWorkflowContext> by lazy {
+        buildShopRefreshWorkflow()
+    }
+    private val purchaseWorkflow: Workflow<PurchaseWorkflowContext> by lazy {
+        buildPurchaseWorkflow()
+    }
+
     suspend fun run(
         config: RunConfig,
         gateway: ScreenGateway,
@@ -60,184 +71,35 @@ class BookmarkStateMachine(
         session: AutomationSession,
         onStatus: (AutomationPhase, RunStats, String, Double?) -> Unit,
     ): MachineResult {
-        val gateway = session.gateway
-        val awaitRunPermission: suspend () -> Unit = session::awaitActive
-        val onDiagnostic: suspend (ScreenFrame, String) -> Unit = session::saveDiagnostic
-        var stats = RunStats(startedAtElapsedMs = clock.elapsedRealtime())
-        val operations = session.executor
+        val context = BookmarkWorkflowContext(
+            config = config,
+            stats = RunStats(startedAtElapsedMs = clock.elapsedRealtime()),
+            onStatus = onStatus,
+            logger = logger,
+        )
         logger.info(
             "machine.started",
             "maxRefreshes" to config.maxRefreshes,
             "threshold" to config.matchThreshold,
         )
 
-        fun publish(
-            phase: AutomationPhase,
-            message: String,
-            confidence: Double? = null,
-        ) {
-            logger.debug(
-                "machine.phase",
-                "phase" to phase,
-                "message" to message,
-                "confidence" to confidence,
-            )
-            onStatus(phase, stats, message, confidence)
-        }
-
         return try {
-            navigateHomeIfNeeded(
-                session = session,
-                publish = ::publish,
-            )
-            publish(AutomationPhase.WAITING_FOR_SHOP, "等待主页或秘密商店")
-            when (
-                waitForAnyPage(
-                    expected = setOf(ShopPage.LOBBY, ShopPage.SHOP),
-                    timeoutMs = WAIT_FOR_SHOP_TIMEOUT_MS,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
-                    onDiagnostic = onDiagnostic,
-                )
-            ) {
-                ShopPage.LOBBY -> {
-                    publish(AutomationPhase.WAITING_FOR_SHOP, "从主页进入秘密商店")
-                    tapAction(
-                        action = ShopAction.OPEN_SECRET_SHOP,
-                        operations = operations,
-                        policy = OperationPolicy.reconciliationRequired(),
-                        failureMessage = "未找到主页秘密商店入口",
-                    )
-                    waitForPage(
-                        expected = ShopPage.SHOP,
-                        timeoutMs = PAGE_TIMEOUT_MS,
-                        consecutiveMatches = 2,
-                        gateway = gateway,
-                        awaitRunPermission = awaitRunPermission,
-                        onDiagnostic = onDiagnostic,
-                    )
-                }
-
-                ShopPage.SHOP -> {
-                    waitForPage(
-                        expected = ShopPage.SHOP,
-                        timeoutMs = PAGE_TIMEOUT_MS,
-                        consecutiveMatches = 1,
-                        gateway = gateway,
-                        awaitRunPermission = awaitRunPermission,
-                        onDiagnostic = onDiagnostic,
-                    )
-                }
-
-                else -> error("不可达的商店入口状态")
-            }
-
-            while (stats.completedRefreshes < config.maxRefreshes) {
-                awaitRunPermission()
-                stats = stats.copy(shopPagesScanned = stats.shopPagesScanned + 1)
-                publish(
-                    AutomationPhase.SCANNING_TOP,
-                    "扫描上半页 ${stats.completedRefreshes + 1}/${config.maxRefreshes}",
-                )
-                stats = scanAndPurchase(
-                    config = config,
-                    stats = stats,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
-                    operations = operations,
-                    publish = ::publish,
-                    onDiagnostic = onDiagnostic,
-                )
-
-                awaitRunPermission()
-                publish(AutomationPhase.SCANNING_BOTTOM, "滑动并扫描下半页")
-                val scrollFrom = visionConfig.scrollFrom.toCapturePoint()
-                val scrollTo = visionConfig.scrollTo.toCapturePoint()
-                val scrollResult = operations.swipe(
-                    operationId = "shop.scroll",
-                    from = scrollFrom,
-                    to = scrollTo,
-                    durationMs = SCROLL_DURATION_MS,
-                    policy = OperationPolicy.idempotent(),
-                )
-                logger.info(
-                    "gesture.scroll",
-                    "from" to "${scrollFrom.x},${scrollFrom.y}",
-                    "to" to "${scrollTo.x},${scrollTo.y}",
-                    "durationMs" to SCROLL_DURATION_MS,
-                    "result" to scrollResult,
-                )
-                clock.delay(AFTER_SCROLL_DELAY_MS)
-                stats = scanAndPurchase(
-                    config = config,
-                    stats = stats,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
-                    operations = operations,
-                    publish = ::publish,
-                    onDiagnostic = onDiagnostic,
-                )
-
-                awaitRunPermission()
-                publish(AutomationPhase.REFRESHING, "准备刷新秘密商店")
-                tapAction(
-                    action = ShopAction.REFRESH,
-                    operations = operations,
-                    policy = OperationPolicy.reconciliationRequired(),
-                    failureMessage = "未找到刷新按钮",
-                )
-                when (
-                    waitForAnyPage(
-                        expected = setOf(
-                            ShopPage.REFRESH_CONFIRMATION,
-                            ShopPage.RESOURCE_INSUFFICIENT,
-                        ),
-                        timeoutMs = DIALOG_TIMEOUT_MS,
-                        gateway = gateway,
-                        awaitRunPermission = awaitRunPermission,
-                        onDiagnostic = onDiagnostic,
-                    )
-                ) {
-                    ShopPage.RESOURCE_INSUFFICIENT -> {
-                        throw MachineStop(
-                            StopReason.RESOURCE_INSUFFICIENT,
-                            "天空石不足，已安全停止",
-                        )
-                    }
-
-                    ShopPage.REFRESH_CONFIRMATION -> Unit
-                    else -> error("不可达的刷新状态")
-                }
-
-                tapAction(
-                    action = ShopAction.CONFIRM_REFRESH,
-                    operations = operations,
-                    policy = OperationPolicy.reconciliationRequired(),
-                    failureMessage = "未找到刷新确认按钮",
-                )
-                publish(AutomationPhase.WAITING_FOR_REFRESH, "等待新商品加载")
-                requireConfirmedEffect(
-                    uncertainMessage = "已点击刷新确认，但未能确认刷新结果；天空石可能已消耗",
-                ) {
-                    waitForPage(
-                        expected = ShopPage.SHOP,
-                        timeoutMs = PAGE_TIMEOUT_MS,
-                        consecutiveMatches = 2,
-                        gateway = gateway,
-                        awaitRunPermission = awaitRunPermission,
-                        onDiagnostic = onDiagnostic,
-                    )
-                }
-                stats = stats.copy(
-                    completedRefreshes = stats.completedRefreshes + 1,
+            shopEntryWorkflow.run(context, session)
+            while (context.stats.completedRefreshes < config.maxRefreshes) {
+                val cycle = context.stats.completedRefreshes + 1
+                context.cycleNumber = cycle
+                shopRefreshWorkflow.run(
+                    context = context,
+                    session = session,
+                    runKey = "refresh-$cycle",
                 )
             }
 
-            stats = stats.copy(finishedAtElapsedMs = clock.elapsedRealtime())
+            context.finish(clock.elapsedRealtime())
             MachineResult(
                 reason = StopReason.REFRESH_LIMIT_REACHED,
-                stats = stats,
-                message = "已完成 ${stats.completedRefreshes} 次刷新",
+                stats = context.stats,
+                message = "已完成 ${context.stats.completedRefreshes} 次刷新",
                 successful = true,
             )
         } catch (stop: MachineStop) {
@@ -245,13 +107,13 @@ class BookmarkStateMachine(
                 "machine.stopped",
                 "reason" to stop.reason,
                 "message" to stop.message,
-                "refreshes" to stats.completedRefreshes,
+                "refreshes" to context.stats.completedRefreshes,
             )
-            diagnose(gateway, stop.reason.name, onDiagnostic)
-            stats = stats.copy(finishedAtElapsedMs = clock.elapsedRealtime())
+            session.diagnose(stop.reason.name)
+            context.finish(clock.elapsedRealtime())
             MachineResult(
                 reason = stop.reason,
-                stats = stats,
+                stats = context.stats,
                 message = stop.message ?: "自动化已停止",
                 successful = false,
             )
@@ -262,30 +124,407 @@ class BookmarkStateMachine(
                 "operation" to error.failure.operationId,
                 "kind" to error.failure.kind,
                 "message" to error.message,
-                "refreshes" to stats.completedRefreshes,
+                "refreshes" to context.stats.completedRefreshes,
             )
-            diagnose(gateway, reason.name, onDiagnostic)
-            stats = stats.copy(finishedAtElapsedMs = clock.elapsedRealtime())
+            session.diagnose(reason.name)
+            context.finish(clock.elapsedRealtime())
             MachineResult(
                 reason = reason,
-                stats = stats,
+                stats = context.stats,
                 message = error.message ?: "自动化操作失败",
                 successful = false,
             )
         }
     }
 
+    private fun buildShopEntryWorkflow(): Workflow<BookmarkWorkflowContext> =
+        workflow("bookmark_entry") {
+            defaults {
+                diagnoseOnFailure = false
+            }
+            stage("navigation") {
+                step("ensure_home", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
+                    execute {
+                        navigateHomeIfNeeded(
+                            session = session,
+                            publish = context::publish,
+                        )
+                    }
+                }
+            }
+            stage("shop") {
+                step("open_or_confirm", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
+                    execute {
+                        context.publish(
+                            AutomationPhase.WAITING_FOR_SHOP,
+                            "等待主页或秘密商店",
+                        )
+                        when (
+                            waitForAnyPage(
+                                expected = setOf(ShopPage.LOBBY, ShopPage.SHOP),
+                                timeoutMs = WAIT_FOR_SHOP_TIMEOUT_MS,
+                                session = session,
+                            )
+                        ) {
+                            ShopPage.LOBBY -> {
+                                context.publish(
+                                    AutomationPhase.WAITING_FOR_SHOP,
+                                    "从主页进入秘密商店",
+                                )
+                                tapAction(
+                                    action = ShopAction.OPEN_SECRET_SHOP,
+                                    operations = session.executor,
+                                    policy = OperationPolicy.reconciliationRequired(),
+                                    failureMessage = "未找到主页秘密商店入口",
+                                )
+                                waitForPage(
+                                    expected = ShopPage.SHOP,
+                                    timeoutMs = PAGE_TIMEOUT_MS,
+                                    consecutiveMatches = 2,
+                                    session = session,
+                                )
+                            }
+
+                            ShopPage.SHOP -> waitForPage(
+                                expected = ShopPage.SHOP,
+                                timeoutMs = PAGE_TIMEOUT_MS,
+                                consecutiveMatches = 1,
+                                session = session,
+                            )
+
+                            else -> error("不可达的商店入口状态")
+                        }
+                    }
+                    recover {
+                        if (
+                            hasIssuedGesture &&
+                            observeShopPage(session) == ShopPage.SHOP
+                        ) {
+                            StepRecovery.Recovered
+                        } else {
+                            StepRecovery.Fail
+                        }
+                    }
+                }
+            }
+        }
+
+    private fun buildShopRefreshWorkflow(): Workflow<BookmarkWorkflowContext> =
+        workflow("bookmark_refresh") {
+            defaults {
+                diagnoseOnFailure = false
+            }
+            stage("scan") {
+                step("top", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
+                    execute {
+                        session.awaitActive()
+                        context.stats = context.stats.copy(
+                            shopPagesScanned = context.stats.shopPagesScanned + 1,
+                        )
+                        context.publish(
+                            AutomationPhase.SCANNING_TOP,
+                            "扫描上半页 ${context.cycleNumber}/${context.config.maxRefreshes}",
+                        )
+                        scanAndPurchase(
+                            context = context,
+                            session = session,
+                            scanKey = "top",
+                        )
+                    }
+                }
+                step("scroll_bottom", effectSafety = EffectSafety.IDEMPOTENT) {
+                    execute {
+                        session.awaitActive()
+                        context.publish(AutomationPhase.SCANNING_BOTTOM, "滑动并扫描下半页")
+                        val scrollFrom = visionConfig.scrollFrom.toCapturePoint()
+                        val scrollTo = visionConfig.scrollTo.toCapturePoint()
+                        val result = session.executor.swipe(
+                            operationId = "shop.scroll",
+                            from = scrollFrom,
+                            to = scrollTo,
+                            durationMs = SCROLL_DURATION_MS,
+                            policy = OperationPolicy.idempotent(),
+                        )
+                        logger.info(
+                            "gesture.scroll",
+                            "from" to "${scrollFrom.x},${scrollFrom.y}",
+                            "to" to "${scrollTo.x},${scrollTo.y}",
+                            "durationMs" to SCROLL_DURATION_MS,
+                            "result" to result,
+                        )
+                        clock.delay(AFTER_SCROLL_DELAY_MS)
+                    }
+                }
+                step("bottom", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
+                    execute {
+                        scanAndPurchase(
+                            context = context,
+                            session = session,
+                            scanKey = "bottom",
+                        )
+                    }
+                }
+            }
+            stage("refresh") {
+                step("open_dialog", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
+                    execute {
+                        session.awaitActive()
+                        context.publish(AutomationPhase.REFRESHING, "准备刷新秘密商店")
+                        tapAction(
+                            action = ShopAction.REFRESH,
+                            operations = session.executor,
+                            policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "未找到刷新按钮",
+                        )
+                        context.refreshDialogPage = waitForAnyPage(
+                            expected = setOf(
+                                ShopPage.REFRESH_CONFIRMATION,
+                                ShopPage.RESOURCE_INSUFFICIENT,
+                            ),
+                            timeoutMs = DIALOG_TIMEOUT_MS,
+                            session = session,
+                        )
+                        requireRefreshConfirmation(context.refreshDialogPage)
+                    }
+                    recover {
+                        if (!hasIssuedGesture) return@recover StepRecovery.Fail
+                        val page = observeShopPage(session)
+                        if (
+                            page == ShopPage.REFRESH_CONFIRMATION ||
+                            page == ShopPage.RESOURCE_INSUFFICIENT
+                        ) {
+                            context.refreshDialogPage = page
+                            StepRecovery.Recovered
+                        } else {
+                            StepRecovery.Fail
+                        }
+                    }
+                }
+                step("confirm", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
+                    execute {
+                        requireRefreshConfirmation(context.refreshDialogPage)
+                        tapAction(
+                            action = ShopAction.CONFIRM_REFRESH,
+                            operations = session.executor,
+                            policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "未找到刷新确认按钮",
+                        )
+                        context.publish(
+                            AutomationPhase.WAITING_FOR_REFRESH,
+                            "等待新商品加载",
+                        )
+                        requireConfirmedEffect(
+                            uncertainMessage =
+                                "已点击刷新确认，但未能确认刷新结果；天空石可能已消耗",
+                        ) {
+                            waitForPage(
+                                expected = ShopPage.SHOP,
+                                timeoutMs = PAGE_TIMEOUT_MS,
+                                consecutiveMatches = 2,
+                                session = session,
+                            )
+                        }
+                        context.recordRefresh()
+                    }
+                }
+            }
+        }
+
+    private fun buildPurchaseWorkflow(): Workflow<PurchaseWorkflowContext> =
+        workflow("bookmark_purchase") {
+            defaults {
+                diagnoseOnFailure = false
+            }
+            stage("target") {
+                step("revalidate", effectSafety = EffectSafety.READ_ONLY) {
+                    execute {
+                        session.awaitActive()
+                        context.currentTarget = session.executor
+                            .capture("shop.revalidate_target")
+                            .use { frame ->
+                                val targets = vision.findTargets(
+                                    frame,
+                                    context.parent.config,
+                                )
+                                logger.debug(
+                                    "purchase.revalidate",
+                                    "sequence" to frame.sequence,
+                                    "originalType" to context.originalTarget.type,
+                                    "originalY" to
+                                        context.originalTarget.itemBounds.center.y,
+                                    "candidateCount" to targets.size,
+                                )
+                                targets
+                                    .filter { it.type == context.originalTarget.type }
+                                    .minByOrNull { target ->
+                                        abs(
+                                            target.itemBounds.center.y -
+                                                context.originalTarget.itemBounds.center.y,
+                                        )
+                                    }
+                                    ?.takeIf { target ->
+                                        abs(
+                                            target.itemBounds.center.y -
+                                                context.originalTarget.itemBounds.center.y,
+                                        ) <= TARGET_REVALIDATE_TOLERANCE_PX
+                                    }
+                            }
+                        if (context.currentTarget == null) completeWorkflow()
+                    }
+                }
+            }
+            stage("dialog") {
+                step("open", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
+                    execute {
+                        val target = context.requireCurrentTarget()
+                        context.parent.publish(
+                            AutomationPhase.PURCHASING,
+                            "购买${target.type.displayName()}",
+                            target.confidence,
+                        )
+                        val result = session.executor.tap(
+                            operationId = "shop.open_purchase_confirmation",
+                            point = target.purchaseButton,
+                            policy = OperationPolicy.reconciliationRequired(),
+                        )
+                        logger.info(
+                            "gesture.purchase_button",
+                            "type" to target.type,
+                            "point" to "${target.purchaseButton.x},${target.purchaseButton.y}",
+                            "confidence" to target.confidence,
+                            "result" to result,
+                        )
+                        context.dialogPage = waitForAnyPage(
+                            expected = setOf(
+                                ShopPage.PURCHASE_CONFIRMATION,
+                                ShopPage.RESOURCE_INSUFFICIENT,
+                            ),
+                            timeoutMs = DIALOG_TIMEOUT_MS,
+                            session = session,
+                        )
+                        requirePurchaseConfirmation(context.dialogPage)
+                    }
+                    recover {
+                        if (!hasIssuedGesture) return@recover StepRecovery.Fail
+                        val page = observeShopPage(session)
+                        if (
+                            page == ShopPage.PURCHASE_CONFIRMATION ||
+                            page == ShopPage.RESOURCE_INSUFFICIENT
+                        ) {
+                            context.dialogPage = page
+                            StepRecovery.Recovered
+                        } else {
+                            StepRecovery.Fail
+                        }
+                    }
+                }
+                step("verify", effectSafety = EffectSafety.READ_ONLY) {
+                    execute {
+                        requirePurchaseConfirmation(context.dialogPage)
+                        val target = context.requireCurrentTarget()
+                        context.parent.publish(
+                            AutomationPhase.VERIFYING_PURCHASE,
+                            "确认${target.type.displayName()}",
+                            target.confidence,
+                        )
+                        val verification = session.executor
+                            .capture("shop.verify_purchase")
+                            .use { frame -> vision.verifyPurchase(frame, target) }
+                        if (
+                            !verification.matched ||
+                            verification.confidence < context.parent.config.matchThreshold
+                        ) {
+                            logger.warn(
+                                "purchase.verification_failed",
+                                "type" to target.type,
+                                "matched" to verification.matched,
+                                "confidence" to verification.confidence,
+                                "required" to context.parent.config.matchThreshold,
+                            )
+                            throw MachineStop(
+                                StopReason.LOW_CONFIDENCE,
+                                "购买确认与目标不一致，已停止",
+                            )
+                        }
+                        context.verificationConfidence = verification.confidence
+                        logger.info(
+                            "purchase.verified",
+                            "type" to target.type,
+                            "confidence" to verification.confidence,
+                        )
+                    }
+                }
+                step("confirm", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
+                    execute {
+                        val target = context.requireCurrentTarget()
+                        tapAction(
+                            action = ShopAction.CONFIRM_PURCHASE,
+                            operations = session.executor,
+                            policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "未找到购买确认按钮",
+                        )
+                        requireConfirmedEffect(
+                            uncertainMessage =
+                                "已点击购买确认，但未能确认购买结果；金币可能已消耗",
+                        ) {
+                            waitForPage(
+                                expected = ShopPage.SHOP,
+                                timeoutMs = PAGE_TIMEOUT_MS,
+                                consecutiveMatches = 1,
+                                session = session,
+                            )
+                        }
+                        context.recordPurchase()
+                        context.parent.publish(
+                            AutomationPhase.VERIFYING_PURCHASE,
+                            "已购买${target.type.displayName()}",
+                            context.verificationConfidence,
+                        )
+                    }
+                }
+            }
+        }
+
+    private suspend fun observeShopPage(session: AutomationSession): ShopPage =
+        session.executor.capture("shop.reconcile_page").use { frame ->
+            vision.detectPage(frame)
+        }
+
+    private fun requireRefreshConfirmation(page: ShopPage?) {
+        when (page) {
+            ShopPage.REFRESH_CONFIRMATION -> Unit
+            ShopPage.RESOURCE_INSUFFICIENT -> throw MachineStop(
+                StopReason.RESOURCE_INSUFFICIENT,
+                "天空石不足，已安全停止",
+            )
+            else -> throw MachineStop(
+                StopReason.UNKNOWN_PAGE,
+                "未能确认刷新对话框状态",
+            )
+        }
+    }
+
+    private fun requirePurchaseConfirmation(page: ShopPage?) {
+        when (page) {
+            ShopPage.PURCHASE_CONFIRMATION -> Unit
+            ShopPage.RESOURCE_INSUFFICIENT -> throw MachineStop(
+                StopReason.RESOURCE_INSUFFICIENT,
+                "金币不足，已安全停止",
+            )
+            else -> throw MachineStop(
+                StopReason.UNKNOWN_PAGE,
+                "未能确认购买对话框状态",
+            )
+        }
+    }
+
     private suspend fun scanAndPurchase(
-        config: RunConfig,
-        stats: RunStats,
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
-        operations: OperationExecutor,
-        publish: (AutomationPhase, String, Double?) -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
-    ): RunStats {
-        var currentStats = stats
-        val initialTargets = captureChecked(gateway).use { frame ->
+        context: BookmarkWorkflowContext,
+        session: AutomationSession,
+        scanKey: String,
+    ) {
+        val operations = session.executor
+        val initialTargets = operations.capture("shop.scan_page").use { frame ->
             val page = vision.detectPage(frame)
             logger.debug(
                 "scan.page",
@@ -299,10 +538,10 @@ class BookmarkStateMachine(
                     "资源不足，已安全停止",
                 )
 
-                ShopPage.SHOP -> vision.findTargets(frame, config)
+                ShopPage.SHOP -> vision.findTargets(frame, context.config)
                 else -> {
                     try {
-                        onDiagnostic(frame, "unknown_page_scan_${frame.sequence}")
+                        session.saveDiagnostic(frame, "unknown_page_scan_${frame.sequence}")
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Throwable) {
@@ -329,128 +568,25 @@ class BookmarkStateMachine(
             },
         )
 
-        initialTargets.forEach { originalTarget ->
-            awaitRunPermission()
-            val currentTarget = captureChecked(gateway).use { frame ->
-                val targets = vision.findTargets(frame, config)
-                logger.debug(
-                    "purchase.revalidate",
-                    "sequence" to frame.sequence,
-                    "originalType" to originalTarget.type,
-                    "originalY" to originalTarget.itemBounds.center.y,
-                    "candidateCount" to targets.size,
-                )
-                targets
-                    .filter { it.type == originalTarget.type }
-                    .minByOrNull { abs(it.itemBounds.center.y - originalTarget.itemBounds.center.y) }
-                    ?.takeIf {
-                        abs(it.itemBounds.center.y - originalTarget.itemBounds.center.y) <=
-                            TARGET_REVALIDATE_TOLERANCE_PX
-                    }
-            } ?: return@forEach
-
-            publish(
-                AutomationPhase.PURCHASING,
-                "购买${currentTarget.type.displayName()}",
-                currentTarget.confidence,
-            )
-            val purchaseResult = operations.tap(
-                operationId = "shop.open_purchase_confirmation",
-                point = currentTarget.purchaseButton,
-                policy = OperationPolicy.reconciliationRequired(),
-            )
-            logger.info(
-                "gesture.purchase_button",
-                "type" to currentTarget.type,
-                "point" to "${currentTarget.purchaseButton.x},${currentTarget.purchaseButton.y}",
-                "confidence" to currentTarget.confidence,
-                "result" to purchaseResult,
-            )
-
-            when (
-                waitForAnyPage(
-                    expected = setOf(
-                        ShopPage.PURCHASE_CONFIRMATION,
-                        ShopPage.RESOURCE_INSUFFICIENT,
-                    ),
-                    timeoutMs = DIALOG_TIMEOUT_MS,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
-                    onDiagnostic = onDiagnostic,
-                )
-            ) {
-                ShopPage.RESOURCE_INSUFFICIENT -> throw MachineStop(
-                    StopReason.RESOURCE_INSUFFICIENT,
-                    "金币不足，已安全停止",
-                )
-
-                ShopPage.PURCHASE_CONFIRMATION -> Unit
-                else -> error("不可达的购买状态")
-            }
-
-            publish(
-                AutomationPhase.VERIFYING_PURCHASE,
-                "确认${currentTarget.type.displayName()}",
-                currentTarget.confidence,
-            )
-            val verification = captureChecked(gateway).use { frame ->
-                vision.verifyPurchase(frame, currentTarget)
-            }
-            if (!verification.matched || verification.confidence < config.matchThreshold) {
-                logger.warn(
-                    "purchase.verification_failed",
-                    "type" to currentTarget.type,
-                    "matched" to verification.matched,
-                    "confidence" to verification.confidence,
-                    "required" to config.matchThreshold,
-                )
-                throw MachineStop(
-                    StopReason.LOW_CONFIDENCE,
-                    "购买确认与目标不一致，已停止",
-                )
-            }
-            logger.info(
-                "purchase.verified",
-                "type" to currentTarget.type,
-                "confidence" to verification.confidence,
-            )
-
-            tapAction(
-                action = ShopAction.CONFIRM_PURCHASE,
-                operations = operations,
-                policy = OperationPolicy.reconciliationRequired(),
-                failureMessage = "未找到购买确认按钮",
-            )
-            requireConfirmedEffect(
-                uncertainMessage = "已点击购买确认，但未能确认购买结果；金币可能已消耗",
-            ) {
-                waitForPage(
-                    expected = ShopPage.SHOP,
-                    timeoutMs = PAGE_TIMEOUT_MS,
-                    consecutiveMatches = 1,
-                    gateway = gateway,
-                    awaitRunPermission = awaitRunPermission,
-                    onDiagnostic = onDiagnostic,
-                )
-            }
-            currentStats = when (currentTarget.type) {
-                ItemType.COVENANT_BOOKMARK -> currentStats.copy(
-                    covenantBookmarksBought = currentStats.covenantBookmarksBought + 1,
-                    goldSpent = currentStats.goldSpent + COVENANT_BOOKMARK_GOLD_COST,
-                )
-
-                ItemType.MYSTIC_MEDAL -> currentStats.copy(
-                    mysticMedalsBought = currentStats.mysticMedalsBought + 1,
-                    goldSpent = currentStats.goldSpent + MYSTIC_MEDAL_GOLD_COST,
-                )
-            }
-            publish(
-                AutomationPhase.VERIFYING_PURCHASE,
-                "已购买${currentTarget.type.displayName()}",
-                verification.confidence,
+        initialTargets.forEachIndexed { index, originalTarget ->
+            purchaseWorkflow.run(
+                context = PurchaseWorkflowContext(
+                    parent = context,
+                    originalTarget = originalTarget,
+                ),
+                session = session,
+                runKey = buildString {
+                    append("refresh-")
+                    append(context.cycleNumber)
+                    append('-')
+                    append(scanKey)
+                    append('-')
+                    append(index)
+                    append('-')
+                    append(originalTarget.type.name.lowercase())
+                },
             )
         }
-        return currentStats
     }
 
     private suspend fun navigateHomeIfNeeded(
@@ -517,19 +653,11 @@ class BookmarkStateMachine(
         expected: ShopPage,
         timeoutMs: Long,
         consecutiveMatches: Int,
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
+        session: AutomationSession,
     ) {
         var count = 0
         var unknownDiagnosticSaved = false
-        val operations = OperationExecutor(
-            gateway = gateway,
-            clock = clock,
-            awaitRunPermission = awaitRunPermission,
-            onDiagnostic = onDiagnostic,
-            logger = logger,
-        )
+        val operations = session.executor
         try {
             operations.waitUntil<Unit>(
                 operationId = "shop.wait_${expected.name.lowercase()}",
@@ -549,7 +677,7 @@ class BookmarkStateMachine(
                         )
                         if (detected == ShopPage.UNKNOWN && !unknownDiagnosticSaved) {
                             try {
-                                onDiagnostic(
+                                session.saveDiagnostic(
                                     frame,
                                     "unknown_wait_${expected.name}_${frame.sequence}",
                                 )
@@ -586,18 +714,10 @@ class BookmarkStateMachine(
     private suspend fun waitForAnyPage(
         expected: Set<ShopPage>,
         timeoutMs: Long,
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
+        session: AutomationSession,
     ): ShopPage {
         var unknownDiagnosticSaved = false
-        val operations = OperationExecutor(
-            gateway = gateway,
-            clock = clock,
-            awaitRunPermission = awaitRunPermission,
-            onDiagnostic = onDiagnostic,
-            logger = logger,
-        )
+        val operations = session.executor
         try {
             return operations.waitUntil(
                 operationId = "shop.wait_any_page",
@@ -615,7 +735,7 @@ class BookmarkStateMachine(
                     )
                     if (detected == ShopPage.UNKNOWN && !unknownDiagnosticSaved) {
                         try {
-                            onDiagnostic(frame, "unknown_wait_any_${frame.sequence}")
+                            session.saveDiagnostic(frame, "unknown_wait_any_${frame.sequence}")
                             unknownDiagnosticSaved = true
                         } catch (cancelled: CancellationException) {
                             throw cancelled
@@ -635,61 +755,6 @@ class BookmarkStateMachine(
                 throw MachineStop(StopReason.TIMEOUT, "等待页面变化超时")
             }
             throw error
-        }
-    }
-
-    private suspend fun captureChecked(gateway: ScreenGateway): ScreenFrame {
-        val frame = try {
-            gateway.capture()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            throw MachineStop(
-                StopReason.SCREENSHOT_FAILED,
-                "截图失败：${error.message.orEmpty()}",
-            )
-        }
-        if (frame.width != REFERENCE_WIDTH || frame.height != REFERENCE_HEIGHT) {
-            logger.warn(
-                "capture.invalid_resolution",
-                "sequence" to frame.sequence,
-                "width" to frame.width,
-                "height" to frame.height,
-            )
-            frame.close()
-            throw MachineStop(
-                StopReason.INVALID_RESOLUTION,
-                "需要 ${REFERENCE_WIDTH}×${REFERENCE_HEIGHT}，当前为 ${frame.width}×${frame.height}",
-            )
-        }
-        logger.debug(
-            "capture.accepted",
-            "sequence" to frame.sequence,
-            "width" to frame.width,
-            "height" to frame.height,
-            "capturedAt" to frame.capturedAtElapsedMs,
-        )
-        return frame
-    }
-
-    private suspend fun diagnose(
-        gateway: ScreenGateway,
-        reason: String,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
-    ) {
-        try {
-            gateway.capture().use { frame ->
-                onDiagnostic(frame, reason)
-                logger.info(
-                    "diagnostic.captured",
-                    "reason" to reason,
-                    "sequence" to frame.sequence,
-                )
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            logger.error("diagnostic.capture_failed", error, "reason" to reason)
         }
     }
 
@@ -731,6 +796,69 @@ class BookmarkStateMachine(
                 "message" to uncertainMessage,
             )
             throw MachineStop(StopReason.UNCERTAIN_EFFECT, uncertainMessage)
+        }
+    }
+
+    private class BookmarkWorkflowContext(
+        val config: RunConfig,
+        var stats: RunStats,
+        private val onStatus: (AutomationPhase, RunStats, String, Double?) -> Unit,
+        private val logger: OrbitLogger,
+    ) {
+        var cycleNumber: Int = 0
+        var refreshDialogPage: ShopPage? = null
+
+        fun publish(
+            phase: AutomationPhase,
+            message: String,
+            confidence: Double? = null,
+        ) {
+            logger.debug(
+                "machine.phase",
+                "phase" to phase,
+                "message" to message,
+                "confidence" to confidence,
+            )
+            onStatus(phase, stats, message, confidence)
+        }
+
+        fun recordRefresh() {
+            if (stats.completedRefreshes >= cycleNumber) return
+            stats = stats.copy(completedRefreshes = cycleNumber)
+            refreshDialogPage = null
+        }
+
+        fun finish(elapsedRealtimeMs: Long) {
+            stats = stats.copy(finishedAtElapsedMs = elapsedRealtimeMs)
+        }
+    }
+
+    private class PurchaseWorkflowContext(
+        val parent: BookmarkWorkflowContext,
+        val originalTarget: PurchaseTarget,
+    ) {
+        var currentTarget: PurchaseTarget? = null
+        var dialogPage: ShopPage? = null
+        var verificationConfidence: Double? = null
+        private var purchaseRecorded = false
+
+        fun requireCurrentTarget(): PurchaseTarget = currentTarget
+            ?: error("购买目标尚未重新确认")
+
+        fun recordPurchase() {
+            if (purchaseRecorded) return
+            purchaseRecorded = true
+            parent.stats = when (requireCurrentTarget().type) {
+                ItemType.COVENANT_BOOKMARK -> parent.stats.copy(
+                    covenantBookmarksBought = parent.stats.covenantBookmarksBought + 1,
+                    goldSpent = parent.stats.goldSpent + COVENANT_BOOKMARK_GOLD_COST,
+                )
+
+                ItemType.MYSTIC_MEDAL -> parent.stats.copy(
+                    mysticMedalsBought = parent.stats.mysticMedalsBought + 1,
+                    goldSpent = parent.stats.goldSpent + MYSTIC_MEDAL_GOLD_COST,
+                )
+            }
         }
     }
 

@@ -5,6 +5,7 @@ import android.content.Context
 import com.e7orbit.automation.AutomationRuntime
 import com.e7orbit.automation.AutomationRunCoordinator
 import com.e7orbit.automation.AutomationSessionManager
+import com.e7orbit.automation.FileWorkflowCheckpointStore
 import com.e7orbit.automation.GlobalUiVision
 import com.e7orbit.automation.HuntRuntime
 import com.e7orbit.automation.HomeNavigator
@@ -62,7 +63,13 @@ object AppGraph {
         diagnosticStore = DiagnosticStore(appContext)
         templateRepository = TemplateRepository(appContext, openCvReady)
         val runCoordinator = AutomationRunCoordinator()
-        val sessionManager = AutomationSessionManager(runCoordinator)
+        val checkpointStore = FileWorkflowCheckpointStore(
+            appContext.filesDir.resolve("automation/workflow-checkpoints.jsonl"),
+        )
+        val sessionManager = AutomationSessionManager(
+            coordinator = runCoordinator,
+            checkpointStore = checkpointStore,
+        )
         val shopVision = OpenCvShopVision(templateRepository, logger)
         val globalUiVision: GlobalUiVision = shopVision
         val homeNavigator = HomeNavigator(

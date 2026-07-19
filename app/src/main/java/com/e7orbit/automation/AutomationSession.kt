@@ -3,8 +3,9 @@ package com.e7orbit.automation
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
 import com.e7orbit.model.ScreenFrame
-import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 
@@ -24,6 +25,7 @@ class AutomationSession(
     private val checkpointStore: WorkflowCheckpointStore = InMemoryWorkflowCheckpointStore(),
 ) {
     val sessionId: Long = nextSessionId.incrementAndGet()
+    val runId: String = UUID.randomUUID().toString()
 
     private val latestGestureReceipt = AtomicReference<GestureReceipt?>()
 
@@ -68,6 +70,7 @@ class AutomationSession(
     internal suspend fun recordCheckpoint(checkpoint: WorkflowCheckpoint) {
         try {
             val recorded = checkpoint.copy(
+                runId = runId,
                 sessionId = sessionId,
                 gestureToken = latestGestureReceipt.get()?.token,
             )
@@ -75,6 +78,7 @@ class AutomationSession(
             logger.debug(
                 "workflow.checkpoint",
                 "session" to sessionId,
+                "runId" to runId,
                 "workflow" to recorded.workflowId,
                 "step" to recorded.stepId,
                 "state" to recorded.state,
@@ -95,7 +99,7 @@ class AutomationSession(
     }
 
     suspend fun checkpointHistory(): List<WorkflowCheckpoint> =
-        checkpointStore.history(sessionId)
+        checkpointStore.history(runId)
 
     private companion object {
         val nextSessionId = AtomicLong(0L)
@@ -104,6 +108,7 @@ class AutomationSession(
 
 class AutomationSessionManager(
     private val coordinator: AutomationRunCoordinator = AutomationRunCoordinator(),
+    private val checkpointStore: WorkflowCheckpointStore = InMemoryWorkflowCheckpointStore(),
 ) {
     fun tryOpen(
         kind: AutomationKind,
@@ -122,6 +127,7 @@ class AutomationSessionManager(
                 awaitRunPermission = awaitRunPermission,
                 onDiagnostic = onDiagnostic,
                 logger = logger,
+                checkpointStore = checkpointStore,
             ),
             releaseLease = coordinator::release,
         )

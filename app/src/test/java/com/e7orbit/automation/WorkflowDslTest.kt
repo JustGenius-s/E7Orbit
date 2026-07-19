@@ -34,10 +34,11 @@ class WorkflowDslTest {
             }
         }
 
-        val result = workflow.run(Unit, session)
+        val result = workflow.run(Unit, session, runKey = "cycle-7")
         val checkpoints = session.checkpointHistory()
 
         assertFalse(result.completedEarly)
+        assertEquals("cycle-7", result.runKey)
         assertEquals(1, result.completedSteps)
         assertEquals(2, attempts)
         assertEquals(25L, clock.now)
@@ -51,6 +52,8 @@ class WorkflowDslTest {
             checkpoints.map(WorkflowCheckpoint::state),
         )
         assertTrue(checkpoints.all { it.workflowId == "retry_workflow" })
+        assertTrue(checkpoints.all { it.runKey == "cycle-7" })
+        assertTrue(checkpoints.all { it.runId == session.runId })
         assertTrue(checkpoints.all { it.stepId == "navigation.open" })
         assertTrue(checkpoints.all { it.effectSafety == EffectSafety.IDEMPOTENT })
     }
