@@ -30,6 +30,37 @@ class OperationExecutorTest {
     }
 
     @Test
+    fun acceptsArbitraryLandscapeResolution() = runTest {
+        val frame = executor(
+            gateway = FakeOperationGateway(
+                frameWidth = 2400,
+                frameHeight = 1080,
+            ),
+        ).capture("capture")
+
+        assertEquals(2400, frame.width)
+        assertEquals(1080, frame.height)
+        frame.close()
+    }
+
+    @Test
+    fun rejectsPortraitFrame() = runTest {
+        var kind: ExecutionFailureKind? = null
+        try {
+            executor(
+                gateway = FakeOperationGateway(
+                    frameWidth = 1080,
+                    frameHeight = 1920,
+                ),
+            ).capture("capture")
+        } catch (error: OperationExecutionException) {
+            kind = error.failure.kind
+        }
+
+        assertEquals(ExecutionFailureKind.INVALID_RESOLUTION, kind)
+    }
+
+    @Test
     fun retriesCancelledIdempotentGesture() = runTest {
         val gateway = FakeOperationGateway(
             tapResults = listOf(GestureResult.CANCELLED, GestureResult.COMPLETED),
@@ -219,6 +250,8 @@ class OperationExecutorTest {
     private class FakeOperationGateway(
         private val captureError: Throwable? = null,
         private val tapError: Throwable? = null,
+        private val frameWidth: Int = 1920,
+        private val frameHeight: Int = 1080,
         tapResults: List<GestureResult> = emptyList(),
     ) : ScreenGateway {
         private val tapResults = ArrayDeque(tapResults)
@@ -228,8 +261,8 @@ class OperationExecutorTest {
             captureError?.let { throw it }
             return ScreenFrame(
                 bitmap = null,
-                width = 1920,
-                height = 1080,
+                width = frameWidth,
+                height = frameHeight,
                 capturedAtElapsedMs = 0L,
                 sequence = 0L,
             )

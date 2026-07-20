@@ -7,6 +7,19 @@ import org.junit.Test
 
 class PersistedDraftTest {
     @Test
+    fun `resolution does not block preparing automation`() {
+        val status = EnvironmentStatus(
+            accessibilityEnabled = true,
+            gameInstalled = true,
+            width = 1080,
+            height = 2400,
+            openCvReady = true,
+        )
+
+        assertTrue(status.canPrepare)
+    }
+
+    @Test
     fun `unrelated persisted emission does not overwrite pending local value`() {
         val draft = PersistedDraft("saved")
 

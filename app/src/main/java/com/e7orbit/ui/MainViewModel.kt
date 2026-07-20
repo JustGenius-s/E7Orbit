@@ -20,8 +20,6 @@ import com.e7orbit.model.HuntEnergyRefill
 import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStatus
 import com.e7orbit.model.MAX_SUPPORTED_HUNT_RUNS
-import com.e7orbit.model.REFERENCE_HEIGHT
-import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
 import com.e7orbit.service.E7AccessibilityService
@@ -36,7 +34,6 @@ import kotlinx.coroutines.launch
 data class EnvironmentStatus(
     val accessibilityEnabled: Boolean = false,
     val gameInstalled: Boolean = false,
-    val resolutionReady: Boolean = false,
     val width: Int = 0,
     val height: Int = 0,
     val projectionReady: Boolean = false,
@@ -45,7 +42,6 @@ data class EnvironmentStatus(
     val canPrepare: Boolean
         get() = accessibilityEnabled &&
             gameInstalled &&
-            resolutionReady &&
             openCvReady
 }
 
@@ -298,8 +294,6 @@ class MainViewModel(
         return EnvironmentStatus(
             accessibilityEnabled = accessibilityEnabled,
             gameInstalled = gameInstalled,
-            resolutionReady =
-                width == REFERENCE_WIDTH && height == REFERENCE_HEIGHT,
             width = width,
             height = height,
             projectionReady = AppGraph.projectionCapture.isReady.value,

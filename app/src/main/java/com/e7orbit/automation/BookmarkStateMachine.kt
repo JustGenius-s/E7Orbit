@@ -9,19 +9,15 @@ import com.e7orbit.model.ItemType
 import com.e7orbit.model.MYSTIC_MEDAL_GOLD_COST
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.PurchaseTarget
-import com.e7orbit.model.REFERENCE_HEIGHT
-import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunStats
 import com.e7orbit.model.ScreenFrame
-import com.e7orbit.model.ScreenPoint
+import com.e7orbit.model.ScreenRatioPoint
 import com.e7orbit.model.ShopPage
 import com.e7orbit.model.StopReason
 import com.e7orbit.model.VisualAction
-import com.e7orbit.vision.PointConfig
 import com.e7orbit.vision.VisionConfig
 import kotlin.math.abs
-import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CancellationException
 
@@ -251,21 +247,18 @@ class BookmarkStateMachine(
                     execute {
                         session.awaitActive()
                         context.publish(AutomationPhase.SCANNING_BOTTOM, "滑动并扫描下半页")
-                        val scrollFrom = visionConfig.scrollFrom.toCapturePoint()
-                        val scrollTo = visionConfig.scrollTo.toCapturePoint()
-                        val result = session.executor.swipe(
+                        visualActions(session).swipe(
                             operationId = "shop.scroll",
-                            from = scrollFrom,
-                            to = scrollTo,
+                            from = visionConfig.scrollFrom.toRatioPoint(),
+                            to = visionConfig.scrollTo.toRatioPoint(),
                             durationMs = SCROLL_DURATION_MS,
                             policy = OperationPolicy.idempotent(),
                         )
                         logger.info(
                             "gesture.scroll",
-                            "from" to "${scrollFrom.x},${scrollFrom.y}",
-                            "to" to "${scrollTo.x},${scrollTo.y}",
+                            "from" to visionConfig.scrollFrom,
+                            "to" to visionConfig.scrollTo,
                             "durationMs" to SCROLL_DURATION_MS,
-                            "result" to result,
                         )
                         clock.delay(AFTER_SCROLL_DELAY_MS)
                     }
@@ -758,9 +751,9 @@ class BookmarkStateMachine(
         ItemType.MYSTIC_MEDAL -> "神秘奖牌"
     }
 
-    private fun PointConfig.toCapturePoint(): ScreenPoint = ScreenPoint(
-        x = (x.toDouble() / visionConfig.referenceWidth * REFERENCE_WIDTH).roundToInt(),
-        y = (y.toDouble() / visionConfig.referenceHeight * REFERENCE_HEIGHT).roundToInt(),
+    private fun com.e7orbit.vision.PointConfig.toRatioPoint() = ScreenRatioPoint(
+        xRatio = x.toDouble() / visionConfig.referenceWidth,
+        yRatio = y.toDouble() / visionConfig.referenceHeight,
     )
 
     private fun ExecutionFailureKind.toStopReason(): StopReason = when (this) {

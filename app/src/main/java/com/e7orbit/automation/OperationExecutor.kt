@@ -4,8 +4,6 @@ import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
 import com.e7orbit.model.DevicePoint
 import com.e7orbit.model.GestureResult
-import com.e7orbit.model.REFERENCE_HEIGHT
-import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import java.util.concurrent.atomic.AtomicLong
@@ -87,8 +85,6 @@ class OperationExecutor(
     private val onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     private val onGestureReceipt: (GestureReceipt) -> Unit = {},
     private val logger: OrbitLogger = NoOpOrbitLogger,
-    private val expectedWidth: Int = REFERENCE_WIDTH,
-    private val expectedHeight: Int = REFERENCE_HEIGHT,
 ) {
     private var excludedPermissionWaitMs = 0L
 
@@ -113,13 +109,12 @@ class OperationExecutor(
                 cause = error,
             )
         }
-        if (frame.width != expectedWidth || frame.height != expectedHeight) {
+        if (frame.width <= 0 || frame.height <= 0 || frame.width <= frame.height) {
             frame.close()
             throw failure(
                 kind = ExecutionFailureKind.INVALID_RESOLUTION,
                 operationId = operationId,
-                message = "需要 ${expectedWidth}×${expectedHeight}，" +
-                    "当前为 ${frame.width}×${frame.height}",
+                message = "需要有效的横屏画面，当前为 ${frame.width}×${frame.height}",
             )
         }
         return frame

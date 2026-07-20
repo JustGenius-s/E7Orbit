@@ -4,6 +4,24 @@ import com.e7orbit.model.ScreenRect
 import kotlinx.serialization.Serializable
 
 @Serializable
+enum class HorizontalAnchor {
+    AUTO,
+    LEFT,
+    CENTER,
+    RIGHT,
+    STRETCH,
+}
+
+@Serializable
+enum class VerticalAnchor {
+    AUTO,
+    TOP,
+    CENTER,
+    BOTTOM,
+    STRETCH,
+}
+
+@Serializable
 data class VisionConfig(
     val referenceWidth: Int,
     val referenceHeight: Int,
@@ -39,6 +57,8 @@ data class TemplateConfig(
     val threshold: Double,
     val required: Boolean = true,
     val maxMatches: Int = 1,
+    val horizontalAnchor: HorizontalAnchor = HorizontalAnchor.AUTO,
+    val verticalAnchor: VerticalAnchor = VerticalAnchor.AUTO,
 )
 
 object TemplateIds {

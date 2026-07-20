@@ -5,7 +5,7 @@ E7 Orbit 是面向 Android 模拟器的第七史诗国服自动化助手。首�
 ## 首版环境
 
 - MuMu 12，Android 11 或更高
-- 固定横屏 1920×1080
+- 横屏分辨率；识图模板会按实际画面等比缩放
 - 第七史诗国服包名 `com.zlongame.cn.epicseven`
 - 侧载 APK，不需要 Root
 - APK 包含 `x86_64` 与 `arm64-v8a`；ARM64 真机仍需满足固定分辨率要求

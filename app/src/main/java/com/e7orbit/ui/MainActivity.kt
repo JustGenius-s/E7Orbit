@@ -623,10 +623,9 @@ private fun EnvironmentCard(
             if (environment.projectionReady) "已授权" else "运行时授权",
         )
         CheckRow("国服游戏已安装", environment.gameInstalled)
-        CheckRow(
-            "1920×1080 横屏",
-            environment.resolutionReady,
-            "${environment.width}×${environment.height}",
+        InfoRow(
+            title = "当前分辨率",
+            detail = "${environment.width}×${environment.height}",
         )
         if (!environment.accessibilityEnabled) {
             Spacer(Modifier.height(10.dp))
@@ -786,6 +785,32 @@ private fun CheckRow(
         Text(
             detail,
             color = if (ready) OrbitSuccess else OrbitWarning,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
+private fun InfoRow(
+    title: String,
+    detail: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "•",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.width(24.dp),
+        )
+        Text(title, modifier = Modifier.weight(1f))
+        Text(
+            detail,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
         )
     }
