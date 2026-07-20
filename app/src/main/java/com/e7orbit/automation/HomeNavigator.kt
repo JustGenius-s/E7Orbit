@@ -2,11 +2,10 @@ package com.e7orbit.automation
 
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
-import com.e7orbit.model.DevicePoint
 import com.e7orbit.model.GameLocation
-import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.ScreenFrame
+import com.e7orbit.model.VisualAction
 
 enum class HomeNavigationFailure {
     SCREENSHOT_FAILED,
@@ -69,6 +68,12 @@ class HomeNavigator(
             )
         } catch (error: OperationExecutionException) {
             throw error.asHomeNavigationException()
+        } catch (error: VisualActionNotFoundException) {
+            throw HomeNavigationException(
+                failure = HomeNavigationFailure.LOW_CONFIDENCE,
+                message = error.message ?: "未找到导航按钮",
+                cause = error,
+            )
         }
     }
 
@@ -87,7 +92,7 @@ class HomeNavigator(
                             completeWorkflow()
                         }
                         context.returnHome = context.navigator
-                            .observeAction(session, GlobalAction.RETURN_TO_LOBBY)
+                            .observeAction(session, VisualAction.RETURN_TO_LOBBY)
                             .confirmedOrNull()
                     }
                 }
@@ -103,7 +108,7 @@ class HomeNavigator(
                         context.onStatus("打开快捷菜单")
                         val openMenu = context.navigator.waitForAction(
                             session = session,
-                            action = GlobalAction.OPEN_MENU,
+                            action = VisualAction.OPEN_MENU,
                             timeoutMs = OPEN_MENU_TIMEOUT_MS,
                         )
                         context.navigator.tapMatch(
@@ -116,13 +121,13 @@ class HomeNavigator(
                         context.onStatus("选择返回主页")
                         context.returnHome = context.navigator.waitForAction(
                             session = session,
-                            action = GlobalAction.RETURN_TO_LOBBY,
+                            action = VisualAction.RETURN_TO_LOBBY,
                             timeoutMs = MENU_OPEN_TIMEOUT_MS,
                         )
                     }
                     recover {
                         val observed = context.navigator
-                            .observeAction(session, GlobalAction.RETURN_TO_LOBBY)
+                            .observeAction(session, VisualAction.RETURN_TO_LOBBY)
                             .confirmedOrNull()
                         if (observed != null) {
                             context.returnHome = observed
@@ -178,11 +183,11 @@ class HomeNavigator(
 
     private suspend fun observeAction(
         session: AutomationSession,
-        action: GlobalAction,
+        action: VisualAction,
     ): Observation<MatchResult> = session.executor
         .capture("home.find_${action.name.lowercase()}")
         .use { frame ->
-            val match = vision.findGlobalAction(frame, action)
+            val match = vision.findAction(frame, action)
             if (match.matched && match.center != null) {
                 Observation.Confirmed(match, match.confidence)
             } else {
@@ -192,7 +197,7 @@ class HomeNavigator(
 
     private suspend fun waitForAction(
         session: AutomationSession,
-        action: GlobalAction,
+        action: VisualAction,
         timeoutMs: Long,
     ): MatchResult = session.executor.waitUntil(
         operationId = "home.wait_${action.name.lowercase()}",
@@ -228,14 +233,17 @@ class HomeNavigator(
         match: MatchResult,
         failureMessage: String,
     ) {
-        val point = match.center ?: throw HomeNavigationException(
-            HomeNavigationFailure.LOW_CONFIDENCE,
-            failureMessage,
-        )
-        session.executor.tap(
+        VisualActionExecutor(
+            operations = session.executor,
+            vision = vision,
+            namespace = "home",
+            logger = logger,
+        ).tapLocated(
             operationId = operationId,
-            point = DevicePoint.from(point),
+            targetLabel = operationId,
+            match = match,
             policy = OperationPolicy.reconciliationRequired(),
+            failureMessage = failureMessage,
         )
     }
 

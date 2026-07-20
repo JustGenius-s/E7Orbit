@@ -112,6 +112,76 @@
       "required": false
     },
     {
+      "id": "hunt_action_open_battle",
+      "file": "hunt_action_open_battle.png",
+      "region": { "left": 880, "top": 170, "right": 1024, "bottom": 350 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_open_selection",
+      "file": "hunt_action_open_selection.png",
+      "region": { "left": 450, "top": 80, "right": 800, "bottom": 410 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_select_hell",
+      "file": "hunt_action_select_hell.png",
+      "region": { "left": 580, "top": 230, "right": 830, "bottom": 430 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_disable_quick_battle",
+      "file": "hunt_action_disable_quick_battle.png",
+      "region": { "left": 840, "top": 430, "right": 1024, "bottom": 576 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_enable_managed_battle",
+      "file": "hunt_action_enable_managed_battle.png",
+      "region": { "left": 380, "top": 360, "right": 600, "bottom": 520 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_start_battle",
+      "file": "hunt_action_start_battle.png",
+      "region": { "left": 680, "top": 430, "right": 1024, "bottom": 576 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_open_delegation",
+      "file": "hunt_action_open_delegation.png",
+      "region": { "left": 480, "top": 50, "right": 790, "bottom": 290 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_confirm_delegation",
+      "file": "hunt_action_confirm_delegation.png",
+      "region": { "left": 380, "top": 250, "right": 790, "bottom": 490 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_open_managed_status",
+      "file": "hunt_action_open_managed_status.png",
+      "region": { "left": 620, "top": 0, "right": 880, "bottom": 140 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
+      "id": "hunt_action_stop_managed",
+      "file": "hunt_action_stop_managed.png",
+      "region": { "left": 240, "top": 300, "right": 500, "bottom": 540 },
+      "threshold": 0.90,
+      "required": false
+    },
+    {
       "id": "hunt_lobby_battle",
       "file": "hunt_lobby_battle.png",
       "region": { "left": 900, "top": 190, "right": 1024, "bottom": 330 },

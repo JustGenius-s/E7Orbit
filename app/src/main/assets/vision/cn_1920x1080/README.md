@@ -17,3 +17,19 @@
 - `resource_insufficient.png`（首版暂不处理，配置为可选）
 
 首版暂不识别资源不足提示；其余必需模板已补齐。
+
+## 待补充的讨伐点击模板
+
+讨伐流程已经改为只点击 OpenCV 定位结果，不再使用固定屏幕坐标。以下模板定义已加入
+`regions.json`，补充对应 PNG 后讨伐模板健康检查才会通过：
+
+- `hunt_action_open_battle.png`
+- `hunt_action_open_selection.png`
+- `hunt_action_select_hell.png`
+- `hunt_action_disable_quick_battle.png`
+- `hunt_action_enable_managed_battle.png`
+- `hunt_action_start_battle.png`
+- `hunt_action_open_delegation.png`
+- `hunt_action_confirm_delegation.png`
+- `hunt_action_open_managed_status.png`
+- `hunt_action_stop_managed.png`

@@ -2,11 +2,11 @@ package com.e7orbit.automation
 
 import com.e7orbit.model.GameLocation
 import com.e7orbit.model.GestureResult
-import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import com.e7orbit.model.ScreenRect
+import com.e7orbit.model.VisualAction
 import java.util.ArrayDeque
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -39,9 +39,9 @@ class HomeNavigatorTest {
 
         assertEquals(
             listOf(
-                GlobalAction.RETURN_TO_LOBBY,
-                GlobalAction.OPEN_MENU,
-                GlobalAction.RETURN_TO_LOBBY,
+                VisualAction.RETURN_TO_LOBBY,
+                VisualAction.OPEN_MENU,
+                VisualAction.RETURN_TO_LOBBY,
             ),
             vision.actions,
         )
@@ -140,7 +140,7 @@ class HomeNavigatorTest {
         ),
     ) : GlobalUiVision {
         private val locations = ArrayDeque(locations)
-        val actions = mutableListOf<GlobalAction>()
+        val actions = mutableListOf<VisualAction>()
         private var returnHomeChecks = 0
 
         override fun navigationHealth(): VisionHealth = health
@@ -148,18 +148,19 @@ class HomeNavigatorTest {
         override suspend fun detectLocation(frame: ScreenFrame): GameLocation =
             locations.pollFirst() ?: GameLocation.LOBBY
 
-        override suspend fun findGlobalAction(
+        override suspend fun findAction(
             frame: ScreenFrame,
-            action: GlobalAction,
+            action: VisualAction,
         ): MatchResult {
             actions += action
             val matched = when (action) {
-                GlobalAction.RETURN_TO_LOBBY -> {
+                VisualAction.RETURN_TO_LOBBY -> {
                     returnHomeChecks += 1
                     returnHomeChecks > 1
                 }
 
-                GlobalAction.OPEN_MENU -> true
+                VisualAction.OPEN_MENU -> true
+                else -> false
             }
             return MatchResult(
                 matched = matched,

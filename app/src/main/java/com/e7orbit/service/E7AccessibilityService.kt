@@ -26,6 +26,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 @SuppressLint("AccessibilityPolicy")
 class E7AccessibilityService : AccessibilityService(), ScreenGateway {
@@ -145,35 +146,43 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
     private suspend fun dispatch(
         stroke: GestureDescription.StrokeDescription,
     ): GestureResult = withContext(Dispatchers.Main.immediate) {
-        suspendCancellableCoroutine { continuation ->
-            val gesture = GestureDescription.Builder()
-                .addStroke(stroke)
-                .build()
-            val accepted = dispatchGesture(
-                gesture,
-                object : GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        if (continuation.isActive) {
-                            continuation.resume(GestureResult.COMPLETED)
+        withTimeoutOrNull(GESTURE_CALLBACK_TIMEOUT_MS) {
+            suspendCancellableCoroutine { continuation ->
+                val gesture = GestureDescription.Builder()
+                    .addStroke(stroke)
+                    .build()
+                val accepted = dispatchGesture(
+                    gesture,
+                    object : GestureResultCallback() {
+                        override fun onCompleted(gestureDescription: GestureDescription?) {
+                            if (continuation.isActive) {
+                                continuation.resume(GestureResult.COMPLETED)
+                            }
                         }
-                    }
 
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        if (continuation.isActive) {
-                            continuation.resume(GestureResult.CANCELLED)
+                        override fun onCancelled(gestureDescription: GestureDescription?) {
+                            if (continuation.isActive) {
+                                continuation.resume(GestureResult.CANCELLED)
+                            }
                         }
-                    }
-                },
-                null,
-            )
-            if (!accepted && continuation.isActive) {
-                continuation.resume(GestureResult.REJECTED)
+                    },
+                    null,
+                )
+                if (!accepted && continuation.isActive) {
+                    continuation.resume(GestureResult.REJECTED)
+                }
             }
+        } ?: GestureResult.TIMED_OUT.also {
+            AppGraph.logger.warn(
+                "service.gesture.callback_timeout",
+                "timeoutMs" to GESTURE_CALLBACK_TIMEOUT_MS,
+            )
         }
     }
 
     private companion object {
         const val MIN_CAPTURE_INTERVAL_MS = 360L
         const val TAP_DURATION_MS = 80L
+        const val GESTURE_CALLBACK_TIMEOUT_MS = 5_000L
     }
 }

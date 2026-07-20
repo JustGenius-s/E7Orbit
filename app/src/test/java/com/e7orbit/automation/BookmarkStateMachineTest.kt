@@ -8,9 +8,9 @@ import com.e7orbit.model.RunConfig
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import com.e7orbit.model.ScreenRect
-import com.e7orbit.model.ShopAction
 import com.e7orbit.model.ShopPage
 import com.e7orbit.model.StopReason
+import com.e7orbit.model.VisualAction
 import com.e7orbit.vision.PointConfig
 import com.e7orbit.vision.VisionConfig
 import java.util.ArrayDeque
@@ -48,7 +48,7 @@ class BookmarkStateMachineTest {
         )
 
         assertTrue(result.successful)
-        assertEquals(ShopAction.OPEN_SECRET_SHOP, vision.actions.first())
+        assertEquals(VisualAction.OPEN_SECRET_SHOP, vision.actions.first())
         assertEquals(3, gateway.taps)
         assertEquals(1, gateway.swipes)
     }
@@ -197,7 +197,7 @@ class BookmarkStateMachineTest {
         val covenant = PurchaseTarget(
             type = ItemType.COVENANT_BOOKMARK,
             itemBounds = ScreenRect(500, 200, 620, 300),
-            purchaseButton = ScreenPoint(1700, 250),
+            purchaseButtonBounds = ScreenRect(1600, 200, 1800, 300),
             confidence = 0.98,
             rowIndex = 2,
         )
@@ -244,7 +244,7 @@ class BookmarkStateMachineTest {
         val covenant = PurchaseTarget(
             type = ItemType.COVENANT_BOOKMARK,
             itemBounds = ScreenRect(500, 200, 620, 300),
-            purchaseButton = ScreenPoint(1700, 250),
+            purchaseButtonBounds = ScreenRect(1600, 200, 1800, 300),
             confidence = 0.98,
             rowIndex = 2,
         )
@@ -413,7 +413,7 @@ private class FakeVision(
 ) : ShopVision {
     private val pages = ArrayDeque(pages)
     private val targets = ArrayDeque(targets)
-    val actions = mutableListOf<ShopAction>()
+    val actions = mutableListOf<VisualAction>()
 
     override fun health(): VisionHealth = VisionHealth(
         openCvReady = true,
@@ -441,7 +441,7 @@ private class FakeVision(
 
     override suspend fun findAction(
         frame: ScreenFrame,
-        action: ShopAction,
+        action: VisualAction,
     ): MatchResult {
         actions += action
         return MatchResult(

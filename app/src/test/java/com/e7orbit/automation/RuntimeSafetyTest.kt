@@ -3,7 +3,6 @@ package com.e7orbit.automation
 import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.GameLocation
 import com.e7orbit.model.GestureResult
-import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.HuntConfig
 import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntPage
@@ -15,9 +14,9 @@ import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
-import com.e7orbit.model.ShopAction
 import com.e7orbit.model.ShopPage
 import com.e7orbit.model.StopReason
+import com.e7orbit.model.VisualAction
 import com.e7orbit.vision.PointConfig
 import com.e7orbit.vision.VisionConfig
 import java.io.IOException
@@ -242,7 +241,6 @@ class RuntimeSafetyTest {
         persistence: HuntRuntimePersistence = HuntRuntimePersistence { },
     ) = HuntRuntime(
         vision = ReadyHuntVision,
-        visionConfig = testVisionConfig(),
         persistence = persistence,
         diagnosticSink = HuntRuntimeDiagnosticSink { _, _ -> },
         clock = TestClock,
@@ -345,7 +343,7 @@ class RuntimeSafetyTest {
 
         override suspend fun findAction(
             frame: ScreenFrame,
-            action: ShopAction,
+            action: VisualAction,
         ): MatchResult = MatchResult(matched = false)
     }
 
@@ -362,6 +360,11 @@ class RuntimeSafetyTest {
         override suspend fun isManagedBattleEnabled(frame: ScreenFrame): Boolean = false
 
         override suspend fun managedProgressSignature(frame: ScreenFrame): Long = 0L
+
+        override suspend fun findAction(
+            frame: ScreenFrame,
+            action: VisualAction,
+        ): MatchResult = MatchResult(matched = false)
     }
 
     private object MissingGlobalUiVision : GlobalUiVision {
@@ -375,9 +378,9 @@ class RuntimeSafetyTest {
         override suspend fun detectLocation(frame: ScreenFrame): GameLocation =
             error("navigation should not run")
 
-        override suspend fun findGlobalAction(
+        override suspend fun findAction(
             frame: ScreenFrame,
-            action: GlobalAction,
+            action: VisualAction,
         ): MatchResult = error("navigation should not run")
     }
 

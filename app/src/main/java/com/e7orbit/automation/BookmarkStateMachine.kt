@@ -7,6 +7,7 @@ import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.COVENANT_BOOKMARK_GOLD_COST
 import com.e7orbit.model.ItemType
 import com.e7orbit.model.MYSTIC_MEDAL_GOLD_COST
+import com.e7orbit.model.MatchResult
 import com.e7orbit.model.PurchaseTarget
 import com.e7orbit.model.REFERENCE_HEIGHT
 import com.e7orbit.model.REFERENCE_WIDTH
@@ -14,9 +15,9 @@ import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunStats
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
-import com.e7orbit.model.ShopAction
 import com.e7orbit.model.ShopPage
 import com.e7orbit.model.StopReason
+import com.e7orbit.model.VisualAction
 import com.e7orbit.vision.PointConfig
 import com.e7orbit.vision.VisionConfig
 import kotlin.math.abs
@@ -117,6 +118,20 @@ class BookmarkStateMachine(
                 message = stop.message ?: "自动化已停止",
                 successful = false,
             )
+        } catch (error: VisualActionNotFoundException) {
+            logger.warn(
+                "machine.visual_action_missing",
+                "action" to error.action,
+                "message" to error.message,
+            )
+            session.diagnose("visual_action_missing")
+            context.finish(clock.elapsedRealtime())
+            MachineResult(
+                reason = StopReason.LOW_CONFIDENCE,
+                stats = context.stats,
+                message = error.message ?: "未找到可点击控件",
+                successful = false,
+            )
         } catch (error: OperationExecutionException) {
             val reason = error.failure.kind.toStopReason()
             logger.warn(
@@ -171,9 +186,9 @@ class BookmarkStateMachine(
                                     AutomationPhase.WAITING_FOR_SHOP,
                                     "从主页进入秘密商店",
                                 )
-                                tapAction(
-                                    action = ShopAction.OPEN_SECRET_SHOP,
-                                    operations = session.executor,
+                                visualActions(session).tap(
+                                    action = VisualAction.OPEN_SECRET_SHOP,
+                                    operationId = "shop.open_secret_shop",
                                     policy = OperationPolicy.reconciliationRequired(),
                                     failureMessage = "未找到主页秘密商店入口",
                                 )
@@ -270,9 +285,9 @@ class BookmarkStateMachine(
                     execute {
                         session.awaitActive()
                         context.publish(AutomationPhase.REFRESHING, "准备刷新秘密商店")
-                        tapAction(
-                            action = ShopAction.REFRESH,
-                            operations = session.executor,
+                        visualActions(session).tap(
+                            action = VisualAction.REFRESH_SHOP,
+                            operationId = "shop.refresh_shop",
                             policy = OperationPolicy.reconciliationRequired(),
                             failureMessage = "未找到刷新按钮",
                         )
@@ -303,9 +318,9 @@ class BookmarkStateMachine(
                 step("confirm", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
                     execute {
                         requireRefreshConfirmation(context.refreshDialogPage)
-                        tapAction(
-                            action = ShopAction.CONFIRM_REFRESH,
-                            operations = session.executor,
+                        visualActions(session).tap(
+                            action = VisualAction.CONFIRM_REFRESH,
+                            operationId = "shop.confirm_refresh",
                             policy = OperationPolicy.reconciliationRequired(),
                             failureMessage = "未找到刷新确认按钮",
                         )
@@ -382,17 +397,22 @@ class BookmarkStateMachine(
                             "购买${target.type.displayName()}",
                             target.confidence,
                         )
-                        val result = session.executor.tap(
+                        visualActions(session).tapLocated(
                             operationId = "shop.open_purchase_confirmation",
-                            point = target.purchaseButton,
+                            targetLabel = "purchase_${target.type.name.lowercase()}",
+                            match = MatchResult(
+                                matched = true,
+                                confidence = target.confidence,
+                                bounds = target.purchaseButtonBounds,
+                            ),
                             policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "购买按钮定位结果无效",
                         )
                         logger.info(
                             "gesture.purchase_button",
                             "type" to target.type,
                             "point" to "${target.purchaseButton.x},${target.purchaseButton.y}",
                             "confidence" to target.confidence,
-                            "result" to result,
                         )
                         context.dialogPage = waitForAnyPage(
                             expected = setOf(
@@ -457,9 +477,9 @@ class BookmarkStateMachine(
                 step("confirm", effectSafety = EffectSafety.RECONCILIATION_REQUIRED) {
                     execute {
                         val target = context.requireCurrentTarget()
-                        tapAction(
-                            action = ShopAction.CONFIRM_PURCHASE,
-                            operations = session.executor,
+                        visualActions(session).tap(
+                            action = VisualAction.CONFIRM_PURCHASE,
+                            operationId = "shop.confirm_purchase",
                             policy = OperationPolicy.reconciliationRequired(),
                             failureMessage = "未找到购买确认按钮",
                         )
@@ -616,38 +636,13 @@ class BookmarkStateMachine(
         }
     }
 
-    private suspend fun tapAction(
-        action: ShopAction,
-        operations: OperationExecutor,
-        policy: OperationPolicy,
-        failureMessage: String,
-    ) {
-        val actionMatch = operations.capture("shop.find_${action.name.lowercase()}").use { frame ->
-            vision.findAction(frame, action)
-        }
-        val point = actionMatch.center
-        logger.debug(
-            "action.detected",
-            "action" to action,
-            "matched" to actionMatch.matched,
-            "confidence" to actionMatch.confidence,
-            "point" to point?.let { "${it.x},${it.y}" },
+    private fun visualActions(session: AutomationSession): VisualActionExecutor =
+        VisualActionExecutor(
+            operations = session.executor,
+            vision = vision,
+            namespace = "shop",
+            logger = logger,
         )
-        if (!actionMatch.matched || point == null) {
-            throw MachineStop(StopReason.LOW_CONFIDENCE, failureMessage)
-        }
-        val result = operations.tap(
-            operationId = "shop.${action.name.lowercase()}",
-            point = point,
-            policy = policy,
-        )
-        logger.info(
-            "gesture.action",
-            "action" to action,
-            "point" to "${point.x},${point.y}",
-            "result" to result,
-        )
-    }
 
     private suspend fun waitForPage(
         expected: ShopPage,

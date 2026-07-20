@@ -6,7 +6,6 @@ import com.e7orbit.automation.VisionHealth
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
 import com.e7orbit.model.GameLocation
-import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.ItemType
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.PurchaseTarget
@@ -14,8 +13,8 @@ import com.e7orbit.model.RunConfig
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import com.e7orbit.model.ScreenRect
-import com.e7orbit.model.ShopAction
 import com.e7orbit.model.ShopPage
+import com.e7orbit.model.VisualAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.opencv.android.Utils
@@ -54,34 +53,6 @@ class OpenCvShopVision(
             )
             location
         }
-
-    override suspend fun findGlobalAction(
-        frame: ScreenFrame,
-        action: GlobalAction,
-    ): MatchResult {
-        val match = withSource(frame) { source ->
-            when (action) {
-                GlobalAction.OPEN_MENU -> bestOf(
-                    source,
-                    TemplateIds.GLOBAL_MENU_BUTTON,
-                    TemplateIds.GLOBAL_MENU_BUTTON_PLAIN,
-                )
-
-                GlobalAction.RETURN_TO_LOBBY ->
-                    bestMatch(source, TemplateIds.GLOBAL_RETURN_TO_LOBBY)
-            }
-        }
-        val scaled = match.scaleToFrame(frame)
-        logger.debug(
-            "vision.global_action",
-            "sequence" to frame.sequence,
-            "action" to action,
-            "matched" to scaled.matched,
-            "confidence" to scaled.confidence,
-            "center" to scaled.center?.let { "${it.x},${it.y}" },
-        )
-        return scaled
-    }
 
     override suspend fun detectPage(frame: ScreenFrame): ShopPage = withSource(frame) { source ->
         val resource = bestMatch(source, TemplateIds.RESOURCE_INSUFFICIENT)
@@ -166,7 +137,7 @@ class OpenCvShopVision(
                     PurchaseTarget(
                         type = type,
                         itemBounds = itemBounds,
-                        purchaseButton = button.bounds!!.center,
+                        purchaseButtonBounds = button.bounds!!,
                         confidence = min(itemMatch.confidence, button.confidence),
                         rowIndex = itemCenterY / ROW_BUCKET_HEIGHT_PX,
                     )
@@ -187,7 +158,7 @@ class OpenCvShopVision(
         return normalizedTargets.map { target ->
             target.copy(
                 itemBounds = target.itemBounds.scaleToFrame(frame),
-                purchaseButton = target.purchaseButton.scaleToFrame(frame),
+                purchaseButtonBounds = target.purchaseButtonBounds.scaleToFrame(frame),
             )
         }
     }
@@ -215,20 +186,31 @@ class OpenCvShopVision(
 
     override suspend fun findAction(
         frame: ScreenFrame,
-        action: ShopAction,
+        action: VisualAction,
     ): MatchResult {
         val match = withSource(frame) { source ->
             when (action) {
-                ShopAction.OPEN_SECRET_SHOP ->
+                VisualAction.OPEN_MENU -> bestOf(
+                    source,
+                    TemplateIds.GLOBAL_MENU_BUTTON,
+                    TemplateIds.GLOBAL_MENU_BUTTON_PLAIN,
+                )
+
+                VisualAction.RETURN_TO_LOBBY ->
+                    bestMatch(source, TemplateIds.GLOBAL_RETURN_TO_LOBBY)
+
+                VisualAction.OPEN_SECRET_SHOP ->
                     bestMatch(source, TemplateIds.SHOP_LOBBY_SECRET_SHOP)
 
-                ShopAction.CONFIRM_PURCHASE ->
+                VisualAction.CONFIRM_PURCHASE ->
                     bestMatch(source, TemplateIds.CONFIRM_PURCHASE)
 
-                ShopAction.REFRESH -> bestMatch(source, TemplateIds.REFRESH_BUTTON)
-                ShopAction.CONFIRM_REFRESH -> bestMatch(source, TemplateIds.CONFIRM_REFRESH)
-                ShopAction.DISMISS_ERROR ->
+                VisualAction.REFRESH_SHOP -> bestMatch(source, TemplateIds.REFRESH_BUTTON)
+                VisualAction.CONFIRM_REFRESH -> bestMatch(source, TemplateIds.CONFIRM_REFRESH)
+                VisualAction.DISMISS_ERROR ->
                     bestMatch(source, TemplateIds.RESOURCE_INSUFFICIENT)
+
+                else -> MatchResult(matched = false)
             }
         }
         val scaled = match.scaleToFrame(frame)

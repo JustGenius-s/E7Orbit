@@ -201,12 +201,16 @@ class OperationExecutor(
                     GestureResult.COMPLETED -> GestureOutcome.COMPLETED
                     GestureResult.CANCELLED -> GestureOutcome.CANCELLED
                     GestureResult.REJECTED -> GestureOutcome.REJECTED
+                    GestureResult.TIMED_OUT -> GestureOutcome.TIMED_OUT
                 },
             )
             if (result == GestureResult.COMPLETED) return result
 
             val attemptsRemain = attempt < policy.maxAttempts - 1
-            val canRetry = result == GestureResult.CANCELLED &&
+            val canRetry = result in setOf(
+                GestureResult.CANCELLED,
+                GestureResult.TIMED_OUT,
+            ) &&
                 attemptsRemain &&
                 policy.effectSafety == EffectSafety.IDEMPOTENT
             if (canRetry) {
@@ -220,7 +224,8 @@ class OperationExecutor(
                 return@repeat
             }
 
-            val uncertain = result == GestureResult.CANCELLED &&
+            val uncertain = result == GestureResult.TIMED_OUT ||
+                result == GestureResult.CANCELLED &&
                 policy.effectSafety in setOf(
                     EffectSafety.RECONCILIATION_REQUIRED,
                     EffectSafety.EXTERNAL_LONG_RUNNING,

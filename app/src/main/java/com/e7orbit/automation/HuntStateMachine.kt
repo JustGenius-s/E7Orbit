@@ -10,12 +10,9 @@ import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStats
 import com.e7orbit.model.HuntStopReason
 import com.e7orbit.model.MAX_SUPPORTED_HUNT_RUNS
-import com.e7orbit.model.REFERENCE_HEIGHT
-import com.e7orbit.model.REFERENCE_WIDTH
 import com.e7orbit.model.ScreenFrame
-import com.e7orbit.model.ScreenPoint
-import com.e7orbit.vision.VisionConfig
-import kotlin.math.roundToInt
+import com.e7orbit.model.ScreenRatioPoint
+import com.e7orbit.model.VisualAction
 import kotlinx.coroutines.CancellationException
 
 data class HuntMachineResult(
@@ -27,7 +24,6 @@ data class HuntMachineResult(
 
 class HuntStateMachine(
     private val vision: HuntVision,
-    private val visionConfig: VisionConfig,
     private val clock: AutomationClock = SystemAutomationClock,
     private val logger: OrbitLogger = NoOpOrbitLogger,
     private val homeNavigator: HomeNavigator? = null,
@@ -57,6 +53,12 @@ class HuntStateMachine(
     ): HuntMachineResult {
         var stats = HuntStats(startedAtElapsedMs = clock.elapsedRealtime())
         val operations = session.executor
+        val visualActions = VisualActionExecutor(
+            operations = operations,
+            vision = vision,
+            namespace = "hunt",
+            logger = logger,
+        )
 
         fun publish(
             phase: HuntPhase,
@@ -140,11 +142,11 @@ class HuntStateMachine(
                     effectSafety = EffectSafety.RECONCILIATION_REQUIRED,
                     execute = {
                         publish(HuntPhase.OPENING_BATTLE, "进入战斗")
-                        tapPoint(
-                            point = Points.LOBBY_BATTLE,
+                        visualActions.tap(
+                            action = VisualAction.HUNT_OPEN_BATTLE,
                             operationId = "hunt.open_battle",
-                            operations = operations,
                             policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "未找到战斗入口",
                         )
                         waitForPage(
                             expected = HuntPage.BATTLE_MENU,
@@ -170,11 +172,11 @@ class HuntStateMachine(
                     effectSafety = EffectSafety.RECONCILIATION_REQUIRED,
                     execute = {
                         publish(HuntPhase.OPENING_HUNT, "进入讨伐")
-                        tapPoint(
-                            point = Points.BATTLE_MENU_HUNT,
+                        visualActions.tap(
+                            action = VisualAction.HUNT_OPEN_SELECTION,
                             operationId = "hunt.open_selection",
-                            operations = operations,
                             policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "未找到讨伐入口",
                         )
                         waitForPage(
                             expected = HuntPage.HUNT_SELECTION,
@@ -206,6 +208,7 @@ class HuntStateMachine(
                         selectDungeon(
                             dungeon = config.dungeon,
                             operations = operations,
+                            visualActions = visualActions,
                             session = session,
                         )
                         clock.delay(AFTER_TAP_DELAY_MS)
@@ -222,11 +225,11 @@ class HuntStateMachine(
                     effectSafety = EffectSafety.RECONCILIATION_REQUIRED,
                     execute = {
                         publish(HuntPhase.SELECTING_DIFFICULTY, "选择地狱")
-                        tapPoint(
-                            point = Points.HELL,
+                        visualActions.tap(
+                            action = VisualAction.HUNT_SELECT_HELL,
                             operationId = "hunt.select_hell",
-                            operations = operations,
                             policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "未找到地狱难度按钮",
                         )
                         teamPage = waitForAnyPage(
                             expected = setOf(
@@ -265,11 +268,11 @@ class HuntStateMachine(
                     execute = {
                         if (teamPage == HuntPage.TEAM_QUICK_BATTLE) {
                             publish(HuntPhase.DISABLING_QUICK_BATTLE, "关闭快速战斗")
-                            tapPoint(
-                                point = Points.QUICK_BATTLE_TOGGLE,
+                            visualActions.tap(
+                                action = VisualAction.HUNT_DISABLE_QUICK_BATTLE,
                                 operationId = "hunt.disable_quick_battle",
-                                operations = operations,
                                 policy = OperationPolicy.reconciliationRequired(),
+                                failureMessage = "未找到快速战斗开关",
                             )
                             waitForPage(
                                 expected = HuntPage.TEAM_READY,
@@ -298,11 +301,11 @@ class HuntStateMachine(
                         publish(HuntPhase.CONFIGURING_MANAGED_BATTLE, "开启托管战斗")
                         val managedEnabled = observeManagedBattleEnabled(operations)
                         if (!managedEnabled) {
-                            tapPoint(
-                                point = Points.MANAGED_CHECKBOX,
+                            visualActions.tap(
+                                action = VisualAction.HUNT_ENABLE_MANAGED_BATTLE,
                                 operationId = "hunt.enable_managed_battle",
-                                operations = operations,
                                 policy = OperationPolicy.reconciliationRequired(),
+                                failureMessage = "未找到托管战斗开关",
                             )
                             clock.delay(AFTER_TAP_DELAY_MS)
                             if (!observeManagedBattleEnabled(operations)) {
@@ -334,11 +337,11 @@ class HuntStateMachine(
                     effectSafety = EffectSafety.EXTERNAL_LONG_RUNNING,
                     execute = {
                         publish(HuntPhase.STARTING_BATTLE, "开始讨伐")
-                        tapPoint(
-                            point = Points.START_BATTLE,
+                        visualActions.tap(
+                            action = VisualAction.HUNT_START_BATTLE,
                             operationId = "hunt.start_battle",
-                            operations = operations,
                             policy = OperationPolicy.externalLongRunning(),
+                            failureMessage = "未找到开始讨伐按钮",
                         )
                         publish(
                             HuntPhase.WAITING_FOR_BATTLE_CONTROLS,
@@ -373,11 +376,11 @@ class HuntStateMachine(
                     effectSafety = EffectSafety.RECONCILIATION_REQUIRED,
                     execute = {
                         publish(HuntPhase.DELEGATING_BATTLE, "转交托管")
-                        tapPoint(
-                            point = Points.DELEGATE_WINDOW,
+                        visualActions.tap(
+                            action = VisualAction.HUNT_OPEN_DELEGATION,
                             operationId = "hunt.open_delegation",
-                            operations = operations,
                             policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "未找到托管入口",
                         )
                         waitForPage(
                             expected = HuntPage.DELEGATION_CONFIRMATION,
@@ -403,11 +406,11 @@ class HuntStateMachine(
                     effectSafety = EffectSafety.EXTERNAL_LONG_RUNNING,
                     execute = {
                         publish(HuntPhase.CONFIRMING_DELEGATION, "确认托管")
-                        tapPoint(
-                            point = Points.CONFIRM_DELEGATION,
+                        visualActions.tap(
+                            action = VisualAction.HUNT_CONFIRM_DELEGATION,
                             operationId = "hunt.confirm_delegation",
-                            operations = operations,
                             policy = OperationPolicy.externalLongRunning(),
+                            failureMessage = "未找到托管确认按钮",
                         )
                         requireConfirmedEffect(
                             uncertainMessage =
@@ -438,11 +441,11 @@ class HuntStateMachine(
                     effectSafety = EffectSafety.RECONCILIATION_REQUIRED,
                     execute = {
                         publish(HuntPhase.MANAGED_IN_LOBBY, "讨伐托管中")
-                        tapPoint(
-                            point = Points.MANAGED_STATUS,
+                        visualActions.tap(
+                            action = VisualAction.HUNT_OPEN_MANAGED_STATUS,
                             operationId = "hunt.open_managed_status",
-                            operations = operations,
                             policy = OperationPolicy.reconciliationRequired(),
+                            failureMessage = "未找到托管状态入口",
                         )
                         waitForAnyPage(
                             expected = setOf(
@@ -543,11 +546,11 @@ class HuntStateMachine(
                                         "托管中 ${stats.completedRuns}/${config.runCount}",
                                     )
                                     if (observedInBatch >= targetInBatch) {
-                                        tapPoint(
-                                            point = Points.STOP_MANAGED,
+                                        visualActions.tap(
+                                            action = VisualAction.HUNT_STOP_MANAGED,
                                             operationId = "hunt.stop_managed",
-                                            operations = operations,
                                             policy = OperationPolicy.externalLongRunning(),
+                                            failureMessage = "未找到停止托管按钮",
                                         )
                                         requireConfirmedEffect(
                                             uncertainMessage =
@@ -569,6 +572,7 @@ class HuntStateMachine(
                             if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
                                 stopManagedAfterTimeout(
                                     operations = operations,
+                                    visualActions = visualActions,
                                 )
                             }
                             throw error
@@ -600,6 +604,20 @@ class HuntStateMachine(
                 reason = stop.reason,
                 stats = stats,
                 message = stop.message ?: "自动讨伐已停止",
+                successful = false,
+            )
+        } catch (error: VisualActionNotFoundException) {
+            logger.warn(
+                "hunt.machine.visual_action_missing",
+                "action" to error.action,
+                "message" to error.message,
+            )
+            session.diagnose("hunt_visual_action_missing")
+            stats = stats.copy(finishedAtElapsedMs = clock.elapsedRealtime())
+            HuntMachineResult(
+                reason = HuntStopReason.LOW_CONFIDENCE,
+                stats = stats,
+                message = error.message ?: "未找到可点击控件",
                 successful = false,
             )
         } catch (error: OperationExecutionException) {
@@ -713,22 +731,10 @@ class HuntStateMachine(
         }
     }
 
-    private suspend fun tapPoint(
-        point: ScreenPoint,
-        operationId: String,
-        operations: OperationExecutor,
-        policy: OperationPolicy,
-    ) {
-        operations.tap(
-            operationId = operationId,
-            point = point.toCapturePoint(),
-            policy = policy,
-        )
-    }
-
     private suspend fun selectDungeon(
         dungeon: HuntDungeon,
         operations: OperationExecutor,
+        visualActions: VisualActionExecutor,
         session: AutomationSession,
     ) {
         suspend fun findAndTap(): Boolean {
@@ -743,13 +749,13 @@ class HuntStateMachine(
                 "score" to match.confidence,
                 "matched" to match.matched,
             )
-            val center = match.center
-            if (!match.matched || center == null) return false
-            tapPoint(
-                point = center,
+            if (!match.matched || match.center == null) return false
+            visualActions.tapLocated(
                 operationId = "hunt.select_${dungeon.name.lowercase()}",
-                operations = operations,
+                targetLabel = "dungeon_${dungeon.name.lowercase()}",
+                match = match,
                 policy = OperationPolicy.reconciliationRequired(),
+                failureMessage = "地下城定位结果无效：${dungeon.displayName}",
             )
             return true
         }
@@ -757,11 +763,12 @@ class HuntStateMachine(
         if (findAndTap()) return
 
         repeat(DUNGEON_RESET_SWIPES) {
-            swipePoint(
-                from = Points.DUNGEON_SCROLL_TOP,
-                to = Points.DUNGEON_SCROLL_BOTTOM,
+            visualActions.swipe(
+                from = DUNGEON_SCROLL_TOP,
+                to = DUNGEON_SCROLL_BOTTOM,
                 operationId = "hunt.reset_dungeon_list",
-                operations = operations,
+                durationMs = DUNGEON_SCROLL_DURATION_MS,
+                policy = OperationPolicy.idempotent(),
             )
             clock.delay(AFTER_DUNGEON_SCROLL_DELAY_MS)
         }
@@ -769,11 +776,12 @@ class HuntStateMachine(
         repeat(DUNGEON_SEARCH_PAGES) { pageIndex ->
             if (findAndTap()) return
             if (pageIndex < DUNGEON_SEARCH_PAGES - 1) {
-                swipePoint(
-                    from = Points.DUNGEON_SCROLL_BOTTOM,
-                    to = Points.DUNGEON_SCROLL_TOP,
+                visualActions.swipe(
+                    from = DUNGEON_SCROLL_BOTTOM,
+                    to = DUNGEON_SCROLL_TOP,
                     operationId = "hunt.scroll_dungeon_list",
-                    operations = operations,
+                    durationMs = DUNGEON_SCROLL_DURATION_MS,
+                    policy = OperationPolicy.idempotent(),
                 )
                 clock.delay(AFTER_DUNGEON_SCROLL_DELAY_MS)
             }
@@ -785,26 +793,6 @@ class HuntStateMachine(
             "未找到地下城：${dungeon.displayName}",
         )
     }
-
-    private suspend fun swipePoint(
-        from: ScreenPoint,
-        to: ScreenPoint,
-        operationId: String,
-        operations: OperationExecutor,
-    ) {
-        operations.swipe(
-            operationId = operationId,
-            from = from.toCapturePoint(),
-            to = to.toCapturePoint(),
-            durationMs = DUNGEON_SCROLL_DURATION_MS,
-            policy = OperationPolicy.idempotent(),
-        )
-    }
-
-    private fun ScreenPoint.toCapturePoint(): ScreenPoint = ScreenPoint(
-        x = (x.toDouble() / visionConfig.referenceWidth * REFERENCE_WIDTH).roundToInt(),
-        y = (y.toDouble() / visionConfig.referenceHeight * REFERENCE_HEIGHT).roundToInt(),
-    )
 
     private suspend fun <T> ScreenFrame.useFrame(
         block: suspend (ScreenFrame) -> T,
@@ -847,6 +835,7 @@ class HuntStateMachine(
 
     private suspend fun stopManagedAfterTimeout(
         operations: OperationExecutor,
+        visualActions: VisualActionExecutor,
     ): Nothing {
         val page = try {
             operations.capture("hunt.reconcile_managed_timeout").useFrame { frame ->
@@ -870,11 +859,11 @@ class HuntStateMachine(
 
             HuntPage.MANAGED_PANEL -> {
                 try {
-                    tapPoint(
-                        point = Points.STOP_MANAGED,
+                    visualActions.tap(
+                        action = VisualAction.HUNT_STOP_MANAGED,
                         operationId = "hunt.stop_managed_after_timeout",
-                        operations = operations,
                         policy = OperationPolicy.externalLongRunning(),
+                        failureMessage = "未找到停止托管按钮",
                     )
                     requireConfirmedEffect(
                         uncertainMessage =
@@ -915,22 +904,9 @@ class HuntStateMachine(
         message: String,
     ) : RuntimeException(message)
 
-    private object Points {
-        val LOBBY_BATTLE = ScreenPoint(970, 260)
-        val BATTLE_MENU_HUNT = ScreenPoint(625, 330)
-        val DUNGEON_SCROLL_TOP = ScreenPoint(910, 155)
-        val DUNGEON_SCROLL_BOTTOM = ScreenPoint(910, 510)
-        val HELL = ScreenPoint(705, 330)
-        val QUICK_BATTLE_TOGGLE = ScreenPoint(994, 530)
-        val MANAGED_CHECKBOX = ScreenPoint(474, 445)
-        val START_BATTLE = ScreenPoint(865, 530)
-        val DELEGATE_WINDOW = ScreenPoint(640, 161)
-        val CONFIRM_DELEGATION = ScreenPoint(600, 369)
-        val MANAGED_STATUS = ScreenPoint(765, 30)
-        val STOP_MANAGED = ScreenPoint(347, 433)
-    }
-
     private companion object {
+        val DUNGEON_SCROLL_TOP = ScreenRatioPoint(0.89, 0.27)
+        val DUNGEON_SCROLL_BOTTOM = ScreenRatioPoint(0.89, 0.89)
         const val WAIT_FOR_LOBBY_TIMEOUT_MS = 5 * 60 * 1000L
         const val PAGE_TIMEOUT_MS = 20_000L
         const val BATTLE_START_TIMEOUT_MS = 90_000L

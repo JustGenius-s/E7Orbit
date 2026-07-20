@@ -9,6 +9,8 @@ import com.e7orbit.model.HuntPage
 import com.e7orbit.model.MatchResult
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenRect
+import com.e7orbit.model.VisualAction
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.opencv.android.Utils
@@ -94,7 +96,31 @@ class OpenCvHuntVision(
                 HuntDungeon.CAIDES -> TemplateIds.HUNT_DUNGEON_CAIDES
             },
         )
-    }
+    }.scaleToFrame(frame)
+
+    override suspend fun findAction(
+        frame: ScreenFrame,
+        action: VisualAction,
+    ): MatchResult = withSource(frame) { source ->
+        val templateId = when (action) {
+            VisualAction.HUNT_OPEN_BATTLE -> TemplateIds.HUNT_ACTION_OPEN_BATTLE
+            VisualAction.HUNT_OPEN_SELECTION -> TemplateIds.HUNT_ACTION_OPEN_SELECTION
+            VisualAction.HUNT_SELECT_HELL -> TemplateIds.HUNT_ACTION_SELECT_HELL
+            VisualAction.HUNT_DISABLE_QUICK_BATTLE ->
+                TemplateIds.HUNT_ACTION_DISABLE_QUICK_BATTLE
+            VisualAction.HUNT_ENABLE_MANAGED_BATTLE ->
+                TemplateIds.HUNT_ACTION_ENABLE_MANAGED_BATTLE
+            VisualAction.HUNT_START_BATTLE -> TemplateIds.HUNT_ACTION_START_BATTLE
+            VisualAction.HUNT_OPEN_DELEGATION -> TemplateIds.HUNT_ACTION_OPEN_DELEGATION
+            VisualAction.HUNT_CONFIRM_DELEGATION ->
+                TemplateIds.HUNT_ACTION_CONFIRM_DELEGATION
+            VisualAction.HUNT_OPEN_MANAGED_STATUS ->
+                TemplateIds.HUNT_ACTION_OPEN_MANAGED_STATUS
+            VisualAction.HUNT_STOP_MANAGED -> TemplateIds.HUNT_ACTION_STOP_MANAGED
+            else -> return@withSource MatchResult(matched = false)
+        }
+        bestMatch(source, templateId)
+    }.scaleToFrame(frame)
 
     override suspend fun managedProgressSignature(frame: ScreenFrame): Long =
         withSource(frame) { source ->
@@ -223,6 +249,20 @@ class OpenCvHuntVision(
         bottom = bottom.coerceIn(1, height),
     )
 
+    private fun ScreenRect.scaleToFrame(frame: ScreenFrame): ScreenRect {
+        val scaleX = frame.width.toDouble() / repository.config.referenceWidth
+        val scaleY = frame.height.toDouble() / repository.config.referenceHeight
+        return ScreenRect(
+            left = (left * scaleX).roundToInt(),
+            top = (top * scaleY).roundToInt(),
+            right = (right * scaleX).roundToInt(),
+            bottom = (bottom * scaleY).roundToInt(),
+        )
+    }
+
+    private fun MatchResult.scaleToFrame(frame: ScreenFrame): MatchResult =
+        copy(bounds = bounds?.scaleToFrame(frame))
+
     private companion object {
         val REQUIRED_TEMPLATE_IDS = listOf(
             TemplateIds.HUNT_LOBBY_BATTLE,
@@ -243,6 +283,16 @@ class OpenCvHuntVision(
             TemplateIds.HUNT_MANAGED_STATUS,
             TemplateIds.HUNT_MANAGED_COMPLETE,
             TemplateIds.HUNT_MANAGED_PANEL,
+            TemplateIds.HUNT_ACTION_OPEN_BATTLE,
+            TemplateIds.HUNT_ACTION_OPEN_SELECTION,
+            TemplateIds.HUNT_ACTION_SELECT_HELL,
+            TemplateIds.HUNT_ACTION_DISABLE_QUICK_BATTLE,
+            TemplateIds.HUNT_ACTION_ENABLE_MANAGED_BATTLE,
+            TemplateIds.HUNT_ACTION_START_BATTLE,
+            TemplateIds.HUNT_ACTION_OPEN_DELEGATION,
+            TemplateIds.HUNT_ACTION_CONFIRM_DELEGATION,
+            TemplateIds.HUNT_ACTION_OPEN_MANAGED_STATUS,
+            TemplateIds.HUNT_ACTION_STOP_MANAGED,
         )
         const val FNV_OFFSET_BASIS = -3750763034362895579L
         const val FNV_PRIME = 1099511628211L

@@ -76,6 +76,16 @@ object TemplateIds {
     const val HUNT_MANAGED_STATUS = "hunt_managed_status"
     const val HUNT_MANAGED_COMPLETE = "hunt_managed_complete"
     const val HUNT_MANAGED_PANEL = "hunt_managed_panel"
+    const val HUNT_ACTION_OPEN_BATTLE = "hunt_action_open_battle"
+    const val HUNT_ACTION_OPEN_SELECTION = "hunt_action_open_selection"
+    const val HUNT_ACTION_SELECT_HELL = "hunt_action_select_hell"
+    const val HUNT_ACTION_DISABLE_QUICK_BATTLE = "hunt_action_disable_quick_battle"
+    const val HUNT_ACTION_ENABLE_MANAGED_BATTLE = "hunt_action_enable_managed_battle"
+    const val HUNT_ACTION_START_BATTLE = "hunt_action_start_battle"
+    const val HUNT_ACTION_OPEN_DELEGATION = "hunt_action_open_delegation"
+    const val HUNT_ACTION_CONFIRM_DELEGATION = "hunt_action_confirm_delegation"
+    const val HUNT_ACTION_OPEN_MANAGED_STATUS = "hunt_action_open_managed_status"
+    const val HUNT_ACTION_STOP_MANAGED = "hunt_action_stop_managed"
 }
 
 object TemplateRequirements {

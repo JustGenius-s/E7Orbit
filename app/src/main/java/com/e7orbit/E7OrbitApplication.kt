@@ -88,7 +88,6 @@ object AppGraph {
         )
         huntRuntime = HuntRuntime(
             vision = OpenCvHuntVision(templateRepository, logger),
-            visionConfig = templateRepository.config,
             settingsRepository = settingsRepository,
             diagnosticStore = diagnosticStore,
             logger = logger,

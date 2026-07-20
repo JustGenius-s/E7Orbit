@@ -3,7 +3,6 @@ package com.e7orbit.automation
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.GameLocation
 import com.e7orbit.model.GestureResult
-import com.e7orbit.model.GlobalAction
 import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntPage
 import com.e7orbit.model.MatchResult
@@ -11,8 +10,8 @@ import com.e7orbit.model.PurchaseTarget
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
-import com.e7orbit.model.ShopAction
 import com.e7orbit.model.ShopPage
+import com.e7orbit.model.VisualAction
 import kotlinx.coroutines.flow.StateFlow
 
 interface ScreenGateway {
@@ -52,7 +51,14 @@ data class VisionHealth(
         get() = openCvReady && missingTemplateIds.isEmpty()
 }
 
-interface ShopVision {
+interface VisualActionVision {
+    suspend fun findAction(
+        frame: ScreenFrame,
+        action: VisualAction,
+    ): MatchResult
+}
+
+interface ShopVision : VisualActionVision {
     fun health(): VisionHealth
     suspend fun detectPage(frame: ScreenFrame): ShopPage
     suspend fun findTargets(frame: ScreenFrame, config: RunConfig): List<PurchaseTarget>
@@ -60,23 +66,14 @@ interface ShopVision {
         frame: ScreenFrame,
         target: PurchaseTarget,
     ): MatchResult
-
-    suspend fun findAction(
-        frame: ScreenFrame,
-        action: ShopAction,
-    ): MatchResult
 }
 
-interface GlobalUiVision {
+interface GlobalUiVision : VisualActionVision {
     fun navigationHealth(): VisionHealth
     suspend fun detectLocation(frame: ScreenFrame): GameLocation
-    suspend fun findGlobalAction(
-        frame: ScreenFrame,
-        action: GlobalAction,
-    ): MatchResult
 }
 
-interface HuntVision {
+interface HuntVision : VisualActionVision {
     fun health(): VisionHealth
     suspend fun detectPage(frame: ScreenFrame): HuntPage
     suspend fun findDungeon(frame: ScreenFrame, dungeon: HuntDungeon): MatchResult

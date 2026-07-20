@@ -13,6 +13,7 @@ enum class GestureOutcome {
     COMPLETED,
     CANCELLED,
     REJECTED,
+    TIMED_OUT,
     INTERRUPTED,
     RECONCILED,
     FAILED,
@@ -30,6 +31,7 @@ data class GestureReceipt(
     val effectMayBeUncertain: Boolean
         get() = outcome in setOf(
             GestureOutcome.CANCELLED,
+            GestureOutcome.TIMED_OUT,
             GestureOutcome.INTERRUPTED,
         ) &&
             effectSafety in setOf(

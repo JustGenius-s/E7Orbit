@@ -10,7 +10,6 @@ import com.e7orbit.model.HuntStats
 import com.e7orbit.model.HuntStatus
 import com.e7orbit.model.HuntStopReason
 import com.e7orbit.model.ScreenFrame
-import com.e7orbit.vision.VisionConfig
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
@@ -55,7 +54,6 @@ private class StoreHuntRuntimeDiagnosticSink(
 
 class HuntRuntime internal constructor(
     private val vision: HuntVision,
-    private val visionConfig: VisionConfig,
     private val persistence: HuntRuntimePersistence,
     private val diagnosticSink: HuntRuntimeDiagnosticSink,
     private val logger: OrbitLogger = NoOpOrbitLogger,
@@ -68,7 +66,6 @@ class HuntRuntime internal constructor(
 ) {
     constructor(
         vision: HuntVision,
-        visionConfig: VisionConfig,
         settingsRepository: SettingsRepository,
         diagnosticStore: DiagnosticStore,
         logger: OrbitLogger = NoOpOrbitLogger,
@@ -79,7 +76,6 @@ class HuntRuntime internal constructor(
         homeNavigator: HomeNavigator? = null,
     ) : this(
         vision = vision,
-        visionConfig = visionConfig,
         persistence = RepositoryHuntRuntimePersistence(settingsRepository),
         diagnosticSink = StoreHuntRuntimeDiagnosticSink(diagnosticStore),
         logger = logger,
@@ -333,7 +329,6 @@ class HuntRuntime internal constructor(
     ) {
         val machine = HuntStateMachine(
             vision = vision,
-            visionConfig = visionConfig,
             clock = clock,
             logger = logger,
             homeNavigator = homeNavigator,

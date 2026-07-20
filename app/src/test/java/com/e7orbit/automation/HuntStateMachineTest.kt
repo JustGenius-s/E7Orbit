@@ -9,8 +9,7 @@ import com.e7orbit.model.MatchResult
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import com.e7orbit.model.ScreenRect
-import com.e7orbit.vision.PointConfig
-import com.e7orbit.vision.VisionConfig
+import com.e7orbit.model.VisualAction
 import java.util.ArrayDeque
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -43,7 +42,6 @@ class HuntStateMachineTest {
         val clock = FakeHuntClock()
         val machine = HuntStateMachine(
             vision = vision,
-            visionConfig = testVisionConfig(),
             clock = clock,
         )
         val session = AutomationSession(
@@ -100,7 +98,6 @@ class HuntStateMachineTest {
 
         val result = HuntStateMachine(
             vision = vision,
-            visionConfig = testVisionConfig(),
             clock = FakeHuntClock(),
         ).run(
             config = HuntConfig(runCount = 2),
@@ -140,7 +137,6 @@ class HuntStateMachineTest {
 
         val result = HuntStateMachine(
             vision = vision,
-            visionConfig = testVisionConfig(),
             clock = FakeHuntClock(),
         ).run(
             config = HuntConfig(runCount = 1),
@@ -185,7 +181,6 @@ class HuntStateMachineTest {
                 managedStates = listOf(true),
                 progressSignatures = signatures,
             ),
-            visionConfig = testVisionConfig(),
             clock = FakeHuntClock(),
         ).run(
             config = HuntConfig(runCount = 31),
@@ -224,7 +219,6 @@ class HuntStateMachineTest {
                 managedStates = listOf(true),
                 progressSignatures = List(901) { 0L },
             ),
-            visionConfig = testVisionConfig(),
             clock = FakeHuntClock(),
         ).run(
             config = HuntConfig(runCount = 1),
@@ -273,6 +267,15 @@ class HuntStateMachineTest {
 
         override suspend fun managedProgressSignature(frame: ScreenFrame): Long =
             signatures.removeFirst()
+
+        override suspend fun findAction(
+            frame: ScreenFrame,
+            action: VisualAction,
+        ): MatchResult = MatchResult(
+            matched = true,
+            confidence = 1.0,
+            bounds = ScreenRect(100, 100, 200, 200),
+        )
     }
 
     private class FakeHuntGateway(
@@ -311,12 +314,4 @@ class HuntStateMachineTest {
         }
     }
 
-    private fun testVisionConfig() = VisionConfig(
-        referenceWidth = 1024,
-        referenceHeight = 576,
-        purchaseButtonX = 0,
-        scrollFrom = PointConfig(0, 0),
-        scrollTo = PointConfig(0, 0),
-        templates = emptyList(),
-    )
 }

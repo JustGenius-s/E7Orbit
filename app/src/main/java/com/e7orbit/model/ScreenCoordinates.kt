@@ -38,3 +38,26 @@ data class ReferencePoint(
         )
     }
 }
+
+/** A point expressed as a fraction of the current screen dimensions. */
+data class ScreenRatioPoint(
+    val xRatio: Double,
+    val yRatio: Double,
+) {
+    init {
+        require(xRatio in 0.0..1.0) { "xRatio 必须在 0 到 1 之间" }
+        require(yRatio in 0.0..1.0) { "yRatio 必须在 0 到 1 之间" }
+    }
+
+    fun toScreenPoint(
+        width: Int,
+        height: Int,
+    ): ScreenPoint {
+        require(width > 0) { "width 必须大于 0" }
+        require(height > 0) { "height 必须大于 0" }
+        return ScreenPoint(
+            x = (width * xRatio).roundToInt(),
+            y = (height * yRatio).roundToInt(),
+        )
+    }
+}

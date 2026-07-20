@@ -159,18 +159,36 @@ enum class GameLocation {
     UNKNOWN,
 }
 
-enum class GlobalAction {
+enum class VisualAction {
     OPEN_MENU,
     RETURN_TO_LOBBY,
+    OPEN_SECRET_SHOP,
+    CONFIRM_PURCHASE,
+    REFRESH_SHOP,
+    CONFIRM_REFRESH,
+    DISMISS_ERROR,
+    HUNT_OPEN_BATTLE,
+    HUNT_OPEN_SELECTION,
+    HUNT_SELECT_HELL,
+    HUNT_DISABLE_QUICK_BATTLE,
+    HUNT_ENABLE_MANAGED_BATTLE,
+    HUNT_START_BATTLE,
+    HUNT_OPEN_DELEGATION,
+    HUNT_CONFIRM_DELEGATION,
+    HUNT_OPEN_MANAGED_STATUS,
+    HUNT_STOP_MANAGED,
 }
 
 data class PurchaseTarget(
     val type: ItemType,
     val itemBounds: ScreenRect,
-    val purchaseButton: ScreenPoint,
+    val purchaseButtonBounds: ScreenRect,
     val confidence: Double,
     val rowIndex: Int,
-)
+) {
+    val purchaseButton: ScreenPoint
+        get() = purchaseButtonBounds.center
+}
 
 enum class ShopPage {
     LOBBY,
@@ -179,14 +197,6 @@ enum class ShopPage {
     REFRESH_CONFIRMATION,
     RESOURCE_INSUFFICIENT,
     UNKNOWN,
-}
-
-enum class ShopAction {
-    OPEN_SECRET_SHOP,
-    CONFIRM_PURCHASE,
-    REFRESH,
-    CONFIRM_REFRESH,
-    DISMISS_ERROR,
 }
 
 data class MatchResult(
@@ -201,6 +211,7 @@ enum class GestureResult {
     COMPLETED,
     CANCELLED,
     REJECTED,
+    TIMED_OUT,
 }
 
 @Serializable

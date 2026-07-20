@@ -45,6 +45,21 @@ class OperationExecutorTest {
     }
 
     @Test
+    fun retriesTimedOutIdempotentGesture() = runTest {
+        val gateway = FakeOperationGateway(
+            tapResults = listOf(GestureResult.TIMED_OUT, GestureResult.COMPLETED),
+        )
+
+        executor(gateway).tap(
+            operationId = "scroll_to_bottom",
+            point = ScreenPoint(10, 10),
+            policy = OperationPolicy.idempotent(),
+        )
+
+        assertEquals(2, gateway.taps)
+    }
+
+    @Test
     fun doesNotBlindlyRetryUncertainEffect() = runTest {
         val gateway = FakeOperationGateway(
             tapResults = listOf(GestureResult.CANCELLED, GestureResult.COMPLETED),
@@ -62,6 +77,33 @@ class OperationExecutorTest {
         }
 
         assertEquals(ExecutionFailureKind.UNCERTAIN_EFFECT, kind)
+        assertEquals(1, gateway.taps)
+    }
+
+    @Test
+    fun classifiesMissingGestureCallbackAsUncertainEffect() = runTest {
+        val receipts = mutableListOf<GestureReceipt>()
+        val gateway = FakeOperationGateway(
+            tapResults = listOf(GestureResult.TIMED_OUT),
+        )
+
+        var kind: ExecutionFailureKind? = null
+        try {
+            executor(
+                gateway = gateway,
+                onGestureReceipt = receipts::add,
+            ).tap(
+                operationId = "confirm_refresh",
+                point = ScreenPoint(10, 10),
+                policy = OperationPolicy.reconciliationRequired(),
+            )
+        } catch (error: OperationExecutionException) {
+            kind = error.failure.kind
+        }
+
+        assertEquals(ExecutionFailureKind.UNCERTAIN_EFFECT, kind)
+        assertEquals(GestureOutcome.TIMED_OUT, receipts.last().outcome)
+        assertTrue(receipts.last().effectMayBeUncertain)
         assertEquals(1, gateway.taps)
     }
 
