@@ -11,6 +11,7 @@ import com.e7orbit.automation.HuntRuntime
 import com.e7orbit.automation.HomeNavigator
 import com.e7orbit.capture.ProjectionCaptureRepository
 import com.e7orbit.data.DiagnosticStore
+import com.e7orbit.data.E7DataRepository
 import com.e7orbit.data.SettingsRepository
 import com.e7orbit.logging.FileOrbitLogger
 import com.e7orbit.vision.OpenCvShopVision
@@ -32,6 +33,8 @@ class E7OrbitApplication : Application() {
 
 object AppGraph {
     lateinit var settingsRepository: SettingsRepository
+        private set
+    lateinit var e7DataRepository: E7DataRepository
         private set
     lateinit var diagnosticStore: DiagnosticStore
         private set
@@ -60,6 +63,7 @@ object AppGraph {
         openCvReady = OpenCVLoader.initLocal()
         logger.info("app.initialize", "openCvReady" to openCvReady)
         settingsRepository = SettingsRepository(appContext)
+        e7DataRepository = E7DataRepository(appContext)
         diagnosticStore = DiagnosticStore(appContext)
         templateRepository = TemplateRepository(appContext, openCvReady)
         val runCoordinator = AutomationRunCoordinator()

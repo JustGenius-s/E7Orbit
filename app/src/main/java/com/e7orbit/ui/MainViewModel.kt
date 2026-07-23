@@ -11,6 +11,9 @@ import android.view.accessibility.AccessibilityManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.e7orbit.AppGraph
+import com.e7orbit.data.E7Artifact
+import com.e7orbit.data.E7Hero
+import com.e7orbit.data.E7DataSnapshot
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.E7_CN_PACKAGE
 import com.e7orbit.model.HuntConfig
@@ -24,6 +27,7 @@ import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
 import com.e7orbit.service.E7AccessibilityService
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -52,6 +56,31 @@ data class MainUiState(
     val huntAutomation: HuntStatus = HuntStatus(),
     val environment: EnvironmentStatus = EnvironmentStatus(),
     val lastSummary: RunSummary = RunSummary(),
+    val data: DataUiState = DataUiState(),
+)
+
+enum class DataSection {
+    HEROES,
+    ARTIFACTS,
+}
+
+enum class DataLoadState {
+    IDLE,
+    LOADING,
+    READY,
+    ERROR,
+}
+
+data class DataUiState(
+    val loadState: DataLoadState = DataLoadState.IDLE,
+    val heroes: List<E7Hero> = emptyList(),
+    val artifacts: List<E7Artifact> = emptyList(),
+    val section: DataSection = DataSection.HEROES,
+    val query: String = "",
+    val selectedHeroCode: String? = null,
+    val selectedArtifactCode: String? = null,
+    val fetchedAtEpochMs: Long = 0L,
+    val errorMessage: String? = null,
 )
 
 internal class PersistedDraft<T>(initialValue: T) {
@@ -98,12 +127,13 @@ class MainViewModel(
     private val draftConfig = PersistedDraft(RunConfig())
     private val draftHuntConfig = PersistedDraft(HuntConfig())
     private val environment = MutableStateFlow(readEnvironment())
+    private val data = MutableStateFlow(DataUiState())
     private val runtimeStatuses = combine(
         runtime.status,
         huntRuntime.status,
     ) { shop, hunt -> shop to hunt }
 
-    val uiState: StateFlow<MainUiState> = combine(
+    private val baseUiState: Flow<MainUiState> = combine(
         draftConfig.state,
         draftHuntConfig.state,
         runtimeStatuses,
@@ -118,6 +148,10 @@ class MainViewModel(
             environment = environmentStatus,
             lastSummary = lastSummary,
         )
+    }
+
+    val uiState: StateFlow<MainUiState> = baseUiState.combine(data) { state, dataState ->
+        state.copy(data = dataState)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000L),
@@ -143,6 +177,63 @@ class MainViewModel(
         runtime.refreshHealth()
         huntRuntime.refreshHealth()
         environment.value = readEnvironment()
+    }
+
+    fun loadData(forceRefresh: Boolean = false) {
+        if (!forceRefresh && data.value.loadState in setOf(DataLoadState.LOADING, DataLoadState.READY)) {
+            return
+        }
+        data.value = data.value.copy(
+            loadState = DataLoadState.LOADING,
+            errorMessage = null,
+        )
+        viewModelScope.launch {
+            try {
+                val snapshot = AppGraph.e7DataRepository.load(forceRefresh)
+                applyDataSnapshot(snapshot)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                AppGraph.logger.error("data.load_failed", error)
+                data.value = data.value.copy(
+                    loadState = DataLoadState.ERROR,
+                    errorMessage = error.message ?: "公开数据暂时不可用",
+                )
+            }
+        }
+    }
+
+    fun setDataSection(section: DataSection) {
+        data.value = data.value.copy(section = section)
+    }
+
+    fun setDataQuery(query: String) {
+        data.value = data.value.copy(query = query)
+    }
+
+    fun selectHero(code: String) {
+        data.value = data.value.copy(selectedHeroCode = code)
+    }
+
+    fun selectArtifact(code: String) {
+        data.value = data.value.copy(selectedArtifactCode = code)
+    }
+
+    private fun applyDataSnapshot(snapshot: E7DataSnapshot) {
+        val currentHero = data.value.selectedHeroCode
+            ?.takeIf { selected -> snapshot.heroes.any { it.code == selected } }
+            ?: snapshot.heroes.firstOrNull()?.code
+        val currentArtifact = data.value.selectedArtifactCode
+            ?.takeIf { selected -> snapshot.artifacts.any { it.code == selected } }
+            ?: snapshot.artifacts.firstOrNull()?.code
+        data.value = data.value.copy(
+            loadState = DataLoadState.READY,
+            heroes = snapshot.heroes,
+            artifacts = snapshot.artifacts,
+            selectedHeroCode = currentHero,
+            selectedArtifactCode = currentArtifact,
+            fetchedAtEpochMs = snapshot.fetchedAtEpochMs,
+            errorMessage = null,
+        )
     }
 
     fun setBuyCovenant(enabled: Boolean) {
