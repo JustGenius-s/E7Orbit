@@ -111,7 +111,7 @@ internal fun DataBrowserScreen(
                 )
             }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         FilterRow(
             section = data.section,
             selected = selectedFilter,
@@ -200,7 +200,7 @@ private fun ColumnScope.HeroList(
         modifier = Modifier
             .fillMaxWidth()
             .weight(1f),
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         LazyColumn(contentPadding = PaddingValues(vertical = 4.dp)) {
@@ -275,7 +275,7 @@ private fun ColumnScope.ArtifactList(
         modifier = Modifier
             .fillMaxWidth()
             .weight(1f),
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         LazyColumn(contentPadding = PaddingValues(vertical = 4.dp)) {
@@ -426,7 +426,7 @@ internal fun HeroDetailScreen(
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (hero == null) {
             item { DataMissingDetail("英雄数据不可用") }
@@ -529,7 +529,7 @@ internal fun ArtifactDetailScreen(
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (artifact == null) {
             item { DataMissingDetail("神器数据不可用") }
@@ -554,7 +554,7 @@ internal fun ArtifactDetailScreen(
                         )
                     }
                 }
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(16.dp))
                 Text(
                     artifact.name,
                     style = MaterialTheme.typography.headlineMedium,
@@ -614,7 +614,7 @@ internal fun SettingsScreen(
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
             Text(
@@ -639,7 +639,7 @@ internal fun SettingsScreen(
                 ReadinessRow("国服游戏", state.environment.gameInstalled, if (state.environment.gameInstalled) "已安装" else "未安装")
                 GroupDivider()
                 MetricRow("当前显示尺寸", "${state.environment.width} × ${state.environment.height}")
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 if (!state.environment.accessibilityEnabled) {
                     Button(
                         onClick = onEnableAccessibility,
@@ -670,7 +670,7 @@ internal fun SettingsScreen(
                             .format(Date(it))
                     } ?: "尚未更新",
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = onRefreshData,
                     enabled = state.data.loadState != DataLoadState.LOADING,

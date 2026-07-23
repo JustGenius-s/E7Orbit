@@ -1,6 +1,13 @@
 package com.e7orbit.ui
 
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,7 +24,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -26,6 +35,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -33,11 +43,14 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -64,7 +77,7 @@ internal fun HomeScreen(
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item(contentType = "hero") {
             HomeStatusHero(
@@ -154,7 +167,7 @@ private fun HomeStatusHero(
                     },
                     positive = activeTask != null || readyCount == 3,
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = when (activeTask) {
                         AutomationTask.SHOP -> "自动神秘商店"
@@ -176,7 +189,7 @@ private fun HomeStatusHero(
                 )
             }
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(16.dp))
         if (activeTask == null) {
             Button(
                 onClick = onOpenTasks,
@@ -190,7 +203,7 @@ private fun HomeStatusHero(
         } else {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FilledTonalButton(
                     onClick = {
@@ -232,7 +245,7 @@ private fun EnvironmentSection(
         GroupDivider()
         ReadinessRow("识图引擎", state.environment.openCvReady)
         if (!state.environment.accessibilityEnabled) {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             FilledTonalButton(
                 onClick = onEnableAccessibility,
                 modifier = Modifier.fillMaxWidth(),
@@ -260,6 +273,8 @@ private fun LastRunSection(summary: RunSummary) {
 internal fun TaskListScreen(
     state: MainUiState,
     modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
     onOpenTask: (AutomationTask) -> Unit,
 ) {
     val shopActive = state.automation.isRunning || state.automation.phase == AutomationPhase.PAUSED
@@ -267,7 +282,7 @@ internal fun TaskListScreen(
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
             Text(
@@ -285,7 +300,12 @@ internal fun TaskListScreen(
             SectionTitle("资源获取")
             Spacer(Modifier.height(8.dp))
             Surface(
-                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.taskSharedBounds(
+                    task = AutomationTask.SHOP,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                ),
+                shape = MaterialTheme.shapes.medium,
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
             ) {
                 TaskGroupItem(
@@ -315,7 +335,12 @@ internal fun TaskListScreen(
             SectionTitle("战斗")
             Spacer(Modifier.height(8.dp))
             Surface(
-                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.taskSharedBounds(
+                    task = AutomationTask.HUNT,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                ),
+                shape = MaterialTheme.shapes.medium,
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
             ) {
                 TaskGroupItem(
@@ -352,9 +377,27 @@ private fun taskStatus(active: Boolean, paused: Boolean, ready: Boolean): String
 }
 
 @Composable
+private fun Modifier.taskSharedBounds(
+    task: AutomationTask,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+): Modifier {
+    val baseModifier = this
+    return with(sharedTransitionScope) {
+        baseModifier.sharedBounds(
+            sharedContentState = rememberSharedContentState("automation-task-${task.name}"),
+            animatedVisibilityScope = animatedVisibilityScope,
+            resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds,
+        )
+    }
+}
+
+@Composable
 internal fun ShopTaskScreen(
     state: MainUiState,
     modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
     onBuyCovenantChanged: (Boolean) -> Unit,
     onBuyMysticChanged: (Boolean) -> Unit,
     onMaxRefreshChanged: (Int) -> Unit,
@@ -375,11 +418,18 @@ internal fun ShopTaskScreen(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 104.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item { ShopTaskHeader(state = state, active = active) }
             item {
-                SectionTitle("购买目标", "运行中不可修改配置")
+                ShopTaskHeader(
+                    state = state,
+                    active = active,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                )
+            }
+            item {
+                SectionTitle("购买目标", detail = "运行中不可修改配置")
                 Spacer(Modifier.height(8.dp))
                 SectionSurface {
                     ToggleSettingRow(
@@ -459,8 +509,18 @@ internal fun ShopTaskScreen(
 }
 
 @Composable
-private fun ShopTaskHeader(state: MainUiState, active: Boolean) {
+private fun ShopTaskHeader(
+    state: MainUiState,
+    active: Boolean,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+) {
     SectionSurface(
+        modifier = Modifier.taskSharedBounds(
+            task = AutomationTask.SHOP,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+        ),
         color = MaterialTheme.colorScheme.primaryContainer,
         contentPadding = PaddingValues(20.dp),
     ) {
@@ -485,7 +545,7 @@ private fun ShopTaskHeader(state: MainUiState, active: Boolean) {
                     },
                     positive = active,
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     "自动神秘商店",
                     style = MaterialTheme.typography.headlineSmall,
@@ -511,6 +571,8 @@ private fun ShopTaskHeader(state: MainUiState, active: Boolean) {
 internal fun HuntTaskScreen(
     state: MainUiState,
     modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
     onDungeonChanged: (HuntDungeon) -> Unit,
     onDifficultyChanged: (HuntDifficulty) -> Unit,
     onManagedBattleChanged: (Boolean) -> Unit,
@@ -531,14 +593,21 @@ internal fun HuntTaskScreen(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 104.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item { HuntTaskHeader(state, active) }
             item {
-                SectionTitle("地下城", "横向滑动查看更多")
+                HuntTaskHeader(
+                    state = state,
+                    active = active,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                )
+            }
+            item {
+                SectionTitle("地下城", detail = "横向滑动查看更多")
                 Spacer(Modifier.height(8.dp))
                 LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(end = 16.dp),
                 ) {
                     items(HuntDungeon.entries, key = { it.name }) { dungeon ->
@@ -638,8 +707,18 @@ internal fun HuntTaskScreen(
 }
 
 @Composable
-private fun HuntTaskHeader(state: MainUiState, active: Boolean) {
+private fun HuntTaskHeader(
+    state: MainUiState,
+    active: Boolean,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+) {
     SectionSurface(
+        modifier = Modifier.taskSharedBounds(
+            task = AutomationTask.HUNT,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+        ),
         color = MaterialTheme.colorScheme.secondaryContainer,
         contentPadding = PaddingValues(20.dp),
     ) {
@@ -664,7 +743,7 @@ private fun HuntTaskHeader(state: MainUiState, active: Boolean) {
                     },
                     positive = active,
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     "${state.huntConfig.dungeon.displayName}讨伐",
                     style = MaterialTheme.typography.headlineSmall,
@@ -693,19 +772,35 @@ private fun DungeonOption(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.width(126.dp),
-        shape = if (selected) MaterialTheme.shapes.extraLarge else MaterialTheme.shapes.medium,
-        color = if (selected) {
+    val cornerRadius by animateDpAsState(
+        targetValue = if (selected) 20.dp else 12.dp,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "dungeon option shape",
+    )
+    val containerColor by animateColorAsState(
+        targetValue = if (selected) {
             MaterialTheme.colorScheme.primaryContainer
         } else {
             MaterialTheme.colorScheme.surfaceContainerLow
         },
-        border = if (selected) {
-            androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-        } else null,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dungeon option color",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dungeon option border",
+    )
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.width(126.dp),
+        shape = RoundedCornerShape(cornerRadius),
+        color = containerColor,
+        border = BorderStroke(2.dp, borderColor),
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
             Image(
@@ -735,31 +830,37 @@ private fun EnergyRefillOption(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth(),
-        color = if (selected) {
+    val containerColor by animateColorAsState(
+        targetValue = if (selected) {
             MaterialTheme.colorScheme.secondaryContainer
         } else {
             MaterialTheme.colorScheme.surfaceContainerLow
         },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "energy refill color",
+    )
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            ),
+        color = containerColor,
         shape = MaterialTheme.shapes.medium,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(18.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (selected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.outlineVariant,
-                    ),
+            RadioButton(
+                selected = selected,
+                onClick = null,
+                enabled = enabled,
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 text = refill.displayName(includeAvailability = true),
                 color = if (enabled || selected) {

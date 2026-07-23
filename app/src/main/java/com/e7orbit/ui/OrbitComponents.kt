@@ -1,5 +1,14 @@
 package com.e7orbit.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +36,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,8 +51,8 @@ import com.e7orbit.ui.theme.OrbitWarning
 @Composable
 internal fun SectionTitle(
     title: String,
-    detail: String? = null,
     modifier: Modifier = Modifier,
+    detail: String? = null,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
@@ -67,10 +78,17 @@ internal fun SectionSurface(
     contentPadding: PaddingValues = PaddingValues(16.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val animatedColor by animateColorAsState(
+        targetValue = color,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "section surface color",
+    )
     Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.extraLarge,
-        color = color,
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
+        shape = MaterialTheme.shapes.medium,
+        color = animatedColor,
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
@@ -95,18 +113,38 @@ internal fun StatusPill(
     } else {
         MaterialTheme.colorScheme.onTertiaryContainer
     }
+    val animatedContainer by animateColorAsState(
+        targetValue = container,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "status container color",
+    )
+    val animatedContent by animateColorAsState(
+        targetValue = content,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "status content color",
+    )
     Surface(
-        modifier = modifier,
-        color = container,
-        contentColor = content,
+        modifier = modifier.animateContentSize(
+            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        ),
+        color = animatedContainer,
+        contentColor = animatedContent,
         shape = CircleShape,
     ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-        )
+        AnimatedContent(
+            targetState = label,
+            transitionSpec = {
+                fadeIn() togetherWith fadeOut()
+            },
+            label = "status label",
+        ) { animatedLabel ->
+            Text(
+                text = animatedLabel,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
     }
 }
 
@@ -268,43 +306,54 @@ internal fun TaskActionBar(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
         color = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 3.dp,
     ) {
-        if (active) {
-            Row(
-                modifier = Modifier.padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                FilledTonalButton(
-                    onClick = onPauseOrResume,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
+        AnimatedContent(
+            targetState = active,
+            transitionSpec = {
+                (fadeIn() + slideInVertically { it / 4 }) togetherWith
+                    (fadeOut() + slideOutVertically { -it / 4 })
+            },
+            label = "task action state",
+        ) { isActive ->
+            if (isActive) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(if (paused) "继续" else "暂停", fontWeight = FontWeight.Bold)
+                    FilledTonalButton(
+                        onClick = onPauseOrResume,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                    ) {
+                        Text(if (paused) "继续" else "暂停", fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = onStop,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                    ) {
+                        Text("停止")
+                    }
                 }
-                OutlinedButton(
-                    onClick = onStop,
+            } else {
+                Button(
+                    onClick = onPrepare,
+                    enabled = canStart,
                     modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
+                        .fillMaxWidth()
+                        .padding(12.dp)
+                        .height(56.dp),
+                    shape = CircleShape,
                 ) {
-                    Text("停止")
+                    Text(startLabel, fontWeight = FontWeight.Bold)
                 }
-            }
-        } else {
-            Button(
-                onClick = onPrepare,
-                enabled = canStart,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp)
-                    .height(56.dp),
-                shape = CircleShape,
-            ) {
-                Text(startLabel, fontWeight = FontWeight.Bold)
             }
         }
     }

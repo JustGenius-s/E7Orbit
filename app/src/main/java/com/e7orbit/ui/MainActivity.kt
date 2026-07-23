@@ -9,19 +9,41 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationItemIconPosition
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.ShortNavigationBar
-import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,14 +51,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.e7orbit.AppGraph
 import com.e7orbit.R
 import com.e7orbit.capture.MediaProjectionCaptureService
-import com.e7orbit.model.AutomationPhase
-import com.e7orbit.model.HuntPhase
 import com.e7orbit.ui.theme.E7OrbitTheme
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -146,6 +168,18 @@ private enum class DetailRoute(val title: String) {
     ARTIFACT("神器详情"),
 }
 
+private data class OrbitRoute(
+    val destination: OrbitDestination,
+    val detail: DetailRoute?,
+) {
+    val title: String
+        get() = detail?.title ?: destination.label
+}
+
+private val EmphasizedEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+private val EmphasizedDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+private val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun OrbitApp(
@@ -177,12 +211,14 @@ private fun OrbitApp(
     var detailName by rememberSaveable { mutableStateOf<String?>(null) }
     val destination = OrbitDestination.valueOf(destinationName)
     val detail = detailName?.let(DetailRoute::valueOf)
-    val shopActive = state.automation.isRunning || state.automation.phase == AutomationPhase.PAUSED
-    val huntActive = state.huntAutomation.isRunning || state.huntAutomation.phase == HuntPhase.PAUSED
-
+    val route = OrbitRoute(destination, detail)
+    val topAppBarScrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     BackHandler(enabled = detail != null) { detailName = null }
     LaunchedEffect(destination) {
         if (destination == OrbitDestination.DATA) onLoadData(false)
+    }
+    LaunchedEffect(route) {
+        topAppBarScrollBehavior.state.contentOffset = 0f
     }
 
     fun openDestination(target: OrbitDestination) {
@@ -198,20 +234,34 @@ private fun OrbitApp(
     }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             OrbitTopAppBar(
-                title = detail?.title ?: destination.label,
+                title = route.title,
                 showBack = detail != null,
                 showRefresh = detail == null && destination == OrbitDestination.DATA,
                 refreshing = state.data.loadState == DataLoadState.LOADING,
+                scrollBehavior = topAppBarScrollBehavior,
                 onBack = { detailName = null },
                 onRefresh = { onLoadData(true) },
             )
         },
         bottomBar = {
-            if (detail == null) {
+            AnimatedVisibility(
+                visible = detail == null,
+                enter = slideInVertically(
+                    animationSpec = tween(400, easing = EmphasizedDecelerateEasing),
+                    initialOffsetY = { it },
+                ) + fadeIn(tween(400, easing = EmphasizedDecelerateEasing)),
+                exit = slideOutVertically(
+                    animationSpec = tween(200, easing = EmphasizedAccelerateEasing),
+                    targetOffsetY = { it },
+                ) + fadeOut(tween(200, easing = EmphasizedAccelerateEasing)),
+                label = "primary navigation visibility",
+            ) {
                 OrbitNavigationBar(
                     selected = destination,
                     onSelected = ::openDestination,
@@ -219,93 +269,150 @@ private fun OrbitApp(
             }
         },
     ) { contentPadding ->
-        val modifier = Modifier
-            .fillMaxSize()
-            .padding(contentPadding)
-        when (detail) {
-            DetailRoute.SHOP -> ShopTaskScreen(
-                state = state,
-                modifier = modifier,
-                onBuyCovenantChanged = onBuyCovenantChanged,
-                onBuyMysticChanged = onBuyMysticChanged,
-                onMaxRefreshChanged = onMaxRefreshChanged,
-                onThresholdChanged = onThresholdChanged,
-                onPrepare = onPrepareShop,
-                onPauseOrResume = onPauseOrResumeShop,
-                onStop = onStopShop,
-            )
+        SharedTransitionLayout(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding),
+        ) {
+            val sharedTransitionScope: SharedTransitionScope = this
+            AnimatedContent(
+                targetState = route,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = { orbitContentTransform(initialState, targetState) },
+                contentKey = { it },
+                label = "page transition",
+            ) { animatedRoute ->
+                val animatedVisibilityScope: AnimatedVisibilityScope = this@AnimatedContent
+                val screenModifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                when (animatedRoute.detail) {
+                    DetailRoute.SHOP -> ShopTaskScreen(
+                        state = state,
+                        modifier = screenModifier,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
+                        onBuyCovenantChanged = onBuyCovenantChanged,
+                        onBuyMysticChanged = onBuyMysticChanged,
+                        onMaxRefreshChanged = onMaxRefreshChanged,
+                        onThresholdChanged = onThresholdChanged,
+                        onPrepare = onPrepareShop,
+                        onPauseOrResume = onPauseOrResumeShop,
+                        onStop = onStopShop,
+                    )
 
-            DetailRoute.HUNT -> HuntTaskScreen(
-                state = state,
-                modifier = modifier,
-                onDungeonChanged = onHuntDungeonChanged,
-                onDifficultyChanged = onHuntDifficultyChanged,
-                onManagedBattleChanged = onHuntManagedBattleChanged,
-                onRunCountChanged = onHuntRunCountChanged,
-                onEnergyRefillChanged = onHuntEnergyRefillChanged,
-                onPrepare = onPrepareHunt,
-                onPauseOrResume = onPauseOrResumeHunt,
-                onStop = onStopHunt,
-            )
+                    DetailRoute.HUNT -> HuntTaskScreen(
+                        state = state,
+                        modifier = screenModifier,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
+                        onDungeonChanged = onHuntDungeonChanged,
+                        onDifficultyChanged = onHuntDifficultyChanged,
+                        onManagedBattleChanged = onHuntManagedBattleChanged,
+                        onRunCountChanged = onHuntRunCountChanged,
+                        onEnergyRefillChanged = onHuntEnergyRefillChanged,
+                        onPrepare = onPrepareHunt,
+                        onPauseOrResume = onPauseOrResumeHunt,
+                        onStop = onStopHunt,
+                    )
 
-            DetailRoute.HERO -> HeroDetailScreen(
-                hero = state.data.heroes.firstOrNull { it.code == state.data.selectedHeroCode },
-                modifier = modifier,
-            )
+                    DetailRoute.HERO -> HeroDetailScreen(
+                        hero = state.data.heroes.firstOrNull {
+                            it.code == state.data.selectedHeroCode
+                        },
+                        modifier = screenModifier,
+                    )
 
-            DetailRoute.ARTIFACT -> ArtifactDetailScreen(
-                artifact = state.data.artifacts.firstOrNull {
-                    it.code == state.data.selectedArtifactCode
-                },
-                modifier = modifier,
-            )
+                    DetailRoute.ARTIFACT -> ArtifactDetailScreen(
+                        artifact = state.data.artifacts.firstOrNull {
+                            it.code == state.data.selectedArtifactCode
+                        },
+                        modifier = screenModifier,
+                    )
 
-            null -> when (destination) {
-                OrbitDestination.HOME -> HomeScreen(
-                    state = state,
-                    modifier = modifier,
-                    onOpenTasks = { openDestination(OrbitDestination.TASKS) },
-                    onOpenTask = ::openTask,
-                    onPauseOrResumeShop = onPauseOrResumeShop,
-                    onStopShop = onStopShop,
-                    onPauseOrResumeHunt = onPauseOrResumeHunt,
-                    onStopHunt = onStopHunt,
-                    onEnableAccessibility = onEnableAccessibility,
-                )
+                    null -> when (animatedRoute.destination) {
+                        OrbitDestination.HOME -> HomeScreen(
+                            state = state,
+                            modifier = screenModifier,
+                            onOpenTasks = { openDestination(OrbitDestination.TASKS) },
+                            onOpenTask = ::openTask,
+                            onPauseOrResumeShop = onPauseOrResumeShop,
+                            onStopShop = onStopShop,
+                            onPauseOrResumeHunt = onPauseOrResumeHunt,
+                            onStopHunt = onStopHunt,
+                            onEnableAccessibility = onEnableAccessibility,
+                        )
 
-                OrbitDestination.TASKS -> TaskListScreen(
-                    state = state,
-                    modifier = modifier,
-                    onOpenTask = ::openTask,
-                )
+                        OrbitDestination.TASKS -> TaskListScreen(
+                            state = state,
+                            modifier = screenModifier,
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            onOpenTask = ::openTask,
+                        )
 
-                OrbitDestination.DATA -> DataBrowserScreen(
-                    data = state.data,
-                    modifier = modifier,
-                    onSectionChanged = onDataSectionChanged,
-                    onQueryChanged = onDataQueryChanged,
-                    onSelectHero = { code ->
-                        onSelectHero(code)
-                        detailName = DetailRoute.HERO.name
-                    },
-                    onSelectArtifact = { code ->
-                        onSelectArtifact(code)
-                        detailName = DetailRoute.ARTIFACT.name
-                    },
-                    onLoad = { onLoadData(true) },
-                )
+                        OrbitDestination.DATA -> DataBrowserScreen(
+                            data = state.data,
+                            modifier = screenModifier,
+                            onSectionChanged = onDataSectionChanged,
+                            onQueryChanged = onDataQueryChanged,
+                            onSelectHero = { code ->
+                                onSelectHero(code)
+                                detailName = DetailRoute.HERO.name
+                            },
+                            onSelectArtifact = { code ->
+                                onSelectArtifact(code)
+                                detailName = DetailRoute.ARTIFACT.name
+                            },
+                            onLoad = { onLoadData(true) },
+                        )
 
-                OrbitDestination.SETTINGS -> SettingsScreen(
-                    state = state,
-                    modifier = modifier,
-                    onEnableAccessibility = onEnableAccessibility,
-                    onRefreshEnvironment = onRefreshEnvironment,
-                    onRefreshData = { onLoadData(true) },
-                )
+                        OrbitDestination.SETTINGS -> SettingsScreen(
+                            state = state,
+                            modifier = screenModifier,
+                            onEnableAccessibility = onEnableAccessibility,
+                            onRefreshEnvironment = onRefreshEnvironment,
+                            onRefreshData = { onLoadData(true) },
+                        )
+                    }
+                }
             }
         }
     }
 }
+
+private fun orbitContentTransform(
+    initial: OrbitRoute,
+    target: OrbitRoute,
+): ContentTransform {
+    val usesTaskContainerTransform =
+        initial.destination == OrbitDestination.TASKS &&
+            target.destination == OrbitDestination.TASKS &&
+            ((initial.detail == null && target.detail.isTaskDetail()) ||
+                (target.detail == null && initial.detail.isTaskDetail()))
+    if (usesTaskContainerTransform) {
+        return EnterTransition.None togetherWith ExitTransition.None
+    }
+
+    val movesForward = when {
+        initial.detail == null && target.detail != null -> true
+        initial.detail != null && target.detail == null -> false
+        else -> target.destination.ordinal >= initial.destination.ordinal
+    }
+    val direction = if (movesForward) 1 else -1
+    val enter = slideInHorizontally(
+        animationSpec = tween(350, easing = EmphasizedEasing),
+        initialOffsetX = { width -> direction * width },
+    )
+    val exit = slideOutHorizontally(
+        animationSpec = tween(350, easing = EmphasizedEasing),
+        targetOffsetX = { width -> -direction * width },
+    )
+    return enter togetherWith exit
+}
+
+private fun DetailRoute?.isTaskDetail(): Boolean =
+    this == DetailRoute.SHOP || this == DetailRoute.HUNT
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -314,18 +421,41 @@ private fun OrbitTopAppBar(
     showBack: Boolean,
     showRefresh: Boolean,
     refreshing: Boolean,
+    scrollBehavior: TopAppBarScrollBehavior,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     TopAppBar(
         title = {
-            Text(
-                text = if (title == OrbitDestination.HOME.label) "E7 Orbit" else title,
-                style = MaterialTheme.typography.titleLarge,
-            )
+            AnimatedContent(
+                targetState = if (title == OrbitDestination.HOME.label) "E7 Orbit" else title,
+                transitionSpec = {
+                    (fadeIn(tween(300, easing = EmphasizedEasing)) +
+                        slideInVertically(tween(300, easing = EmphasizedEasing)) { it / 2 })
+                        .togetherWith(
+                            fadeOut(tween(200, easing = EmphasizedAccelerateEasing)) +
+                                slideOutVertically(
+                                    tween(200, easing = EmphasizedAccelerateEasing),
+                                ) { -it / 2 },
+                        )
+                },
+                label = "app bar title",
+            ) { animatedTitle ->
+                Text(
+                    text = animatedTitle,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            }
         },
         navigationIcon = {
-            if (showBack) {
+            AnimatedVisibility(
+                visible = showBack,
+                enter = fadeIn(tween(300, easing = EmphasizedDecelerateEasing)) +
+                    scaleIn(tween(300, easing = EmphasizedDecelerateEasing)),
+                exit = fadeOut(tween(150, easing = EmphasizedAccelerateEasing)) +
+                    scaleOut(tween(150, easing = EmphasizedAccelerateEasing)),
+                label = "back action",
+            ) {
                 IconButton(onClick = onBack) {
                     Icon(
                         painter = painterResource(R.drawable.ic_arrow_back),
@@ -335,12 +465,35 @@ private fun OrbitTopAppBar(
             }
         },
         actions = {
-            if (showRefresh) {
+            AnimatedVisibility(
+                visible = showRefresh,
+                enter = fadeIn(tween(300, easing = EmphasizedDecelerateEasing)) +
+                    scaleIn(tween(300, easing = EmphasizedDecelerateEasing)),
+                exit = fadeOut(tween(150, easing = EmphasizedAccelerateEasing)) +
+                    scaleOut(tween(150, easing = EmphasizedAccelerateEasing)),
+                label = "refresh action",
+            ) {
                 IconButton(onClick = onRefresh, enabled = !refreshing) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_refresh),
-                        contentDescription = if (refreshing) "数据更新中" else "刷新数据",
-                    )
+                    AnimatedContent(
+                        targetState = refreshing,
+                        transitionSpec = {
+                            (fadeIn(tween(250)) + scaleIn(tween(250)))
+                                .togetherWith(fadeOut(tween(150)) + scaleOut(tween(150)))
+                        },
+                        label = "refresh progress",
+                    ) { isRefreshing ->
+                        if (isRefreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_refresh),
+                                contentDescription = "刷新数据",
+                            )
+                        }
+                    }
                 }
             }
         },
@@ -348,6 +501,7 @@ private fun OrbitTopAppBar(
             containerColor = MaterialTheme.colorScheme.background,
             scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
         ),
+        scrollBehavior = scrollBehavior,
     )
 }
 
@@ -356,11 +510,11 @@ private fun OrbitNavigationBar(
     selected: OrbitDestination,
     onSelected: (OrbitDestination) -> Unit,
 ) {
-    ShortNavigationBar(
+    NavigationBar(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         OrbitDestination.entries.forEach { destination ->
-            ShortNavigationBarItem(
+            NavigationBarItem(
                 selected = selected == destination,
                 onClick = { onSelected(destination) },
                 icon = {
@@ -370,7 +524,6 @@ private fun OrbitNavigationBar(
                     )
                 },
                 label = { Text(destination.label) },
-                iconPosition = NavigationItemIconPosition.Top,
             )
         }
     }
