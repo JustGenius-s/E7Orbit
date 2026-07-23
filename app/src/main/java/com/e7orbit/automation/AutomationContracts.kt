@@ -15,6 +15,7 @@ import com.e7orbit.model.VisualAction
 import kotlinx.coroutines.flow.StateFlow
 
 interface ScreenGateway {
+    suspend fun awaitTargetApp(timeoutMs: Long): Boolean = true
     suspend fun capture(): ScreenFrame
     suspend fun tap(point: ScreenPoint): GestureResult
     suspend fun swipe(
@@ -27,6 +28,9 @@ interface ScreenGateway {
 internal class SwitchingScreenGateway(
     private val currentGateway: () -> ScreenGateway?,
 ) : ScreenGateway {
+    override suspend fun awaitTargetApp(timeoutMs: Long): Boolean =
+        current().awaitTargetApp(timeoutMs)
+
     override suspend fun capture(): ScreenFrame = current().capture()
 
     override suspend fun tap(point: ScreenPoint): GestureResult = current().tap(point)

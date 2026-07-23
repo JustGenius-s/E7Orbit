@@ -298,6 +298,20 @@ class HuntRuntime internal constructor(
         session: AutomationSession,
         lease: RunLease,
     ) {
+        publishIfCurrent(lease) { current ->
+            current.copy(message = "正在等待游戏进入横屏")
+        }
+        if (!session.gateway.awaitTargetApp(GAME_LAUNCH_TIMEOUT_MS)) {
+            publishIfCurrent(lease) { current ->
+                current.copy(
+                    phase = HuntPhase.ERROR,
+                    message = "等待游戏启动超时，请确认国服客户端可以正常打开",
+                    stopReason = HuntStopReason.TIMEOUT,
+                )
+            }
+            return
+        }
+
         try {
             persistence.saveConfig(config)
         } catch (cancelled: CancellationException) {
@@ -395,6 +409,10 @@ class HuntRuntime internal constructor(
         addAll(vision.health().missingTemplateIds)
         homeNavigator?.health()?.missingTemplateIds?.let(::addAll)
     }.distinct()
+
+    private companion object {
+        const val GAME_LAUNCH_TIMEOUT_MS = 20_000L
+    }
 
     private fun stopWithReason(
         reason: HuntStopReason,

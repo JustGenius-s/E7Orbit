@@ -9,6 +9,7 @@ import android.view.accessibility.AccessibilityEvent
 import com.e7orbit.AppGraph
 import com.e7orbit.automation.ScreenGateway
 import com.e7orbit.model.GestureResult
+import com.e7orbit.model.E7_CN_PACKAGE
 import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import com.e7orbit.overlay.AutomationOverlay
@@ -21,6 +22,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,6 +36,7 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val captureMutex = Mutex()
     private val gestureMutex = Mutex()
+    private val targetAppForeground = MutableStateFlow(false)
     private var lastCaptureAt = 0L
     private var statusJob: Job? = null
     private var overlay: AutomationOverlay? = null
@@ -58,7 +62,11 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
         }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.packageName?.toString() == E7_CN_PACKAGE) {
+            targetAppForeground.value = true
+        }
+    }
 
     override fun onInterrupt() {
         AppGraph.logger.warn("service.interrupted")
@@ -73,8 +81,17 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
         overlay = null
         AppGraph.automationRuntime.detachGateway(this)
         AppGraph.huntRuntime.detachGateway(this)
+        targetAppForeground.value = false
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    override suspend fun awaitTargetApp(timeoutMs: Long): Boolean {
+        targetAppForeground.value = false
+        if (rootInActiveWindow?.packageName?.toString() == E7_CN_PACKAGE) return true
+        return withTimeoutOrNull(timeoutMs) {
+            targetAppForeground.first { it }
+        } != null
     }
 
     override suspend fun capture(): ScreenFrame = captureMutex.withLock {

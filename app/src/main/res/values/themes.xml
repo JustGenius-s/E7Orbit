@@ -3,10 +3,10 @@
     <style name="Theme.E7Orbit" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#FFFFFF</item>
-        <item name="android:colorAccent">#1B1B1B</item>
-        <item name="android:navigationBarColor">#FFFFFF</item>
-        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:windowBackground">#F8F9FF</item>
+        <item name="android:colorAccent">#315DA8</item>
+        <item name="android:navigationBarColor">#F8F9FF</item>
+        <item name="android:statusBarColor">#F8F9FF</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
