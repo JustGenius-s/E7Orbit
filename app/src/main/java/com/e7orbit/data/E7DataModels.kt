@@ -50,3 +50,46 @@ data class E7DataSnapshot(
     val artifacts: List<E7Artifact> = emptyList(),
     val fetchedAtEpochMs: Long = 0L,
 )
+
+data class RtaSeason(
+    val code: String,
+    val name: String,
+    val startDate: String,
+    val endDate: String,
+    val isCurrent: Boolean,
+)
+
+enum class RtaTier(
+    val code: String,
+    val label: String,
+) {
+    MASTER("master", "大师"),
+    CHALLENGER("challenger", "挑战者"),
+    CHAMPION("champion", "冠军"),
+    EMPEROR("emperor", "皇帝"),
+    LEGEND("legend", "传说"),
+}
+
+data class HeroRtaAnalysis(
+    val heroCode: String,
+    val seasonCode: String,
+    val tierCode: String,
+    val sampleSize: Int,
+    val equipmentSets: List<RtaEquipmentSet>,
+    val pickPositions: List<RtaPositionRate>,
+    val banPositions: List<RtaPositionRate>,
+    val winRate: Double?,
+    val winRateRank: Int?,
+)
+
+data class RtaEquipmentSet(
+    val rank: Int,
+    val setCodes: List<String>,
+    val usageRate: Double,
+    val winRate: Double,
+)
+
+data class RtaPositionRate(
+    val position: Int,
+    val rate: Double,
+)

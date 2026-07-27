@@ -14,6 +14,9 @@ import com.e7orbit.AppGraph
 import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7DataSnapshot
+import com.e7orbit.data.HeroRtaAnalysis
+import com.e7orbit.data.RtaSeason
+import com.e7orbit.data.RtaTier
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.E7_CN_PACKAGE
 import com.e7orbit.model.HuntConfig
@@ -34,6 +37,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 data class EnvironmentStatus(
     val accessibilityEnabled: Boolean = false,
@@ -81,7 +85,25 @@ data class DataUiState(
     val selectedArtifactCode: String? = null,
     val fetchedAtEpochMs: Long = 0L,
     val errorMessage: String? = null,
+    val rta: HeroRtaUiState = HeroRtaUiState(),
 )
+
+data class HeroRtaUiState(
+    val loadState: DataLoadState = DataLoadState.IDLE,
+    val seasons: List<RtaSeason> = emptyList(),
+    val selectedSeasonCode: String? = null,
+    val selectedTier: RtaTier = RtaTier.MASTER,
+    val heroCode: String? = null,
+    val analysis: HeroRtaAnalysis? = null,
+    val errorMessage: String? = null,
+)
+
+private fun List<RtaSeason>.defaultRtaSeasonCode(): String? {
+    val today = LocalDate.now().toString()
+    return firstOrNull(RtaSeason::isCurrent)?.code
+        ?: firstOrNull { it.endDate.take(10) <= today }?.code
+        ?: firstOrNull()?.code
+}
 
 internal class PersistedDraft<T>(initialValue: T) {
     private val mutableValue = MutableStateFlow(initialValue)
@@ -128,6 +150,7 @@ class MainViewModel(
     private val draftHuntConfig = PersistedDraft(HuntConfig())
     private val environment = MutableStateFlow(readEnvironment())
     private val data = MutableStateFlow(DataUiState())
+    private var rtaRequestId = 0L
     private val runtimeStatuses = combine(
         runtime.status,
         huntRuntime.status,
@@ -211,11 +234,122 @@ class MainViewModel(
     }
 
     fun selectHero(code: String) {
-        data.value = data.value.copy(selectedHeroCode = code)
+        val previousRta = data.value.rta
+        data.value = data.value.copy(
+            selectedHeroCode = code,
+            rta = previousRta.copy(
+                loadState = DataLoadState.LOADING,
+                heroCode = code,
+                analysis = null,
+                errorMessage = null,
+            ),
+        )
+        loadHeroRta(code)
     }
 
     fun selectArtifact(code: String) {
         data.value = data.value.copy(selectedArtifactCode = code)
+    }
+
+    fun setRtaSeason(code: String) {
+        val current = data.value.rta
+        val heroCode = current.heroCode ?: return
+        if (current.selectedSeasonCode == code && current.loadState == DataLoadState.READY) return
+        data.value = data.value.copy(
+            rta = current.copy(
+                selectedSeasonCode = code,
+                analysis = null,
+                errorMessage = null,
+            ),
+        )
+        loadHeroRta(heroCode)
+    }
+
+    fun setRtaTier(tier: RtaTier) {
+        val current = data.value.rta
+        val heroCode = current.heroCode ?: return
+        if (current.selectedTier == tier && current.loadState == DataLoadState.READY) return
+        data.value = data.value.copy(
+            rta = current.copy(
+                selectedTier = tier,
+                analysis = null,
+                errorMessage = null,
+            ),
+        )
+        loadHeroRta(heroCode)
+    }
+
+    fun retryHeroRta() {
+        val heroCode = data.value.rta.heroCode ?: return
+        loadHeroRta(heroCode, forceRefresh = true)
+    }
+
+    private fun loadHeroRta(heroCode: String, forceRefresh: Boolean = false) {
+        val requestId = ++rtaRequestId
+        val requestedState = data.value.rta
+        val requestedSeasonCode = requestedState.selectedSeasonCode
+        val requestedTier = requestedState.selectedTier
+        data.value = data.value.copy(
+            rta = requestedState.copy(
+                loadState = DataLoadState.LOADING,
+                heroCode = heroCode,
+                analysis = null,
+                errorMessage = null,
+            ),
+        )
+        viewModelScope.launch {
+            try {
+                val seasons = if (requestedState.seasons.isEmpty() || forceRefresh) {
+                    AppGraph.e7DataRepository.loadRtaSeasons(forceRefresh)
+                } else {
+                    requestedState.seasons
+                }
+                if (requestId != rtaRequestId || data.value.selectedHeroCode != heroCode) return@launch
+                val seasonCode = requestedSeasonCode
+                    ?.takeIf { selected -> seasons.any { it.code == selected } }
+                    ?: seasons.defaultRtaSeasonCode()
+                    ?: throw IllegalStateException("官方暂未提供 RTA 赛季")
+                data.value = data.value.copy(
+                    rta = data.value.rta.copy(
+                        seasons = seasons,
+                        selectedSeasonCode = seasonCode,
+                    ),
+                )
+                val analysis = AppGraph.e7DataRepository.loadHeroRta(
+                    heroCode = heroCode,
+                    seasonCode = seasonCode,
+                    tierCode = requestedTier.code,
+                    forceRefresh = forceRefresh,
+                )
+                val currentRta = data.value.rta
+                if (
+                    requestId != rtaRequestId ||
+                    data.value.selectedHeroCode != heroCode ||
+                    currentRta.selectedSeasonCode != seasonCode ||
+                    currentRta.selectedTier != requestedTier
+                ) {
+                    return@launch
+                }
+                data.value = data.value.copy(
+                    rta = currentRta.copy(
+                        loadState = DataLoadState.READY,
+                        analysis = analysis,
+                        errorMessage = null,
+                    ),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (requestId != rtaRequestId || data.value.selectedHeroCode != heroCode) return@launch
+                AppGraph.logger.error("data.rta_load_failed", error)
+                data.value = data.value.copy(
+                    rta = data.value.rta.copy(
+                        loadState = DataLoadState.ERROR,
+                        analysis = null,
+                        errorMessage = error.message ?: "官方 RTA 数据暂时不可用",
+                    ),
+                )
+            }
+        }
     }
 
     private fun applyDataSnapshot(snapshot: E7DataSnapshot) {

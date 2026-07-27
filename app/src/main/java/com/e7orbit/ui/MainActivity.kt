@@ -17,12 +17,8 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -119,6 +115,9 @@ class MainActivity : ComponentActivity() {
                     onDataQueryChanged = viewModel::setDataQuery,
                     onSelectHero = viewModel::selectHero,
                     onSelectArtifact = viewModel::selectArtifact,
+                    onRtaSeasonChanged = viewModel::setRtaSeason,
+                    onRtaTierChanged = viewModel::setRtaTier,
+                    onRetryHeroRta = viewModel::retryHeroRta,
                 )
             }
         }
@@ -176,10 +175,6 @@ private data class OrbitRoute(
         get() = detail?.title ?: destination.label
 }
 
-private val EmphasizedEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-private val EmphasizedDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
-private val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun OrbitApp(
@@ -206,6 +201,9 @@ private fun OrbitApp(
     onDataQueryChanged: (String) -> Unit,
     onSelectHero: (String) -> Unit,
     onSelectArtifact: (String) -> Unit,
+    onRtaSeasonChanged: (String) -> Unit,
+    onRtaTierChanged: (com.e7orbit.data.RtaTier) -> Unit,
+    onRetryHeroRta: () -> Unit,
 ) {
     var destinationName by rememberSaveable { mutableStateOf(OrbitDestination.HOME.name) }
     var detailName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -253,13 +251,19 @@ private fun OrbitApp(
             AnimatedVisibility(
                 visible = detail == null,
                 enter = slideInVertically(
-                    animationSpec = tween(400, easing = EmphasizedDecelerateEasing),
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
                     initialOffsetY = { it },
-                ) + fadeIn(tween(400, easing = EmphasizedDecelerateEasing)),
+                ),
                 exit = slideOutVertically(
-                    animationSpec = tween(200, easing = EmphasizedAccelerateEasing),
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMedium,
+                    ),
                     targetOffsetY = { it },
-                ) + fadeOut(tween(200, easing = EmphasizedAccelerateEasing)),
+                ),
                 label = "primary navigation visibility",
             ) {
                 OrbitNavigationBar(
@@ -320,7 +324,11 @@ private fun OrbitApp(
                         hero = state.data.heroes.firstOrNull {
                             it.code == state.data.selectedHeroCode
                         },
+                        rta = state.data.rta,
                         modifier = screenModifier,
+                        onSeasonChanged = onRtaSeasonChanged,
+                        onTierChanged = onRtaTierChanged,
+                        onRetryRta = onRetryHeroRta,
                     )
 
                     DetailRoute.ARTIFACT -> ArtifactDetailScreen(
@@ -391,7 +399,9 @@ private fun orbitContentTransform(
             ((initial.detail == null && target.detail.isTaskDetail()) ||
                 (target.detail == null && initial.detail.isTaskDetail()))
     if (usesTaskContainerTransform) {
-        return EnterTransition.None togetherWith ExitTransition.None
+        return (EnterTransition.None togetherWith ExitTransition.None).apply {
+            targetContentZIndex = 1f
+        }
     }
 
     val movesForward = when {
@@ -401,14 +411,20 @@ private fun orbitContentTransform(
     }
     val direction = if (movesForward) 1 else -1
     val enter = slideInHorizontally(
-        animationSpec = tween(350, easing = EmphasizedEasing),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
         initialOffsetX = { width -> direction * width },
     )
     val exit = slideOutHorizontally(
-        animationSpec = tween(350, easing = EmphasizedEasing),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
         targetOffsetX = { width -> -direction * width },
     )
-    return enter togetherWith exit
+    return (enter togetherWith exit).apply { targetContentZIndex = 1f }
 }
 
 private fun DetailRoute?.isTaskDetail(): Boolean =
@@ -427,35 +443,13 @@ private fun OrbitTopAppBar(
 ) {
     TopAppBar(
         title = {
-            AnimatedContent(
-                targetState = if (title == OrbitDestination.HOME.label) "E7 Orbit" else title,
-                transitionSpec = {
-                    (fadeIn(tween(300, easing = EmphasizedEasing)) +
-                        slideInVertically(tween(300, easing = EmphasizedEasing)) { it / 2 })
-                        .togetherWith(
-                            fadeOut(tween(200, easing = EmphasizedAccelerateEasing)) +
-                                slideOutVertically(
-                                    tween(200, easing = EmphasizedAccelerateEasing),
-                                ) { -it / 2 },
-                        )
-                },
-                label = "app bar title",
-            ) { animatedTitle ->
-                Text(
-                    text = animatedTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-            }
+            Text(
+                text = if (title == OrbitDestination.HOME.label) "E7 Orbit" else title,
+                style = MaterialTheme.typography.titleLarge,
+            )
         },
         navigationIcon = {
-            AnimatedVisibility(
-                visible = showBack,
-                enter = fadeIn(tween(300, easing = EmphasizedDecelerateEasing)) +
-                    scaleIn(tween(300, easing = EmphasizedDecelerateEasing)),
-                exit = fadeOut(tween(150, easing = EmphasizedAccelerateEasing)) +
-                    scaleOut(tween(150, easing = EmphasizedAccelerateEasing)),
-                label = "back action",
-            ) {
+            if (showBack) {
                 IconButton(onClick = onBack) {
                     Icon(
                         painter = painterResource(R.drawable.ic_arrow_back),
@@ -465,34 +459,18 @@ private fun OrbitTopAppBar(
             }
         },
         actions = {
-            AnimatedVisibility(
-                visible = showRefresh,
-                enter = fadeIn(tween(300, easing = EmphasizedDecelerateEasing)) +
-                    scaleIn(tween(300, easing = EmphasizedDecelerateEasing)),
-                exit = fadeOut(tween(150, easing = EmphasizedAccelerateEasing)) +
-                    scaleOut(tween(150, easing = EmphasizedAccelerateEasing)),
-                label = "refresh action",
-            ) {
+            if (showRefresh) {
                 IconButton(onClick = onRefresh, enabled = !refreshing) {
-                    AnimatedContent(
-                        targetState = refreshing,
-                        transitionSpec = {
-                            (fadeIn(tween(250)) + scaleIn(tween(250)))
-                                .togetherWith(fadeOut(tween(150)) + scaleOut(tween(150)))
-                        },
-                        label = "refresh progress",
-                    ) { isRefreshing ->
-                        if (isRefreshing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                            )
-                        } else {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_refresh),
-                                contentDescription = "刷新数据",
-                            )
-                        }
+                    if (refreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_refresh),
+                            contentDescription = "刷新数据",
+                        )
                     }
                 }
             }

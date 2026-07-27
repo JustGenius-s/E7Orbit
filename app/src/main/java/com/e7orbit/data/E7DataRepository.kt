@@ -3,6 +3,8 @@ package com.e7orbit.data
 import android.content.Context
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -18,6 +20,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 private const val CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1_000L
+private const val RTA_ANALYSIS_CACHE_MAX_AGE_MS = 6L * 60L * 60L * 1_000L
 
 private const val OFFICIAL_HERO_URL =
     "https://static-pubcomm.onstove.com/gameRecord/epic7/epic7_hero.json"
@@ -25,10 +28,15 @@ private const val FRIBBELS_HERO_URL =
     "https://e7-optimizer-game-data.s3-accelerate.amazonaws.com/herodata.json"
 private const val FRIBBELS_ARTIFACT_URL =
     "https://e7-optimizer-game-data.s3-accelerate.amazonaws.com/artifactdata.json"
+private const val RTA_SEASONS_URL =
+    "https://e7api.onstove.com/gameApi/getSeasonList?lang=en"
+private const val RTA_ANALYSIS_URL =
+    "https://e7api.onstove.com/gameApi/getHeroAnalysis"
 
 private const val OFFICIAL_CACHE = "official-heroes.json"
 private const val FRIBBELS_HERO_CACHE = "fribbels-heroes.json"
 private const val FRIBBELS_ARTIFACT_CACHE = "fribbels-artifacts.json"
+private const val RTA_SEASONS_CACHE = "rta-seasons.json"
 
 class E7DataRepository(
     context: Context,
@@ -66,6 +74,41 @@ class E7DataRepository(
         )
     }
 
+    suspend fun loadRtaSeasons(forceRefresh: Boolean = false): List<RtaSeason> =
+        withContext(Dispatchers.IO) {
+            cacheDir.mkdirs()
+            parseRtaSeasons(
+                readPostSource(
+                    url = RTA_SEASONS_URL,
+                    fileName = RTA_SEASONS_CACHE,
+                    maxAgeMs = CACHE_MAX_AGE_MS,
+                    forceRefresh = forceRefresh,
+                ),
+            )
+        }
+
+    suspend fun loadHeroRta(
+        heroCode: String,
+        seasonCode: String,
+        tierCode: String,
+        forceRefresh: Boolean = false,
+    ): HeroRtaAnalysis = withContext(Dispatchers.IO) {
+        cacheDir.mkdirs()
+        val encodedHero = heroCode.urlEncoded()
+        val encodedSeason = seasonCode.urlEncoded()
+        val encodedTier = tierCode.urlEncoded()
+        val url = "$RTA_ANALYSIS_URL?hero_code=$encodedHero" +
+            "&season_code=$encodedSeason&grade_code=$encodedTier&lang=en"
+        parseHeroRtaAnalysis(
+            readPostSource(
+                url = url,
+                fileName = "rta-$encodedHero-$encodedSeason-$encodedTier.json",
+                maxAgeMs = RTA_ANALYSIS_CACHE_MAX_AGE_MS,
+                forceRefresh = forceRefresh,
+            ),
+        )
+    }
+
     private fun readSource(
         url: String,
         fileName: String,
@@ -91,6 +134,33 @@ class E7DataRepository(
         }
     }
 
+    private fun readPostSource(
+        url: String,
+        fileName: String,
+        maxAgeMs: Long,
+        forceRefresh: Boolean,
+    ): String {
+        val cacheFile = cacheDir.resolve(fileName)
+        val cacheIsFresh = cacheFile.exists() &&
+            System.currentTimeMillis() - cacheFile.lastModified() < maxAgeMs
+        if (!forceRefresh && cacheIsFresh) {
+            return cacheFile.readText()
+        }
+
+        return try {
+            val fresh = fetchPost(url)
+            validateRtaPayload(fresh)
+            cacheFile.writeText(fresh)
+            fresh
+        } catch (error: Exception) {
+            if (cacheFile.exists()) {
+                cacheFile.readText()
+            } else {
+                throw error
+            }
+        }
+    }
+
     private fun fetch(url: String): String {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -100,6 +170,32 @@ class E7DataRepository(
             setRequestProperty("User-Agent", "E7Orbit/0.1")
         }
         return try {
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                throw IllegalStateException("HTTP $status from $url")
+            }
+            connection.inputStream.bufferedReader().use { reader -> reader.readText() }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun fetchPost(url: String): String {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 20_000
+            doOutput = true
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Content-Type", "application/json;charset=UTF-8")
+            setRequestProperty("Caller-Id", "WEB_STOVE_EPIC7")
+            setRequestProperty("Caller-Detail", "")
+            setRequestProperty("User-Agent", "E7Orbit/0.1")
+        }
+        return try {
+            connection.outputStream.bufferedWriter(StandardCharsets.UTF_8).use { writer ->
+                writer.write("{}")
+            }
             val status = connection.responseCode
             if (status !in 200..299) {
                 throw IllegalStateException("HTTP $status from $url")
@@ -176,6 +272,80 @@ class E7DataRepository(
 
     private fun JsonObject.intValue(vararg keys: String): Int? = keys.firstNotNullOfOrNull { key ->
         this[key]?.jsonPrimitive?.intOrNull
+    }
+}
+
+internal fun parseRtaSeasons(payload: String): List<RtaSeason> {
+    val response = RTA_JSON.decodeFromString<RtaResponse<RtaSeasonValueDto>>(payload)
+    response.requireSuccess()
+    return response.value?.resultBody.orEmpty()
+        .filter { it.code.isNotBlank() }
+        .map { season ->
+            RtaSeason(
+                code = season.code,
+                name = season.name.ifBlank { season.code },
+                startDate = season.startDate,
+                endDate = season.endDate,
+                isCurrent = season.isCurrent == 1,
+            )
+        }
+        .sortedByDescending(RtaSeason::startDate)
+}
+
+internal fun parseHeroRtaAnalysis(payload: String): HeroRtaAnalysis {
+    val response = RTA_JSON.decodeFromString<RtaResponse<RtaAnalysisValueDto>>(payload)
+    response.requireSuccess()
+    val analysis = response.value?.resultBody
+        ?: throw IllegalStateException("官方 RTA 数据为空")
+    val currentWinRate = analysis.winRates.firstOrNull {
+        it.seasonCode == analysis.seasonCode
+    } ?: analysis.winRates.firstOrNull()
+    return HeroRtaAnalysis(
+        heroCode = analysis.heroCode,
+        seasonCode = analysis.seasonCode,
+        tierCode = analysis.tierCode,
+        sampleSize = analysis.sampleSize,
+        equipmentSets = analysis.equipmentSets.map { equipment ->
+            RtaEquipmentSet(
+                rank = equipment.rank,
+                setCodes = equipment.setCodes,
+                usageRate = equipment.usageRate,
+                winRate = equipment.winRate,
+            )
+        },
+        pickPositions = analysis.pickPositions.map { rate ->
+            RtaPositionRate(position = rate.position, rate = rate.rate)
+        },
+        banPositions = analysis.banPositions.map { rate ->
+            RtaPositionRate(position = rate.position, rate = rate.rate)
+        },
+        winRate = currentWinRate?.winRate,
+        winRateRank = currentWinRate?.rank?.takeIf { it > 0 },
+    )
+}
+
+private val RTA_JSON = Json {
+    ignoreUnknownKeys = true
+    isLenient = true
+    explicitNulls = false
+}
+
+private fun String.urlEncoded(): String =
+    URLEncoder.encode(this, StandardCharsets.UTF_8.toString())
+
+private fun RtaResponse<*>.requireSuccess() {
+    if (code != 0) {
+        throw IllegalStateException(message.ifBlank { "官方 RTA 接口返回错误 $code" })
+    }
+}
+
+private fun validateRtaPayload(payload: String) {
+    val root = RTA_JSON.parseToJsonElement(payload).jsonObject
+    val code = root["code"]?.jsonPrimitive?.intOrNull
+        ?: throw IllegalStateException("官方 RTA 接口响应无效")
+    if (code != 0) {
+        val message = root["message"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        throw IllegalStateException(message.ifBlank { "官方 RTA 接口返回错误 $code" })
     }
 }
 
@@ -256,3 +426,62 @@ private data class FribbelsStatusDto(
     val effectiveness: Double? get() = eff
     val effectResistance: Double? get() = efr
 }
+
+@Serializable
+private data class RtaResponse<T>(
+    val code: Int = -1,
+    val message: String = "",
+    val value: T? = null,
+)
+
+@Serializable
+private data class RtaSeasonValueDto(
+    @SerialName("result_body") val resultBody: List<RtaSeasonDto> = emptyList(),
+)
+
+@Serializable
+private data class RtaSeasonDto(
+    @SerialName("season_code") val code: String = "",
+    val name: String = "",
+    val startDate: String = "",
+    val endDate: String = "",
+    @SerialName("is_now_season") val isCurrent: Int = 0,
+)
+
+@Serializable
+private data class RtaAnalysisValueDto(
+    @SerialName("result_body") val resultBody: RtaAnalysisDto? = null,
+)
+
+@Serializable
+private data class RtaAnalysisDto(
+    val heroCode: String = "",
+    val seasonCode: String = "",
+    @SerialName("seasonTierCode") val tierCode: String = "",
+    @SerialName("current_seasontier_tot") val sampleSize: Int = 0,
+    @SerialName("equip") val equipmentSets: List<RtaEquipmentSetDto> = emptyList(),
+    @SerialName("pick") val pickPositions: List<RtaPositionRateDto> = emptyList(),
+    @SerialName("ban") val banPositions: List<RtaPositionRateDto> = emptyList(),
+    @SerialName("win_rate") val winRates: List<RtaWinRateDto> = emptyList(),
+)
+
+@Serializable
+private data class RtaEquipmentSetDto(
+    val rank: Int = 0,
+    @SerialName("equip_list") val setCodes: List<String> = emptyList(),
+    @SerialName("rate") val usageRate: Double = 0.0,
+    @SerialName("win_rate") val winRate: Double = 0.0,
+)
+
+@Serializable
+private data class RtaPositionRateDto(
+    @SerialName("num") val position: Int = 0,
+    val rate: Double = 0.0,
+)
+
+@Serializable
+private data class RtaWinRateDto(
+    @SerialName("season_code") val seasonCode: String = "",
+    @SerialName("win_rate") val winRate: Double = 0.0,
+    val rank: Int = 0,
+)

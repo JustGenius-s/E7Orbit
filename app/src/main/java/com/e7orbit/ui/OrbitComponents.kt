@@ -1,18 +1,6 @@
 package com.e7orbit.ui
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.Spring
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,8 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
+import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -32,21 +23,17 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.e7orbit.R
-import com.e7orbit.ui.theme.OrbitSuccess
-import com.e7orbit.ui.theme.OrbitWarning
 
 @Composable
 internal fun SectionTitle(
@@ -78,107 +65,14 @@ internal fun SectionSurface(
     contentPadding: PaddingValues = PaddingValues(16.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val animatedColor by animateColorAsState(
-        targetValue = color,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "section surface color",
-    )
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
+    Card(
+        modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
-        color = animatedColor,
+        colors = CardDefaults.cardColors(containerColor = color),
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
             content = content,
-        )
-    }
-}
-
-@Composable
-internal fun StatusPill(
-    label: String,
-    positive: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val container = if (positive) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.tertiaryContainer
-    }
-    val content = if (positive) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onTertiaryContainer
-    }
-    val animatedContainer by animateColorAsState(
-        targetValue = container,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "status container color",
-    )
-    val animatedContent by animateColorAsState(
-        targetValue = content,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "status content color",
-    )
-    Surface(
-        modifier = modifier.animateContentSize(
-            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        ),
-        color = animatedContainer,
-        contentColor = animatedContent,
-        shape = CircleShape,
-    ) {
-        AnimatedContent(
-            targetState = label,
-            transitionSpec = {
-                fadeIn() togetherWith fadeOut()
-            },
-            label = "status label",
-        ) { animatedLabel ->
-            Text(
-                text = animatedLabel,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-    }
-}
-
-@Composable
-internal fun ReadinessRow(
-    title: String,
-    ready: Boolean,
-    detail: String = if (ready) "已就绪" else "需要处理",
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(10.dp)
-                .background(
-                    color = if (ready) OrbitSuccess else OrbitWarning,
-                    shape = CircleShape,
-                ),
-        )
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = title,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Text(
-            text = detail,
-            color = if (ready) OrbitSuccess else OrbitWarning,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
         )
     }
 }
@@ -219,6 +113,12 @@ internal fun ToggleSettingRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -238,7 +138,7 @@ internal fun ToggleSettingRow(
         Spacer(Modifier.width(12.dp))
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             enabled = enabled,
         )
     }
@@ -250,40 +150,106 @@ internal fun TaskGroupItem(
     subtitle: String,
     status: String,
     statusPositive: Boolean,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
     leading: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    showChevron: Boolean = true,
 ) {
-    ListItem(
-        headlineContent = {
-            Text(title, fontWeight = FontWeight.SemiBold)
-        },
-        supportingContent = { Text(subtitle) },
-        leadingContent = leading,
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = status,
-                    color = if (statusPositive) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.width(4.dp))
-                Icon(
-                    painter = painterResource(R.drawable.ic_chevron_right),
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        },
-        colors = ListItemDefaults.colors(
+    val content: @Composable () -> Unit = {
+        ListItem(
+            headlineContent = {
+                Text(title, fontWeight = FontWeight.SemiBold)
+            },
+            supportingContent = { Text(subtitle) },
+            leadingContent = leading,
+            trailingContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = status,
+                        color = if (statusPositive) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (showChevron) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            painter = painterResource(R.drawable.ic_chevron_right),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+            },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
+    }
+    val colors = CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    )
+    if (onClick == null) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            colors = colors,
+        ) { content() }
+    } else {
+        Card(
+            onClick = onClick,
+            modifier = modifier.fillMaxWidth(),
+            colors = colors,
+        ) { content() }
+    }
+}
+
+@Composable
+internal fun TaskDetailCard(
+    title: String,
+    subtitle: String,
+    status: String,
+    statusPositive: Boolean,
+    leading: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
-        modifier = Modifier.clickable(onClick = onClick),
-    )
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            leading()
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = subtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Text(
+                text = status,
+                color = if (statusPositive) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
 }
 
 @Composable
@@ -305,55 +271,38 @@ internal fun TaskActionBar(
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 3.dp,
+    BottomAppBar(
+        modifier = modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        AnimatedContent(
-            targetState = active,
-            transitionSpec = {
-                (fadeIn() + slideInVertically { it / 4 }) togetherWith
-                    (fadeOut() + slideOutVertically { -it / 4 })
-            },
-            label = "task action state",
-        ) { isActive ->
-            if (isActive) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    FilledTonalButton(
-                        onClick = onPauseOrResume,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp),
-                    ) {
-                        Text(if (paused) "继续" else "暂停", fontWeight = FontWeight.Bold)
-                    }
-                    OutlinedButton(
-                        onClick = onStop,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp),
-                    ) {
-                        Text("停止")
-                    }
-                }
-            } else {
-                Button(
-                    onClick = onPrepare,
-                    enabled = canStart,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp)
-                        .height(56.dp),
-                    shape = CircleShape,
-                ) {
-                    Text(startLabel, fontWeight = FontWeight.Bold)
-                }
+        if (active) {
+            FilledTonalButton(
+                onClick = onPauseOrResume,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(56.dp),
+            ) {
+                Text(if (paused) "继续" else "暂停", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(
+                onClick = onStop,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(56.dp),
+            ) {
+                Text("停止")
+            }
+        } else {
+            Button(
+                onClick = onPrepare,
+                enabled = canStart,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+            ) {
+                Text(startLabel, fontWeight = FontWeight.Bold)
             }
         }
     }
