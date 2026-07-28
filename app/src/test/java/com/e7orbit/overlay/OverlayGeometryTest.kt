@@ -1,6 +1,8 @@
 package com.e7orbit.overlay
 
+import android.view.WindowManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OverlayGeometryTest {
@@ -10,6 +12,14 @@ class OverlayGeometryTest {
         right = 1_896,
         bottom = 1_060,
     )
+
+    @Test
+    fun overlayWindow_isExcludedFromScreenCapture() {
+        assertTrue(
+            AUTOMATION_OVERLAY_WINDOW_FLAGS and
+                WindowManager.LayoutParams.FLAG_SECURE != 0,
+        )
+    }
 
     @Test
     fun nearestDockSide_usesWindowCenter() {
@@ -25,8 +35,8 @@ class OverlayGeometryTest {
 
     @Test
     fun dockedX_placesWindowFlushWithAvailableEdge() {
-        assertEquals(24, dockedX(OverlayDockSide.START, windowWidth = 48, area = area))
-        assertEquals(1_848, dockedX(OverlayDockSide.END, windowWidth = 48, area = area))
+        assertEquals(24, dockedX(OverlayDockSide.START, windowWidth = 28, area = area))
+        assertEquals(1_868, dockedX(OverlayDockSide.END, windowWidth = 28, area = area))
     }
 
     @Test
