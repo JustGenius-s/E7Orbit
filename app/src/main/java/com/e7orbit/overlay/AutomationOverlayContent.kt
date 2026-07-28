@@ -2,7 +2,6 @@ package com.e7orbit.overlay
 
 import android.graphics.BitmapFactory
 import androidx.annotation.DrawableRes
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -18,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,6 +39,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -80,10 +82,12 @@ internal fun AutomationOverlayContent(
         animationSpec = tween(OverlayUiTokens.PROGRESS_DURATION_MS.toInt()),
         label = "overlay progress",
     )
-    val visualPresentation = when {
-        morph < 0.5f -> OverlayPresentation.EDGE
-        morph < 1.5f -> OverlayPresentation.COMPACT
-        else -> OverlayPresentation.EXPANDED
+    val compactAlpha = (2f - morph).coerceIn(0f, 1f)
+    val expandedAlpha = (morph - 1f).coerceIn(0f, 1f)
+    val edgeAlignment = if (dockSide == OverlayDockSide.START) {
+        Alignment.CenterStart
+    } else {
+        Alignment.CenterEnd
     }
     val dragModifier = Modifier.overlayDrag(
         onDragStart = onDragStart,
@@ -92,70 +96,113 @@ internal fun AutomationOverlayContent(
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Crossfade(
-            targetState = visualPresentation,
-            animationSpec = tween(120),
-            label = "overlay form",
-        ) { form ->
-            when (form) {
-                OverlayPresentation.EDGE -> EdgeHandle(
-                    state = state,
-                    phaseColor = phaseColor,
-                    dockSide = dockSide,
-                    onClick = onPrimaryClick,
-                    modifier = dragModifier,
-                )
+        if (morph <= OverlayPresentation.COMPACT.morph) {
+            MorphingEdgeBubble(
+                state = state,
+                progress = progress,
+                phaseColor = phaseColor,
+                dockSide = dockSide,
+                morph = morph.coerceIn(0f, 1f),
+                onClick = onPrimaryClick,
+                modifier = dragModifier,
+            )
+        } else if (compactAlpha > 0f) {
+            StatusBubble(
+                state = state,
+                progress = progress,
+                phaseColor = phaseColor,
+                expanded = false,
+                onClick = onPrimaryClick,
+                modifier = dragModifier
+                    .then(Modifier.align(edgeAlignment))
+                    .graphicsLayer { alpha = compactAlpha },
+            )
+        }
 
-                OverlayPresentation.COMPACT -> StatusBubble(
-                    state = state,
-                    progress = progress,
-                    phaseColor = phaseColor,
-                    expanded = false,
-                    onClick = onPrimaryClick,
-                    modifier = dragModifier.then(
-                        Modifier.align(
-                            if (dockSide == OverlayDockSide.START) {
-                                Alignment.CenterStart
-                            } else {
-                                Alignment.CenterEnd
-                            },
-                        ),
-                    ),
-                )
-
-                OverlayPresentation.EXPANDED -> ExpandedControls(
-                    state = state,
-                    progress = progress,
-                    phaseColor = phaseColor,
-                    dockSide = dockSide,
-                    stopConfirmationPending = stopConfirmationPending,
-                    onBubbleClick = onPrimaryClick,
-                    onReturnToApp = onReturnToApp,
-                    onPauseResume = onPauseResume,
-                    onStop = onStop,
-                    modifier = dragModifier,
-                )
-            }
+        if (expandedAlpha > 0f) {
+            ExpandedControls(
+                state = state,
+                progress = progress,
+                phaseColor = phaseColor,
+                dockSide = dockSide,
+                stopConfirmationPending = stopConfirmationPending,
+                onBubbleClick = onPrimaryClick,
+                onReturnToApp = onReturnToApp,
+                onPauseResume = onPauseResume,
+                onStop = onStop,
+                modifier = dragModifier.graphicsLayer { alpha = expandedAlpha },
+            )
         }
     }
 }
 
 @Composable
-private fun EdgeHandle(
+internal fun AutomationOverlayEdgeTouchTarget(
+    onClick: () -> Unit,
+    onDragStart: () -> Unit,
+    onDrag: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .overlayDrag(
+                onDragStart = onDragStart,
+                onDrag = onDrag,
+                onDragEnd = onDragEnd,
+            )
+            .clickable(
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .semantics {
+                contentDescription = "打开自动化控制"
+            },
+    )
+}
+
+@Composable
+private fun MorphingEdgeBubble(
     state: AutomationOverlayUiState,
+    progress: Float,
     phaseColor: Color,
     dockSide: OverlayDockSide,
+    morph: Float,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = if (dockSide == OverlayDockSide.START) {
-        RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp)
+    val alignment = if (dockSide == OverlayDockSide.START) {
+        Alignment.CenterStart
     } else {
-        RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp)
+        Alignment.CenterEnd
+    }
+    val edgeRadius = 6f
+    val bubbleRadius =
+        (OverlayUiTokens.COMPACT_SIZE_DP / 2f) - OverlayUiTokens.COMPACT_SURFACE_INSET_DP
+    val outerRadius = (bubbleRadius * morph).dp
+    val innerRadius = (edgeRadius + (bubbleRadius - edgeRadius) * morph).dp
+    val shape = if (dockSide == OverlayDockSide.START) {
+        RoundedCornerShape(
+            topStart = outerRadius,
+            bottomStart = outerRadius,
+            topEnd = innerRadius,
+            bottomEnd = innerRadius,
+        )
+    } else {
+        RoundedCornerShape(
+            topStart = innerRadius,
+            bottomStart = innerRadius,
+            topEnd = outerRadius,
+            bottomEnd = outerRadius,
+        )
     }
     val description = state.accessibilityDescription(
-        presentation = OverlayPresentation.EDGE,
-        dockSide = dockSide,
+        presentation = if (morph < 0.5f) {
+            OverlayPresentation.EDGE
+        } else {
+            OverlayPresentation.COMPACT
+        },
+        dockSide = dockSide.takeIf { morph < 0.5f },
     )
     val railColor = if (state.isActiveError) {
         MaterialTheme.colorScheme.error
@@ -167,54 +214,91 @@ private fun EdgeHandle(
     } else {
         MaterialTheme.colorScheme.outlineVariant
     }
+    val surfaceSize = OverlayUiTokens.COMPACT_SIZE_DP -
+        (OverlayUiTokens.COMPACT_SURFACE_INSET_DP * 2)
+    val width = (
+        OverlayUiTokens.EDGE_RAIL_WIDTH_DP +
+            (surfaceSize - OverlayUiTokens.EDGE_RAIL_WIDTH_DP) * morph
+        ).dp
+    val height = (
+        OverlayUiTokens.EDGE_RAIL_HEIGHT_DP +
+            (surfaceSize - OverlayUiTokens.EDGE_RAIL_HEIGHT_DP) * morph
+        ).dp
+    val edgeInset = (OverlayUiTokens.COMPACT_SURFACE_INSET_DP * morph).dp
+    val offsetX = if (dockSide == OverlayDockSide.START) edgeInset else -edgeInset
     Box(
-        modifier = modifier
-            .fillMaxSize()
-            .clickable(
-                role = Role.Button,
-                onClick = onClick,
-            )
-            .semantics {
-                contentDescription = description
-                stateDescription = state.phaseLabel
-            },
+        modifier = modifier.fillMaxSize(),
     ) {
         Surface(
+            onClick = onClick,
             modifier = Modifier
-                .align(
-                    if (dockSide == OverlayDockSide.START) {
-                        Alignment.CenterStart
-                    } else {
-                        Alignment.CenterEnd
-                    },
-                )
-                .width(OverlayUiTokens.EDGE_RAIL_WIDTH_DP.dp)
-                .height(OverlayUiTokens.EDGE_RAIL_HEIGHT_DP.dp),
+                .align(alignment)
+                .offset(x = offsetX)
+                .width(width)
+                .height(height)
+                .semantics {
+                    contentDescription = description
+                    stateDescription = state.phaseLabel
+                },
             shape = shape,
-            color = railColor,
-            border = BorderStroke(1.dp, railBorderColor),
-            shadowElevation = 2.dp,
+            color = lerp(railColor, MaterialTheme.colorScheme.surface, morph),
+            border = BorderStroke(
+                1.dp,
+                lerp(railBorderColor, MaterialTheme.colorScheme.outlineVariant, morph),
+            ),
+            shadowElevation = (2f + 4f * morph).dp,
         ) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
-                if (state.isActiveError) {
-                    Text(
-                        text = "!",
-                        modifier = Modifier.clearAndSetSemantics { },
-                        color = MaterialTheme.colorScheme.onError,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Black,
-                    )
-                } else {
+                if (morph < 1f) {
+                    Box(modifier = Modifier.graphicsLayer { alpha = 1f - morph }) {
+                        if (state.isActiveError) {
+                            Text(
+                                text = "!",
+                                modifier = Modifier.clearAndSetSemantics { },
+                                color = MaterialTheme.colorScheme.onError,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Black,
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .height(20.dp)
+                                    .background(phaseColor, CircleShape)
+                                    .clearAndSetSemantics { },
+                            )
+                        }
+                    }
+                }
+                if (morph > 0f) {
                     Box(
-                        modifier = Modifier
-                            .width(3.dp)
-                            .height(20.dp)
-                            .background(phaseColor, CircleShape)
-                            .clearAndSetSemantics { },
-                    )
+                        modifier = Modifier.graphicsLayer { alpha = morph },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier
+                                .size((60f * morph).coerceAtLeast(1f).dp)
+                                .clearAndSetSemantics { },
+                            color = phaseColor,
+                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            strokeWidth = 4.dp,
+                        )
+                        Text(
+                            text = state.phaseLabel,
+                            modifier = Modifier.clearAndSetSemantics { },
+                            style = if (state.phaseLabel.length <= 2) {
+                                MaterialTheme.typography.titleSmall
+                            } else {
+                                MaterialTheme.typography.labelMedium
+                            },
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
         }
@@ -245,7 +329,7 @@ private fun StatusBubble(
         Surface(
             onClick = onClick,
             modifier = Modifier
-                .padding(2.dp)
+                .padding(OverlayUiTokens.COMPACT_SURFACE_INSET_DP.dp)
                 .fillMaxSize()
                 .semantics {
                     contentDescription = description
@@ -298,7 +382,7 @@ private fun ExpandedControls(
     Surface(
         modifier = Modifier
             .fillMaxSize()
-            .padding(2.dp),
+            .padding(OverlayUiTokens.COMPACT_SURFACE_INSET_DP.dp),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -690,11 +774,11 @@ internal object OverlayUiTokens {
     const val EDGE_RAIL_WIDTH_DP = 12
     const val EDGE_RAIL_HEIGHT_DP = 44
     const val COMPACT_SIZE_DP = 72
+    const val COMPACT_SURFACE_INSET_DP = 2
     const val HEIGHT_DP = 72
     const val EXPANDED_WIDTH_DP = 480
     const val SCREEN_MARGIN_DP = 8
     const val PRESENTATION_DURATION_MS = 240L
-    const val SNAP_DURATION_MS = 280L
     const val PROGRESS_DURATION_MS = 260L
     const val STOP_CONFIRMATION_MS = 3_000L
     const val AUTO_DOCK_DELAY_MS = 2_400L

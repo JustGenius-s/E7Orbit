@@ -40,6 +40,35 @@ class OverlayGeometryTest {
     }
 
     @Test
+    fun endDock_keepsTheSameScreenEdgeWhileWidthChanges() {
+        listOf(28, 44, 60, 72).forEach { width ->
+            assertEquals(area.right, dockedX(OverlayDockSide.END, width, area) + width)
+        }
+    }
+
+    @Test
+    fun edgeTouchWindow_staysInsideTheVisibleDockedEdge() {
+        assertEquals(
+            24,
+            edgeTouchX(
+                side = OverlayDockSide.START,
+                visualWindowX = 24,
+                visualWindowWidth = 72,
+                touchWindowWidth = 28,
+            ),
+        )
+        assertEquals(
+            1_868,
+            edgeTouchX(
+                side = OverlayDockSide.END,
+                visualWindowX = 1_824,
+                visualWindowWidth = 72,
+                touchWindowWidth = 28,
+            ),
+        )
+    }
+
+    @Test
     fun clampOverlayPosition_respectsInsetsAndMargin() {
         assertEquals(
             OverlayPosition(x = 32, y = 28),

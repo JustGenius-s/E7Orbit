@@ -52,6 +52,13 @@ class AutomationOverlay(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val viewTreeOwners = OverlayViewTreeOwners()
     private val params = WindowManager.LayoutParams(
+        dp(OverlayUiTokens.COMPACT_SIZE_DP),
+        dp(OverlayUiTokens.HEIGHT_DP),
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        AUTOMATION_OVERLAY_WINDOW_FLAGS,
+        android.graphics.PixelFormat.TRANSLUCENT,
+    )
+    private val edgeTouchParams = WindowManager.LayoutParams(
         dp(OverlayUiTokens.EDGE_HANDLE_WIDTH_DP),
         dp(OverlayUiTokens.HEIGHT_DP),
         WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -66,6 +73,7 @@ class AutomationOverlay(
     private var stopConfirmationPending by mutableStateOf(false)
 
     private var added = false
+    private var edgeTouchAdded = false
     private var shouldBeVisible = false
     private var docked = true
     private var presentationAnimator: ValueAnimator? = null
@@ -111,13 +119,30 @@ class AutomationOverlay(
             }
         }
     }
+    private val edgeTouchView = ComposeView(context).apply {
+        setBackgroundColor(Color.TRANSPARENT)
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        setViewTreeLifecycleOwner(viewTreeOwners)
+        setViewTreeSavedStateRegistryOwner(viewTreeOwners)
+        setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        setContent {
+            AutomationOverlayEdgeTouchTarget(
+                onClick = ::handlePrimaryClick,
+                onDragStart = ::handleDragStart,
+                onDrag = ::handleDrag,
+                onDragEnd = ::snapToEdge,
+            )
+        }
+    }
 
     init {
         params.gravity = Gravity.TOP or Gravity.START
+        edgeTouchParams.gravity = Gravity.TOP or Gravity.START
         val area = availableArea()
         params.x = dockedX(anchorSide, params.width, area)
         params.y = area.top +
             ((area.bottom - area.top - params.height).coerceAtLeast(0) * 0.28f).roundToInt()
+        syncEdgeTouchPosition()
     }
 
     fun render(
@@ -140,24 +165,35 @@ class AutomationOverlay(
     fun destroy() {
         presentationAnimator?.cancel()
         mainHandler.removeCallbacksAndMessages(null)
+        if (edgeTouchAdded) {
+            runCatching { windowManager.removeViewImmediate(edgeTouchView) }
+            edgeTouchAdded = false
+        }
         if (added) {
             runCatching { windowManager.removeViewImmediate(overlayView) }
             added = false
         }
         viewTreeOwners.destroy()
         overlayView.disposeComposition()
+        edgeTouchView.disposeComposition()
     }
 
     private fun show() {
-        if (added) return
+        if (added) {
+            syncPresentationInteractivity()
+            return
+        }
+        setMainWindowTouchable(presentation != OverlayPresentation.EDGE)
         keepInsideScreen()
         windowManager.addView(overlayView, params)
         added = true
         viewTreeOwners.onShown()
+        syncPresentationInteractivity()
         scheduleAutoDockIfNeeded()
     }
 
     private fun hide() {
+        setEdgeTouchVisible(false)
         setPresentation(OverlayPresentation.EDGE, animate = false)
         viewTreeOwners.onHidden()
         if (!added) return
@@ -178,6 +214,7 @@ class AutomationOverlay(
         animate: Boolean = true,
     ) {
         if (presentation == value && presentationAnimator?.isRunning != true) {
+            syncPresentationInteractivity()
             scheduleAutoDockIfNeeded()
             return
         }
@@ -186,11 +223,22 @@ class AutomationOverlay(
         presentationAnimator?.cancel()
 
         val target = value.morph
+        val geometry = presentationGeometry()
         if (!animate) {
             applyMorph(target)
+            resizeWindowForPresentation(value, geometry)
+            syncPresentationInteractivity()
             scheduleAutoDockIfNeeded()
             return
         }
+        if (value != OverlayPresentation.EDGE) {
+            syncPresentationInteractivity()
+        }
+        val expandsWindow = target > morph
+        if (expandsWindow) {
+            resizeWindowForPresentation(value, geometry)
+        }
+
         presentationAnimator = ValueAnimator.ofFloat(morph, target).apply {
             duration = OverlayUiTokens.PRESENTATION_DURATION_MS
             interpolator = DecelerateInterpolator()
@@ -204,7 +252,13 @@ class AutomationOverlay(
                     }
 
                     override fun onAnimationEnd(animation: Animator) {
-                        if (!cancelled) scheduleAutoDockIfNeeded()
+                        if (cancelled) return
+                        applyMorph(target)
+                        if (!expandsWindow) {
+                            resizeWindowForPresentation(value, geometry)
+                        }
+                        syncPresentationInteractivity()
+                        scheduleAutoDockIfNeeded()
                     }
                 },
             )
@@ -214,34 +268,41 @@ class AutomationOverlay(
 
     private fun applyMorph(value: Float) {
         morph = value
-        params.width = widthForMorph(value)
-        keepInsideScreen()
+    }
+
+    private fun resizeWindowForPresentation(
+        value: OverlayPresentation,
+        geometry: OverlayPresentationGeometry = presentationGeometry(),
+    ) {
+        params.width = widthForPresentation(value, geometry.expandedWidth)
+        keepInsideScreen(geometry.area)
         if (added) runCatching { windowManager.updateViewLayout(overlayView, params) }
+        syncEdgeTouchPosition()
     }
 
-    private fun widthForMorph(value: Float): Int = if (value <= 1f) {
-        lerp(
-            dp(OverlayUiTokens.EDGE_HANDLE_WIDTH_DP),
-            dp(OverlayUiTokens.COMPACT_SIZE_DP),
-            value.coerceIn(0f, 1f),
-        )
-    } else {
-        lerp(
-            dp(OverlayUiTokens.COMPACT_SIZE_DP),
-            expandedWidth(),
-            (value - 1f).coerceIn(0f, 1f),
-        )
+    private fun widthForPresentation(
+        value: OverlayPresentation,
+        expandedWidth: Int,
+    ): Int = when (value) {
+        OverlayPresentation.EDGE,
+        OverlayPresentation.COMPACT -> dp(OverlayUiTokens.COMPACT_SIZE_DP)
+        OverlayPresentation.EXPANDED -> expandedWidth
     }
 
-    private fun expandedWidth(): Int {
+    private fun presentationGeometry(): OverlayPresentationGeometry {
         val area = availableArea()
-        return dp(OverlayUiTokens.EXPANDED_WIDTH_DP)
+        return OverlayPresentationGeometry(
+            area = area,
+            expandedWidth = expandedWidth(area),
+        )
+    }
+
+    private fun expandedWidth(area: OverlayAvailableArea): Int =
+        dp(OverlayUiTokens.EXPANDED_WIDTH_DP)
             .coerceAtMost(area.right - area.left)
             .coerceAtLeast(dp(OverlayUiTokens.EDGE_HANDLE_WIDTH_DP))
-    }
 
-    private fun keepInsideScreen() {
-        val area = availableArea()
+    private fun keepInsideScreen(area: OverlayAvailableArea = availableArea()) {
         val clamped = clampOverlayPosition(
             x = params.x,
             y = params.y,
@@ -259,6 +320,7 @@ class AutomationOverlay(
         params.y = y
         keepInsideScreen()
         if (added) runCatching { windowManager.updateViewLayout(overlayView, params) }
+        syncEdgeTouchPosition()
     }
 
     private fun handleDragStart() {
@@ -283,54 +345,58 @@ class AutomationOverlay(
     private fun snapToEdge() {
         val area = availableArea()
         val targetSide = nearestDockSide(params.x, params.width, area)
-        val startX = params.x
-        val startMorph = morph
         anchorSide = targetSide
         presentation = OverlayPresentation.EDGE
         cancelAutoDock()
         presentationAnimator?.cancel()
-        docked = false
+        docked = true
+        applyMorph(OverlayPresentation.EDGE.morph)
+        resizeWindowForPresentation(
+            OverlayPresentation.EDGE,
+            OverlayPresentationGeometry(area, expandedWidth(area)),
+        )
+        syncPresentationInteractivity()
+    }
 
-        presentationAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = OverlayUiTokens.SNAP_DURATION_MS
-            interpolator = DecelerateInterpolator()
-            addUpdateListener { animator ->
-                val fraction = animator.animatedValue as Float
-                val animatedMorph = startMorph +
-                    (OverlayPresentation.EDGE.morph - startMorph) * fraction
-                morph = animatedMorph
-                params.width = widthForMorph(animatedMorph)
-                params.x = lerp(
-                    startX,
-                    dockedX(targetSide, params.width, area),
-                    fraction,
-                )
-                params.y = clampOverlayPosition(
-                    x = params.x,
-                    y = params.y,
-                    windowWidth = params.width,
-                    windowHeight = params.height,
-                    area = area,
-                    margin = dp(OverlayUiTokens.SCREEN_MARGIN_DP),
-                ).y
-                if (added) runCatching { windowManager.updateViewLayout(overlayView, params) }
-            }
-            addListener(
-                object : AnimatorListenerAdapter() {
-                    private var cancelled = false
+    private fun syncPresentationInteractivity() {
+        val edgePresentation = presentation == OverlayPresentation.EDGE
+        setMainWindowTouchable(!edgePresentation)
+        setEdgeTouchVisible(edgePresentation && shouldBeVisible)
+    }
 
-                    override fun onAnimationCancel(animation: Animator) {
-                        cancelled = true
-                    }
+    private fun setMainWindowTouchable(touchable: Boolean) {
+        val flags = if (touchable) {
+            AUTOMATION_OVERLAY_WINDOW_FLAGS
+        } else {
+            AUTOMATION_OVERLAY_WINDOW_FLAGS or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        if (params.flags == flags) return
+        params.flags = flags
+        if (added) runCatching { windowManager.updateViewLayout(overlayView, params) }
+    }
 
-                    override fun onAnimationEnd(animation: Animator) {
-                        if (cancelled) return
-                        docked = true
-                        applyMorph(OverlayPresentation.EDGE.morph)
-                    }
-                },
-            )
-            start()
+    private fun setEdgeTouchVisible(visible: Boolean) {
+        if (visible == edgeTouchAdded) return
+        if (visible) {
+            syncEdgeTouchPosition()
+            windowManager.addView(edgeTouchView, edgeTouchParams)
+            edgeTouchAdded = true
+        } else {
+            runCatching { windowManager.removeView(edgeTouchView) }
+            edgeTouchAdded = false
+        }
+    }
+
+    private fun syncEdgeTouchPosition() {
+        edgeTouchParams.x = edgeTouchX(
+            side = anchorSide,
+            visualWindowX = params.x,
+            visualWindowWidth = params.width,
+            touchWindowWidth = edgeTouchParams.width,
+        )
+        edgeTouchParams.y = params.y
+        if (edgeTouchAdded) {
+            runCatching { windowManager.updateViewLayout(edgeTouchView, edgeTouchParams) }
         }
     }
 
@@ -420,12 +486,14 @@ class AutomationOverlay(
         )
     }
 
-    private fun lerp(start: Int, end: Int, fraction: Float): Int =
-        (start + (end - start) * fraction).roundToInt()
-
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density).roundToInt()
 }
+
+private data class OverlayPresentationGeometry(
+    val area: OverlayAvailableArea,
+    val expandedWidth: Int,
+)
 
 private class OverlayViewTreeOwners : LifecycleOwner, SavedStateRegistryOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)

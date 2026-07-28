@@ -41,6 +41,16 @@ internal fun dockedX(
     OverlayDockSide.END -> (area.right - windowWidth).coerceAtLeast(area.left)
 }
 
+internal fun edgeTouchX(
+    side: OverlayDockSide,
+    visualWindowX: Int,
+    visualWindowWidth: Int,
+    touchWindowWidth: Int,
+): Int = when (side) {
+    OverlayDockSide.START -> visualWindowX
+    OverlayDockSide.END -> visualWindowX + visualWindowWidth - touchWindowWidth
+}
+
 internal fun clampOverlayPosition(
     x: Int,
     y: Int,
