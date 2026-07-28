@@ -4,13 +4,12 @@ import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
 import com.e7orbit.model.ScreenFrame
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 
 /**
- * Per-run services shared by workflow steps and legacy state-machine code.
+ * Per-run services shared by task workflow steps.
  *
  * The session deliberately does not own a CoroutineScope. Runtime lifecycle remains
  * outside it, while pause gates, diagnostics, gesture receipts and checkpoints use
@@ -18,6 +17,7 @@ import kotlinx.coroutines.CancellationException
  */
 class AutomationSession(
     val gateway: ScreenGateway,
+    val uiStateSource: GameUiStateSource,
     val clock: AutomationClock,
     awaitRunPermission: suspend () -> Unit,
     private val onDiagnostic: suspend (ScreenFrame, String) -> Unit,
@@ -28,6 +28,8 @@ class AutomationSession(
     val runId: String = UUID.randomUUID().toString()
 
     private val latestGestureReceipt = AtomicReference<GestureReceipt?>()
+    private val uiContract = AtomicReference<TaskUiContract?>()
+    private val actionGuard = ActionGuard(uiStateSource)
 
     val executor: OperationExecutor = OperationExecutor(
         gateway = gateway,
@@ -35,6 +37,7 @@ class AutomationSession(
         awaitRunPermission = awaitRunPermission,
         onDiagnostic = ::saveDiagnostic,
         onGestureReceipt = latestGestureReceipt::set,
+        beforeGesture = ::requireGestureAllowed,
         logger = logger,
     )
 
@@ -48,6 +51,31 @@ class AutomationSession(
     ) = onDiagnostic(frame, reason)
 
     fun latestGestureReceipt(): GestureReceipt? = latestGestureReceipt.get()
+
+    fun updateUiContract(contract: TaskUiContract) {
+        uiContract.set(contract)
+    }
+
+    fun currentUiSnapshot(): GameUiSnapshot = uiStateSource.state.value
+
+    fun currentTaskKind(): TaskKind? = uiContract.get()?.task
+
+    suspend fun awaitUi(contract: TaskUiContract, timeoutMs: Long): GameUiSnapshot =
+        uiStateSource.awaitAllowed(contract, timeoutMs)
+
+    private suspend fun requireGestureAllowed(operationId: String) {
+        val contract = uiContract.get() ?: return
+        if (!gateway.isTargetAppForeground()) {
+            throw OperationExecutionException(
+                ExecutionFailure(
+                    kind = ExecutionFailureKind.UI_STATE_MISMATCH,
+                    operationId = operationId,
+                    message = "目标游戏当前不在前台，已阻止 $operationId",
+                ),
+            )
+        }
+        actionGuard.requireAllowed(contract, operationId)
+    }
 
     internal fun markLatestGestureReconciled(
         stepId: String,
@@ -103,50 +131,5 @@ class AutomationSession(
 
     private companion object {
         val nextSessionId = AtomicLong(0L)
-    }
-}
-
-class AutomationSessionManager(
-    private val coordinator: AutomationRunCoordinator = AutomationRunCoordinator(),
-    private val checkpointStore: WorkflowCheckpointStore = InMemoryWorkflowCheckpointStore(),
-) {
-    fun tryOpen(
-        kind: AutomationKind,
-        gateway: ScreenGateway,
-        clock: AutomationClock,
-        awaitRunPermission: suspend () -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
-        logger: OrbitLogger = NoOpOrbitLogger,
-    ): ManagedAutomationSession? {
-        val lease = coordinator.tryAcquire(kind) ?: return null
-        return ManagedAutomationSession(
-            lease = lease,
-            session = AutomationSession(
-                gateway = gateway,
-                clock = clock,
-                awaitRunPermission = awaitRunPermission,
-                onDiagnostic = onDiagnostic,
-                logger = logger,
-                checkpointStore = checkpointStore,
-            ),
-            releaseLease = coordinator::release,
-        )
-    }
-
-    fun activeKind(): AutomationKind? = coordinator.activeKind()
-}
-
-class ManagedAutomationSession internal constructor(
-    val lease: RunLease,
-    val session: AutomationSession,
-    private val releaseLease: (RunLease) -> Boolean,
-) : AutoCloseable {
-    private val closed = AtomicBoolean(false)
-
-    fun release(): Boolean =
-        closed.compareAndSet(false, true) && releaseLease(lease)
-
-    override fun close() {
-        release()
     }
 }

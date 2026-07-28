@@ -30,24 +30,6 @@ class HuntStateMachine(
 ) {
     suspend fun run(
         config: HuntConfig,
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
-        onStatus: (HuntPhase, HuntStats, String, Double?) -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
-    ): HuntMachineResult = run(
-        config = config,
-        session = AutomationSession(
-            gateway = gateway,
-            clock = clock,
-            awaitRunPermission = awaitRunPermission,
-            onDiagnostic = onDiagnostic,
-            logger = logger,
-        ),
-        onStatus = onStatus,
-    )
-
-    suspend fun run(
-        config: HuntConfig,
         session: AutomationSession,
         onStatus: (HuntPhase, HuntStats, String, Double?) -> Unit,
     ): HuntMachineResult {
@@ -122,7 +104,7 @@ class HuntStateMachine(
                         val lobbyPage = waitForAnyPage(
                             expected = setOf(HuntPage.LOBBY, HuntPage.LOBBY_MANAGED),
                             timeoutMs = WAIT_FOR_LOBBY_TIMEOUT_MS,
-                            operations = operations,
+                            session = session,
                         )
                         if (lobbyPage == HuntPage.LOBBY_MANAGED) {
                             throw MachineStop(
@@ -151,13 +133,13 @@ class HuntStateMachine(
                         waitForPage(
                             expected = HuntPage.BATTLE_MENU,
                             timeoutMs = PAGE_TIMEOUT_MS,
-                            operations = operations,
+                            session = session,
                         )
                     },
                     recover = {
                         recoverIfPageReached(
                             gestureIssued = hasIssuedGesture,
-                            operations = operations,
+                            session = session,
                             expected = setOf(HuntPage.BATTLE_MENU),
                         )
                     },
@@ -181,13 +163,13 @@ class HuntStateMachine(
                         waitForPage(
                             expected = HuntPage.HUNT_SELECTION,
                             timeoutMs = PAGE_TIMEOUT_MS,
-                            operations = operations,
+                            session = session,
                         )
                     },
                     recover = {
                         recoverIfPageReached(
                             gestureIssued = hasIssuedGesture,
-                            operations = operations,
+                            session = session,
                             expected = setOf(HuntPage.HUNT_SELECTION),
                         )
                     },
@@ -237,14 +219,14 @@ class HuntStateMachine(
                                 HuntPage.TEAM_READY,
                             ),
                             timeoutMs = PAGE_TIMEOUT_MS,
-                            operations = operations,
+                            session = session,
                         )
                     },
                     recover = {
                         if (!hasIssuedGesture) {
                             StepRecovery.Fail
                         } else {
-                            val page = observeHuntPage(operations)
+                            val page = observeHuntPage(session)
                             if (
                                 page == HuntPage.TEAM_QUICK_BATTLE ||
                                 page == HuntPage.TEAM_READY
@@ -277,14 +259,14 @@ class HuntStateMachine(
                             waitForPage(
                                 expected = HuntPage.TEAM_READY,
                                 timeoutMs = PAGE_TIMEOUT_MS,
-                                operations = operations,
+                                session = session,
                             )
                         }
                     },
                     recover = {
                         recoverIfPageReached(
                             gestureIssued = hasIssuedGesture,
-                            operations = operations,
+                            session = session,
                             expected = setOf(HuntPage.TEAM_READY),
                         )
                     },
@@ -354,14 +336,14 @@ class HuntStateMachine(
                             waitForPage(
                                 expected = HuntPage.BATTLE_CONTROLS,
                                 timeoutMs = BATTLE_START_TIMEOUT_MS,
-                                operations = operations,
+                                session = session,
                             )
                         }
                     },
                     recover = {
                         recoverIfPageReached(
                             gestureIssued = hasIssuedGesture,
-                            operations = operations,
+                            session = session,
                             expected = setOf(HuntPage.BATTLE_CONTROLS),
                         )
                     },
@@ -385,13 +367,13 @@ class HuntStateMachine(
                         waitForPage(
                             expected = HuntPage.DELEGATION_CONFIRMATION,
                             timeoutMs = PAGE_TIMEOUT_MS,
-                            operations = operations,
+                            session = session,
                         )
                     },
                     recover = {
                         recoverIfPageReached(
                             gestureIssued = hasIssuedGesture,
-                            operations = operations,
+                            session = session,
                             expected = setOf(HuntPage.DELEGATION_CONFIRMATION),
                         )
                     },
@@ -419,14 +401,14 @@ class HuntStateMachine(
                             waitForPage(
                                 expected = HuntPage.LOBBY_MANAGED,
                                 timeoutMs = PAGE_TIMEOUT_MS,
-                                operations = operations,
+                                session = session,
                             )
                         }
                     },
                     recover = {
                         recoverIfPageReached(
                             gestureIssued = hasIssuedGesture,
-                            operations = operations,
+                            session = session,
                             expected = setOf(HuntPage.LOBBY_MANAGED),
                         )
                     },
@@ -453,14 +435,14 @@ class HuntStateMachine(
                                 HuntPage.MANAGED_COMPLETE,
                             ),
                             timeoutMs = PAGE_TIMEOUT_MS,
-                            operations = operations,
+                            session = session,
                         )
                         clock.delay(MANAGED_PANEL_OPEN_DELAY_MS)
                     },
                     recover = {
                         recoverIfPageReached(
                             gestureIssued = hasIssuedGesture,
-                            operations = operations,
+                            session = session,
                             expected = setOf(
                                 HuntPage.MANAGED_PANEL,
                                 HuntPage.MANAGED_COMPLETE,
@@ -497,7 +479,7 @@ class HuntStateMachine(
                                 val observation = operations
                                     .capture("hunt.observe_managed_progress")
                                     .useFrame { frame ->
-                                        vision.detectPage(frame) to
+                                        session.currentUiSnapshot().page.toHuntPage() to
                                             vision.managedProgressSignature(frame)
                                     }
                                 if (observation.first == HuntPage.MANAGED_COMPLETE) {
@@ -560,7 +542,7 @@ class HuntStateMachine(
                                             waitForPage(
                                                 expected = HuntPage.MANAGED_COMPLETE,
                                                 timeoutMs = PAGE_TIMEOUT_MS,
-                                                operations = operations,
+                                                session = session,
                                             )
                                         }
                                         return@waitUntil Unit
@@ -571,7 +553,7 @@ class HuntStateMachine(
                         } catch (error: OperationExecutionException) {
                             if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
                                 stopManagedAfterTimeout(
-                                    operations = operations,
+                                    session = session,
                                     visualActions = visualActions,
                                 )
                             }
@@ -643,11 +625,11 @@ class HuntStateMachine(
     private suspend fun waitForPage(
         expected: HuntPage,
         timeoutMs: Long,
-        operations: OperationExecutor,
+        session: AutomationSession,
     ): HuntPage = waitForAnyPage(
         expected = setOf(expected),
         timeoutMs = timeoutMs,
-        operations = operations,
+        session = session,
     )
 
     private suspend fun navigateHomeIfNeeded(
@@ -667,6 +649,7 @@ class HuntStateMachine(
                 reason = when (error.failure) {
                     HomeNavigationFailure.SCREENSHOT_FAILED -> HuntStopReason.SCREENSHOT_FAILED
                     HomeNavigationFailure.INVALID_RESOLUTION -> HuntStopReason.INVALID_RESOLUTION
+                    HomeNavigationFailure.UI_STATE_MISMATCH -> HuntStopReason.UNKNOWN_PAGE
                     HomeNavigationFailure.LOW_CONFIDENCE -> HuntStopReason.LOW_CONFIDENCE
                     HomeNavigationFailure.TIMEOUT -> HuntStopReason.TIMEOUT
                     HomeNavigationFailure.GESTURE_FAILED -> HuntStopReason.GESTURE_FAILED
@@ -681,36 +664,29 @@ class HuntStateMachine(
     private suspend fun waitForAnyPage(
         expected: Set<HuntPage>,
         timeoutMs: Long,
-        operations: OperationExecutor,
+        session: AutomationSession,
     ): HuntPage {
         val expectedLabel = expected.joinToString("_")
         try {
-            return operations.waitUntil(
-                operationId = "hunt.wait_${expectedLabel.lowercase()}",
+            return session.awaitUi(
+                contract = TaskUiContract(
+                    task = TaskKind.HUNT,
+                    step = "wait_${expectedLabel.lowercase()}",
+                    allowedPages = expected.mapTo(mutableSetOf(), HuntPage::toGameUiPage),
+                ),
                 timeoutMs = timeoutMs,
-                pollIntervalMs = PAGE_POLL_INTERVAL_MS,
-                diagnosticReason = "hunt_wait_$expectedLabel",
-            ) {
-                operations.capture("hunt.observe_page").useFrame { frame ->
-                    vision.detectPage(frame).takeIf { it in expected }
-                }
-            }
-        } catch (error: OperationExecutionException) {
-            if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
-                throw MachineStop(
-                    HuntStopReason.TIMEOUT,
-                    "等待 ${expected.joinToString("/")} 超时",
-                )
-            }
-            throw error
+            ).page.toHuntPage()
+        } catch (_: UiStateMismatchException) {
+            throw MachineStop(
+                HuntStopReason.TIMEOUT,
+                "等待 ${expected.joinToString("/")} 超时",
+            )
         }
     }
 
     private suspend fun observeHuntPage(
-        operations: OperationExecutor,
-    ): HuntPage = operations.capture("hunt.reconcile_page").useFrame { frame ->
-        vision.detectPage(frame)
-    }
+        session: AutomationSession,
+    ): HuntPage = session.currentUiSnapshot().page.toHuntPage()
 
     private suspend fun observeManagedBattleEnabled(
         operations: OperationExecutor,
@@ -720,11 +696,11 @@ class HuntStateMachine(
 
     private suspend fun recoverIfPageReached(
         gestureIssued: Boolean,
-        operations: OperationExecutor,
+        session: AutomationSession,
         expected: Set<HuntPage>,
     ): StepRecovery {
         if (!gestureIssued) return StepRecovery.Fail
-        return if (observeHuntPage(operations) in expected) {
+        return if (observeHuntPage(session) in expected) {
             StepRecovery.Recovered
         } else {
             StepRecovery.Fail
@@ -805,6 +781,7 @@ class HuntStateMachine(
     private fun ExecutionFailureKind.toHuntStopReason(): HuntStopReason = when (this) {
         ExecutionFailureKind.SCREENSHOT_FAILED -> HuntStopReason.SCREENSHOT_FAILED
         ExecutionFailureKind.INVALID_RESOLUTION -> HuntStopReason.INVALID_RESOLUTION
+        ExecutionFailureKind.UI_STATE_MISMATCH -> HuntStopReason.UNKNOWN_PAGE
         ExecutionFailureKind.GESTURE_FAILED -> HuntStopReason.GESTURE_FAILED
         ExecutionFailureKind.UNCERTAIN_EFFECT -> HuntStopReason.UNCERTAIN_EFFECT
         ExecutionFailureKind.TIMEOUT -> HuntStopReason.TIMEOUT
@@ -834,13 +811,11 @@ class HuntStateMachine(
     }
 
     private suspend fun stopManagedAfterTimeout(
-        operations: OperationExecutor,
+        session: AutomationSession,
         visualActions: VisualActionExecutor,
     ): Nothing {
         val page = try {
-            operations.capture("hunt.reconcile_managed_timeout").useFrame { frame ->
-                vision.detectPage(frame)
-            }
+            session.currentUiSnapshot().page.toHuntPage()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -872,7 +847,7 @@ class HuntStateMachine(
                         waitForPage(
                             expected = HuntPage.MANAGED_COMPLETE,
                             timeoutMs = PAGE_TIMEOUT_MS,
-                            operations = operations,
+                            session = session,
                         )
                     }
                 } catch (cancelled: CancellationException) {
@@ -911,7 +886,6 @@ class HuntStateMachine(
         const val PAGE_TIMEOUT_MS = 20_000L
         const val BATTLE_START_TIMEOUT_MS = 90_000L
         const val MANAGED_BATCH_TIMEOUT_MS = 45 * 60 * 1000L
-        const val PAGE_POLL_INTERVAL_MS = 500L
         const val MANAGED_POLL_INTERVAL_MS = 3_000L
         const val MANAGED_PANEL_OPEN_DELAY_MS = 1_000L
         const val AFTER_TAP_DELAY_MS = 800L

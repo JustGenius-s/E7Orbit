@@ -7,7 +7,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -169,38 +168,12 @@ class WorkflowDslTest {
         )
     }
 
-    @Test
-    fun sessionManagerOwnsAndReleasesCoordinatorLease() = runTest {
-        val manager = AutomationSessionManager()
-        val shop = manager.tryOpen(
-            kind = AutomationKind.SHOP,
-            gateway = WorkflowGateway,
-            clock = WorkflowClock(),
-            awaitRunPermission = {},
-            onDiagnostic = { _, _ -> },
-        )
-
-        assertNotNull(shop)
-        assertEquals(AutomationKind.SHOP, manager.activeKind())
-        assertNull(
-            manager.tryOpen(
-                kind = AutomationKind.HUNT,
-                gateway = WorkflowGateway,
-                clock = WorkflowClock(),
-                awaitRunPermission = {},
-                onDiagnostic = { _, _ -> },
-            ),
-        )
-
-        shop!!.close()
-        assertNull(manager.activeKind())
-    }
-
     private fun session(
         clock: WorkflowClock = WorkflowClock(),
         gateway: ScreenGateway = WorkflowGateway,
     ) = AutomationSession(
         gateway = gateway,
+        uiStateSource = TestGameUiStateSource(),
         clock = clock,
         awaitRunPermission = {},
         onDiagnostic = { _, _ -> },

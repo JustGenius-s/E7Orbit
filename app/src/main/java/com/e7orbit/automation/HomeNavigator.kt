@@ -2,14 +2,13 @@ package com.e7orbit.automation
 
 import com.e7orbit.logging.NoOpOrbitLogger
 import com.e7orbit.logging.OrbitLogger
-import com.e7orbit.model.GameLocation
 import com.e7orbit.model.MatchResult
-import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.VisualAction
 
 enum class HomeNavigationFailure {
     SCREENSHOT_FAILED,
     INVALID_RESOLUTION,
+    UI_STATE_MISMATCH,
     LOW_CONFIDENCE,
     TIMEOUT,
     GESTURE_FAILED,
@@ -34,24 +33,6 @@ class HomeNavigator(
     fun health(): VisionHealth = vision.navigationHealth()
 
     suspend fun ensureHome(
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
-        onStatus: (String) -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
-    ) {
-        ensureHome(
-            session = AutomationSession(
-                gateway = gateway,
-                clock = clock,
-                awaitRunPermission = awaitRunPermission,
-                onDiagnostic = onDiagnostic,
-                logger = logger,
-            ),
-            onStatus = onStatus,
-        )
-    }
-
-    suspend fun ensureHome(
         session: AutomationSession,
         onStatus: (String) -> Unit,
     ) {
@@ -68,6 +49,12 @@ class HomeNavigator(
             )
         } catch (error: OperationExecutionException) {
             throw error.asHomeNavigationException()
+        } catch (error: UiStateMismatchException) {
+            throw HomeNavigationException(
+                failure = HomeNavigationFailure.TIMEOUT,
+                message = "等待游戏主页加载超时",
+                cause = error,
+            )
         } catch (error: VisualActionNotFoundException) {
             throw HomeNavigationException(
                 failure = HomeNavigationFailure.LOW_CONFIDENCE,
@@ -172,10 +159,10 @@ class HomeNavigator(
 
     private suspend fun observeHome(
         session: AutomationSession,
-    ): Observation<GameLocation> = session.executor.capture("home.detect_location").use { frame ->
-        val location = vision.detectLocation(frame)
-        if (location == GameLocation.LOBBY) {
-            Observation.Confirmed(location)
+    ): Observation<GameUiPage> {
+        val snapshot = session.currentUiSnapshot()
+        return if (snapshot.isStable && snapshot.page == GameUiPage.LOBBY) {
+            Observation.Confirmed(snapshot.page, snapshot.confidence)
         } else {
             Observation.Absent("当前不在主页")
         }
@@ -211,20 +198,14 @@ class HomeNavigator(
     private suspend fun waitForHome(
         session: AutomationSession,
     ) {
-        var matches = 0
-        session.executor.waitUntil<Unit>(
-            operationId = "home.wait_lobby",
+        session.awaitUi(
+            contract = TaskUiContract(
+                task = session.currentTaskKind() ?: TaskKind.SHOP,
+                step = "home.wait_lobby",
+                allowedPages = setOf(GameUiPage.LOBBY),
+            ),
             timeoutMs = HOME_TIMEOUT_MS,
-            pollIntervalMs = POLL_INTERVAL_MS,
-            diagnosticReason = "home_navigation_home_timeout",
-        ) {
-            if (observeHome(session).confirmedOrNull() != null) {
-                matches += 1
-            } else {
-                matches = 0
-            }
-            Unit.takeIf { matches >= REQUIRED_HOME_MATCHES }
-        }
+        )
     }
 
     private suspend fun tapMatch(
@@ -254,6 +235,8 @@ class HomeNavigator(
                 HomeNavigationFailure.SCREENSHOT_FAILED
             ExecutionFailureKind.INVALID_RESOLUTION ->
                 HomeNavigationFailure.INVALID_RESOLUTION
+            ExecutionFailureKind.UI_STATE_MISMATCH ->
+                HomeNavigationFailure.UI_STATE_MISMATCH
             ExecutionFailureKind.TIMEOUT -> HomeNavigationFailure.TIMEOUT
             ExecutionFailureKind.GESTURE_FAILED -> HomeNavigationFailure.GESTURE_FAILED
             ExecutionFailureKind.UNCERTAIN_EFFECT ->
@@ -278,6 +261,5 @@ class HomeNavigator(
         const val HOME_TIMEOUT_MS = 30_000L
         const val POLL_INTERVAL_MS = 500L
         const val AFTER_TAP_DELAY_MS = 800L
-        const val REQUIRED_HOME_MATCHES = 2
     }
 }

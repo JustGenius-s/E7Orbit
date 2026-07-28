@@ -30,6 +30,7 @@ data class GestureReceipt(
 ) {
     val effectMayBeUncertain: Boolean
         get() = outcome in setOf(
+            GestureOutcome.DISPATCHING,
             GestureOutcome.CANCELLED,
             GestureOutcome.TIMED_OUT,
             GestureOutcome.INTERRUPTED,

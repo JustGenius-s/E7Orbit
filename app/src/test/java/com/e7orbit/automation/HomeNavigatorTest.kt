@@ -31,10 +31,12 @@ class HomeNavigatorTest {
         )
 
         navigator.ensureHome(
-            gateway = gateway,
-            awaitRunPermission = {},
+            session = testSession(
+                gateway = gateway,
+                uiStateSource = vision.uiStateSource,
+                clock = FakeHomeClock(),
+            ),
             onStatus = {},
-            onDiagnostic = { _, _ -> },
         )
 
         assertEquals(
@@ -76,12 +78,14 @@ class HomeNavigatorTest {
 
         try {
             navigator.ensureHome(
-                gateway = FakeHomeGateway(
-                    captureError = CancellationException("stopped"),
+                session = testSession(
+                    gateway = FakeHomeGateway(
+                        captureError = CancellationException("stopped"),
+                    ),
+                    uiStateSource = TestGameUiStateSource(),
+                    clock = FakeHomeClock(),
                 ),
-                awaitRunPermission = {},
                 onStatus = {},
-                onDiagnostic = { _, _ -> },
             )
         } catch (_: CancellationException) {
             cancelled = true
@@ -108,6 +112,7 @@ class HomeNavigatorTest {
         val clock = FakeHomeClock()
         val session = AutomationSession(
             gateway = gateway,
+            uiStateSource = vision.uiStateSource,
             clock = clock,
             awaitRunPermission = {},
             onDiagnostic = { _, _ -> },
@@ -139,14 +144,19 @@ class HomeNavigatorTest {
             missingTemplateIds = emptyList(),
         ),
     ) : GlobalUiVision {
-        private val locations = ArrayDeque(locations)
+        val uiStateSource = TestGameUiStateSource(
+            pages = locations.map { location ->
+                if (location == GameLocation.LOBBY) GameUiPage.LOBBY else GameUiPage.GAME_PAGE
+            },
+            fallbackPage = GameUiPage.LOBBY,
+        )
         val actions = mutableListOf<VisualAction>()
         private var returnHomeChecks = 0
 
         override fun navigationHealth(): VisionHealth = health
 
         override suspend fun detectLocation(frame: ScreenFrame): GameLocation =
-            locations.pollFirst() ?: GameLocation.LOBBY
+            GameLocation.LOBBY
 
         override suspend fun findAction(
             frame: ScreenFrame,

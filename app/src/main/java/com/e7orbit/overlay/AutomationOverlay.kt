@@ -1,5 +1,7 @@
 package com.e7orbit.overlay
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
@@ -16,10 +18,11 @@ import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
-import com.e7orbit.automation.AutomationRuntime
-import com.e7orbit.automation.HuntRuntime
+import com.e7orbit.automation.TaskCoordinator
+import com.e7orbit.automation.TaskKind
 import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.HuntPhase
@@ -33,13 +36,12 @@ import kotlin.math.sin
 @SuppressLint("ClickableViewAccessibility")
 class AutomationOverlay(
     private val context: Context,
-    private val runtime: AutomationRuntime,
-    private val huntRuntime: HuntRuntime,
+    private val taskCoordinator: TaskCoordinator,
 ) {
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val bubble = OrbitBubbleView(context)
     private val params = WindowManager.LayoutParams(
-        dp(COMPACT_SIZE_DP),
+        dp(EDGE_HANDLE_WIDTH_DP),
         dp(BUBBLE_HEIGHT_DP),
         WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -48,14 +50,20 @@ class AutomationOverlay(
     )
 
     private var added = false
-    private var expanded = false
-    private var expansionAnimator: ValueAnimator? = null
+    private var captureSuppressed = false
+    private var shouldBeVisible = false
+    private var presentation = OverlayPresentation.EDGE
+    private var anchorSide = OverlayDockSide.END
+    private var docked = true
+    private var presentationAnimator: ValueAnimator? = null
     private var stopConfirmationDeadline = 0L
 
     init {
         params.gravity = Gravity.TOP or Gravity.START
-        params.x = (context.resources.displayMetrics.widthPixels * 0.30f).roundToInt()
-        params.y = dp(8)
+        val area = availableArea()
+        params.x = dockedX(anchorSide, params.width, area)
+        params.y = area.top +
+            ((area.bottom - area.top - params.height).coerceAtLeast(0) * 0.28f).roundToInt()
         bubble.background = GradientDrawable().apply { setColor(Color.TRANSPARENT) }
         bubble.elevation = dp(10).toFloat()
     }
@@ -68,15 +76,23 @@ class AutomationOverlay(
             shopStatus.phase == AutomationPhase.IDLE &&
             huntStatus.phase == HuntPhase.IDLE
         ) {
+            shouldBeVisible = false
             hide()
             return
         }
+        shouldBeVisible = true
         bubble.render(shopStatus, huntStatus)
         show()
     }
 
+    fun setCaptureSuppressed(suppressed: Boolean) {
+        if (captureSuppressed == suppressed) return
+        captureSuppressed = suppressed
+        if (suppressed) removeForCapture() else if (shouldBeVisible) show()
+    }
+
     fun destroy() {
-        expansionAnimator?.cancel()
+        presentationAnimator?.cancel()
         bubble.destroy()
         if (added) {
             runCatching { windowManager.removeViewImmediate(bubble) }
@@ -85,58 +101,93 @@ class AutomationOverlay(
     }
 
     private fun show() {
-        if (added) return
+        if (added || captureSuppressed) return
+        keepInsideScreen()
         windowManager.addView(bubble, params)
         added = true
+        bubble.scheduleAutoDockIfNeeded()
     }
 
     private fun hide() {
+        setPresentation(OverlayPresentation.EDGE, animate = false)
         if (!added) return
-        setExpanded(false, animate = false)
         runCatching { windowManager.removeView(bubble) }
         added = false
     }
 
-    private fun setExpanded(value: Boolean, animate: Boolean = true) {
-        if (expanded == value && expansionAnimator?.isRunning != true) return
-        expanded = value
-        expansionAnimator?.cancel()
+    private fun removeForCapture() {
+        if (!added) return
+        runCatching { windowManager.removeView(bubble) }
+        added = false
+    }
 
-        val target = if (value) 1f else 0f
-        if (!animate) {
-            applyExpansion(target)
+    private fun setPresentation(
+        value: OverlayPresentation,
+        animate: Boolean = true,
+    ) {
+        if (presentation == value && presentationAnimator?.isRunning != true) {
+            bubble.scheduleAutoDockIfNeeded()
             return
         }
-        expansionAnimator = ValueAnimator.ofFloat(bubble.expansion, target).apply {
-            duration = EXPAND_DURATION_MS
+        presentation = value
+        bubble.cancelAutoDock()
+        bubble.updateAccessibilityDescription()
+        presentationAnimator?.cancel()
+
+        val target = value.morph
+        if (!animate) {
+            applyMorph(target)
+            bubble.scheduleAutoDockIfNeeded()
+            return
+        }
+        presentationAnimator = ValueAnimator.ofFloat(bubble.morph, target).apply {
+            duration = PRESENTATION_DURATION_MS
             interpolator = DecelerateInterpolator()
-            addUpdateListener { applyExpansion(it.animatedValue as Float) }
+            addUpdateListener { applyMorph(it.animatedValue as Float) }
+            addListener(
+                object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        bubble.scheduleAutoDockIfNeeded()
+                    }
+                },
+            )
             start()
         }
     }
 
-    private fun applyExpansion(value: Float) {
-        bubble.expansion = value
-        params.width = lerp(
-            dp(COMPACT_SIZE_DP),
-            dp(EXPANDED_WIDTH_DP),
-            value,
-        )
+    private fun applyMorph(value: Float) {
+        bubble.morph = value
+        params.width = widthForMorph(value)
         keepInsideScreen()
         bubble.invalidate()
         if (added) runCatching { windowManager.updateViewLayout(bubble, params) }
     }
 
+    private fun widthForMorph(value: Float): Int = if (value <= 1f) {
+        lerp(dp(EDGE_HANDLE_WIDTH_DP), dp(COMPACT_SIZE_DP), value.coerceIn(0f, 1f))
+    } else {
+        lerp(dp(COMPACT_SIZE_DP), expandedWidth(), (value - 1f).coerceIn(0f, 1f))
+    }
+
+    private fun expandedWidth(): Int {
+        val area = availableArea()
+        return dp(EXPANDED_WIDTH_DP)
+            .coerceAtMost(area.right - area.left)
+            .coerceAtLeast(dp(EDGE_HANDLE_WIDTH_DP))
+    }
+
     private fun keepInsideScreen() {
-        val metrics = context.resources.displayMetrics
-        params.x = params.x.coerceIn(
-            dp(8),
-            (metrics.widthPixels - params.width - dp(8)).coerceAtLeast(dp(8)),
+        val area = availableArea()
+        val clamped = clampOverlayPosition(
+            x = params.x,
+            y = params.y,
+            windowWidth = params.width,
+            windowHeight = params.height,
+            area = area,
+            margin = dp(SCREEN_MARGIN_DP),
         )
-        params.y = params.y.coerceIn(
-            dp(8),
-            (metrics.heightPixels - params.height - dp(8)).coerceAtLeast(dp(8)),
-        )
+        params.x = if (docked) dockedX(anchorSide, params.width, area) else clamped.x
+        params.y = clamped.y
     }
 
     private fun updatePosition(x: Int, y: Int) {
@@ -144,6 +195,65 @@ class AutomationOverlay(
         params.y = y
         keepInsideScreen()
         if (added) runCatching { windowManager.updateViewLayout(bubble, params) }
+    }
+
+    private fun snapToEdge() {
+        val area = availableArea()
+        val targetSide = nearestDockSide(params.x, params.width, area)
+        val startX = params.x
+        val startMorph = bubble.morph
+        anchorSide = targetSide
+        presentation = OverlayPresentation.EDGE
+        bubble.cancelAutoDock()
+        bubble.updateAccessibilityDescription()
+        presentationAnimator?.cancel()
+        docked = false
+
+        presentationAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = SNAP_DURATION_MS
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { animator ->
+                val fraction = animator.animatedValue as Float
+                val morph = startMorph + (OverlayPresentation.EDGE.morph - startMorph) * fraction
+                bubble.morph = morph
+                params.width = widthForMorph(morph)
+                val edgeX = dockedX(targetSide, params.width, area)
+                params.x = lerp(startX, edgeX, fraction)
+                val clamped = clampOverlayPosition(
+                    x = params.x,
+                    y = params.y,
+                    windowWidth = params.width,
+                    windowHeight = params.height,
+                    area = area,
+                    margin = dp(SCREEN_MARGIN_DP),
+                )
+                params.y = clamped.y
+                bubble.invalidate()
+                if (added) runCatching { windowManager.updateViewLayout(bubble, params) }
+            }
+            addListener(
+                object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        docked = true
+                        applyMorph(OverlayPresentation.EDGE.morph)
+                    }
+                },
+            )
+            start()
+        }
+    }
+
+    private fun availableArea(): OverlayAvailableArea {
+        val metrics = windowManager.currentWindowMetrics
+        val insets = metrics.windowInsets.getInsets(
+            WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+        )
+        return OverlayAvailableArea(
+            left = insets.left,
+            top = insets.top,
+            right = metrics.bounds.width() - insets.right,
+            bottom = metrics.bounds.height() - insets.bottom,
+        )
     }
 
     private fun returnToApp() {
@@ -218,10 +328,20 @@ class AutomationOverlay(
         private var windowStartY = 0
         private var dragging = false
         private var canDrag = false
-        private val collapseHoverRunnable = Runnable { setExpanded(false) }
+        private val collapseHoverRunnable = Runnable {
+            setPresentation(OverlayPresentation.EDGE)
+        }
+        private val autoDockRunnable = Runnable {
+            if (presentation == OverlayPresentation.COMPACT && docked) {
+                setPresentation(OverlayPresentation.EDGE)
+            }
+        }
 
-        var expansion: Float = 0f
+        var morph: Float = OverlayPresentation.EDGE.morph
         var stopConfirmationPending: Boolean = false
+
+        private val expansion: Float
+            get() = (morph - OverlayPresentation.COMPACT.morph).coerceIn(0f, 1f)
 
         init {
             isClickable = true
@@ -245,7 +365,13 @@ class AutomationOverlay(
                 newHuntStatus.phase != HuntPhase.IDLE -> OverlayMode.HUNT
                 else -> OverlayMode.SHOP
             }
-            contentDescription = when (activeMode) {
+            updateAccessibilityDescription()
+            animatePhaseProgress(activeProgress())
+            invalidate()
+        }
+
+        fun updateAccessibilityDescription() {
+            val status = when (activeMode) {
                 OverlayMode.SHOP -> buildString {
                     append("E7 Orbit，已执行 ${shopStatus.stats.completedRefreshes} 次")
                     append("，誓约书签增加 ${shopStatus.stats.covenantBookmarksGained}")
@@ -257,8 +383,26 @@ class AutomationOverlay(
                     "E7 Orbit，${huntStatus.config.dungeon.displayName} " +
                         "${huntStatus.stats.completedRuns}/${huntStatus.config.runCount}"
             }
-            animatePhaseProgress(activeProgress())
-            invalidate()
+            val action = when (presentation) {
+                OverlayPresentation.EDGE -> {
+                    val side = if (anchorSide == OverlayDockSide.START) "左侧" else "右侧"
+                    "，已贴在${side}收起，点按显示悬浮球"
+                }
+                OverlayPresentation.COMPACT -> "，点按展开控制面板"
+                OverlayPresentation.EXPANDED -> "，控制面板已展开"
+            }
+            contentDescription = status + action
+        }
+
+        fun cancelAutoDock() {
+            removeCallbacks(autoDockRunnable)
+        }
+
+        fun scheduleAutoDockIfNeeded() {
+            removeCallbacks(autoDockRunnable)
+            if (presentation == OverlayPresentation.COMPACT && docked) {
+                postDelayed(autoDockRunnable, AUTO_DOCK_DELAY_MS)
+            }
         }
 
         fun isActiveTerminal(): Boolean = when (activeMode) {
@@ -268,27 +412,49 @@ class AutomationOverlay(
 
         fun dismissActiveTerminal() {
             when (activeMode) {
-                OverlayMode.SHOP -> runtime.dismissTerminalStatus()
-                OverlayMode.HUNT -> huntRuntime.dismissTerminalStatus()
+                OverlayMode.SHOP -> taskCoordinator.dismiss(TaskKind.SHOP)
+                OverlayMode.HUNT -> taskCoordinator.dismiss(TaskKind.HUNT)
             }
         }
 
         fun stopActive() {
             when (activeMode) {
-                OverlayMode.SHOP -> runtime.stop()
-                OverlayMode.HUNT -> huntRuntime.stop()
+                OverlayMode.SHOP -> taskCoordinator.stop(TaskKind.SHOP)
+                OverlayMode.HUNT -> taskCoordinator.stop(TaskKind.HUNT)
             }
         }
 
         fun destroy() {
             progressAnimator?.cancel()
             removeCallbacks(collapseHoverRunnable)
+            removeCallbacks(autoDockRunnable)
             covenantIcon?.let { if (!it.isRecycled) it.recycle() }
             mysticIcon?.let { if (!it.isRecycled) it.recycle() }
         }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
+            val edgeAlpha = ((1f - morph.coerceIn(0f, 1f)) * 255).roundToInt()
+            val contentAlpha = (morph.coerceIn(0f, 1f) * 255).roundToInt()
+            if (contentAlpha > 0) {
+                if (contentAlpha == 255) {
+                    drawBubbleContent(canvas)
+                } else {
+                    val checkpoint = canvas.saveLayerAlpha(
+                        0f,
+                        0f,
+                        width.toFloat(),
+                        height.toFloat(),
+                        contentAlpha,
+                    )
+                    drawBubbleContent(canvas)
+                    canvas.restoreToCount(checkpoint)
+                }
+            }
+            if (edgeAlpha > 0) drawEdgeHandle(canvas, edgeAlpha)
+        }
+
+        private fun drawBubbleContent(canvas: Canvas) {
             drawContainer(canvas)
             drawMetrics(canvas)
             drawActions(canvas)
@@ -299,7 +465,8 @@ class AutomationOverlay(
             when (event.actionMasked) {
                 MotionEvent.ACTION_HOVER_ENTER -> {
                     removeCallbacks(collapseHoverRunnable)
-                    setExpanded(true)
+                    cancelAutoDock()
+                    setPresentation(OverlayPresentation.EXPANDED)
                 }
 
                 MotionEvent.ACTION_HOVER_MOVE -> removeCallbacks(collapseHoverRunnable)
@@ -314,12 +481,15 @@ class AutomationOverlay(
         override fun onTouchEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    removeCallbacks(collapseHoverRunnable)
+                    cancelAutoDock()
                     touchStartRawX = event.rawX
                     touchStartRawY = event.rawY
                     windowStartX = params.x
                     windowStartY = params.y
                     dragging = false
-                    canDrag = event.x <= compactSize
+                    canDrag = presentation == OverlayPresentation.EDGE ||
+                        bubbleRect().contains(event.x, event.y)
                     return true
                 }
 
@@ -331,6 +501,8 @@ class AutomationOverlay(
                         kotlin.math.abs(dx) > dp(4) ||
                         kotlin.math.abs(dy) > dp(4)
                     if (dragging) {
+                        presentationAnimator?.cancel()
+                        docked = false
                         updatePosition(
                             windowStartX + dx.roundToInt(),
                             windowStartY + dy.roundToInt(),
@@ -340,10 +512,17 @@ class AutomationOverlay(
                 }
 
                 MotionEvent.ACTION_UP -> {
-                    if (!dragging) {
+                    if (dragging) {
+                        snapToEdge()
+                    } else {
                         performClick()
                         handleClick(event.x, event.y)
                     }
+                    return true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    if (dragging) snapToEdge() else scheduleAutoDockIfNeeded()
                     return true
                 }
             }
@@ -371,8 +550,59 @@ class AutomationOverlay(
             canvas.drawRoundRect(rect, height / 2f, height / 2f, strokePaint)
         }
 
+        private fun drawEdgeHandle(canvas: Canvas, alpha: Int) {
+            val radius = dpFloat(22f)
+            val rect = if (anchorSide == OverlayDockSide.START) {
+                RectF(-radius, dpFloat(7f), width - dpFloat(2f), height - dpFloat(7f))
+            } else {
+                RectF(dpFloat(2f), dpFloat(7f), width + radius, height - dpFloat(7f))
+            }
+            fillPaint.color = COLOR_SURFACE
+            fillPaint.alpha = alpha
+            canvas.drawRoundRect(rect, radius, radius, fillPaint)
+
+            strokePaint.color = COLOR_OUTLINE
+            strokePaint.alpha = alpha
+            strokePaint.strokeWidth = dpFloat(1f)
+            canvas.drawRoundRect(rect, radius, radius, strokePaint)
+
+            val progressX = if (anchorSide == OverlayDockSide.START) {
+                width - dpFloat(7f)
+            } else {
+                dpFloat(7f)
+            }
+            val progressTop = dpFloat(18f)
+            val progressBottom = height - dpFloat(18f)
+            strokePaint.strokeWidth = dpFloat(3f)
+            strokePaint.color = COLOR_PROGRESS_TRACK
+            canvas.drawLine(progressX, progressTop, progressX, progressBottom, strokePaint)
+            strokePaint.color = activePhaseColor()
+            canvas.drawLine(
+                progressX,
+                progressTop,
+                progressX,
+                progressTop + (progressBottom - progressTop) * phaseProgress,
+                strokePaint,
+            )
+
+            val direction = if (anchorSide == OverlayDockSide.START) 1f else -1f
+            val centerX = width / 2f - direction * dpFloat(2f)
+            val centerY = height / 2f
+            strokePaint.color = COLOR_ON_SURFACE
+            strokePaint.strokeWidth = dpFloat(2f)
+            strokePaint.strokeJoin = Paint.Join.ROUND
+            path.reset()
+            path.moveTo(centerX - direction * dpFloat(3f), centerY - dpFloat(6f))
+            path.lineTo(centerX + direction * dpFloat(3f), centerY)
+            path.lineTo(centerX - direction * dpFloat(3f), centerY + dpFloat(6f))
+            canvas.drawPath(path, strokePaint)
+
+            fillPaint.alpha = 255
+            strokePaint.alpha = 255
+        }
+
         private fun drawBubble(canvas: Canvas) {
-            val centerX = compactSize / 2f
+            val centerX = bubbleRect().centerX()
             val centerY = height / 2f
             val ringRadius = dpFloat(29f)
 
@@ -435,8 +665,7 @@ class AutomationOverlay(
                 return
             }
             val alpha = (((expansion - 0.72f) / 0.28f) * 255).roundToInt().coerceIn(0, 255)
-            val metricsLeft = compactSize + dpFloat(4f)
-            val metricsRight = actionRect(ACTION_HOME).left - dpFloat(8f)
+            val (metricsLeft, metricsRight) = metricsHorizontalBounds()
             val cellWidth = (metricsRight - metricsLeft) / 3f
             val centerY = height / 2f
 
@@ -473,8 +702,7 @@ class AutomationOverlay(
             val alpha = (((expansion - 0.72f) / 0.28f) * 255)
                 .roundToInt()
                 .coerceIn(0, 255)
-            val metricsLeft = compactSize + dpFloat(4f)
-            val metricsRight = actionRect(ACTION_HOME).left - dpFloat(8f)
+            val (metricsLeft, metricsRight) = metricsHorizontalBounds()
             val cellWidth = (metricsRight - metricsLeft) / 3f
             val centerY = height / 2f
             drawTextMetric(
@@ -770,22 +998,34 @@ class AutomationOverlay(
         }
 
         private fun handleClick(x: Float, y: Float) {
-            if (expansion < 0.8f) {
-                setExpanded(true)
-                return
-            }
-            when {
-                actionRect(ACTION_HOME).contains(x, y) -> returnToApp()
-                actionRect(ACTION_PAUSE).contains(x, y) -> {
-                    when {
-                        isActiveTerminal() -> restartActive()
-                        isActivePaused() -> resumeActive()
-                        else -> pauseActive()
-                    }
+            when (presentation) {
+                OverlayPresentation.EDGE -> {
+                    setPresentation(OverlayPresentation.COMPACT)
+                    return
                 }
 
-                actionRect(ACTION_STOP).contains(x, y) -> requestStop()
-                x <= compactSize -> setExpanded(false)
+                OverlayPresentation.COMPACT -> {
+                    setPresentation(OverlayPresentation.EXPANDED)
+                    return
+                }
+
+                OverlayPresentation.EXPANDED -> {
+                    when {
+                        actionHitRect(ACTION_HOME).contains(x, y) -> returnToApp()
+                        actionHitRect(ACTION_PAUSE).contains(x, y) -> {
+                            when {
+                                isActiveTerminal() -> restartActive()
+                                isActivePaused() -> resumeActive()
+                                else -> pauseActive()
+                            }
+                        }
+
+                        actionHitRect(ACTION_STOP).contains(x, y) -> requestStop()
+                        bubbleRect().contains(x, y) -> {
+                            setPresentation(OverlayPresentation.COMPACT)
+                        }
+                    }
+                }
             }
         }
 
@@ -796,22 +1036,22 @@ class AutomationOverlay(
 
         private fun restartActive() {
             when (activeMode) {
-                OverlayMode.SHOP -> runtime.restart()
-                OverlayMode.HUNT -> huntRuntime.restart()
+                OverlayMode.SHOP -> taskCoordinator.restart(TaskKind.SHOP)
+                OverlayMode.HUNT -> taskCoordinator.restart(TaskKind.HUNT)
             }
         }
 
         private fun pauseActive() {
             when (activeMode) {
-                OverlayMode.SHOP -> runtime.pause()
-                OverlayMode.HUNT -> huntRuntime.pause()
+                OverlayMode.SHOP -> taskCoordinator.pause(TaskKind.SHOP)
+                OverlayMode.HUNT -> taskCoordinator.pause(TaskKind.HUNT)
             }
         }
 
         private fun resumeActive() {
             when (activeMode) {
-                OverlayMode.SHOP -> runtime.resume()
-                OverlayMode.HUNT -> huntRuntime.resume()
+                OverlayMode.SHOP -> taskCoordinator.resume(TaskKind.SHOP)
+                OverlayMode.HUNT -> taskCoordinator.resume(TaskKind.HUNT)
             }
         }
 
@@ -831,9 +1071,19 @@ class AutomationOverlay(
         }
 
         private fun actionRect(action: Int): RectF {
+            val top = (height.toFloat() - dpFloat(ACTION_SIZE_DP)) / 2f
+            if (isEndAnchored()) {
+                val left = dpFloat(ACTION_PADDING_DP) +
+                    action * (dpFloat(ACTION_SIZE_DP) + dpFloat(ACTION_GAP_DP))
+                return RectF(
+                    left,
+                    top,
+                    left + dpFloat(ACTION_SIZE_DP),
+                    top + dpFloat(ACTION_SIZE_DP),
+                )
+            }
             val right = width.toFloat() - dpFloat(ACTION_PADDING_DP) -
                 action * (dpFloat(ACTION_SIZE_DP) + dpFloat(ACTION_GAP_DP))
-            val top = (height.toFloat() - dpFloat(ACTION_SIZE_DP)) / 2f
             return RectF(
                 right - dpFloat(ACTION_SIZE_DP),
                 top,
@@ -841,6 +1091,25 @@ class AutomationOverlay(
                 top + dpFloat(ACTION_SIZE_DP),
             )
         }
+
+        private fun actionHitRect(action: Int): RectF {
+            val touchInset = dpFloat((ACTION_TOUCH_TARGET_DP - ACTION_SIZE_DP) / 2f)
+            return RectF(actionRect(action)).apply { inset(-touchInset, -touchInset) }
+        }
+
+        private fun metricsHorizontalBounds(): Pair<Float, Float> = if (isEndAnchored()) {
+            actionRect(ACTION_HOME).right + dpFloat(8f) to
+                width.toFloat() - compactSize - dpFloat(4f)
+        } else {
+            compactSize + dpFloat(4f) to actionRect(ACTION_HOME).left - dpFloat(8f)
+        }
+
+        private fun bubbleRect(): RectF {
+            val left = if (isEndAnchored()) width.toFloat() - compactSize else 0f
+            return RectF(left, 0f, left + compactSize, height.toFloat())
+        }
+
+        private fun isEndAnchored(): Boolean = anchorSide == OverlayDockSide.END
 
         private fun animatePhaseProgress(target: Float) {
             if (isActivePaused()) return
@@ -965,6 +1234,14 @@ class AutomationOverlay(
         HUNT,
     }
 
+    private enum class OverlayPresentation(
+        val morph: Float,
+    ) {
+        EDGE(0f),
+        COMPACT(1f),
+        EXPANDED(2f),
+    }
+
     private enum class MetricType {
         COVENANT,
         MYSTIC,
@@ -972,20 +1249,25 @@ class AutomationOverlay(
     }
 
     private companion object {
+        const val EDGE_HANDLE_WIDTH_DP = 48
         const val COMPACT_SIZE_DP = 72
         const val BUBBLE_HEIGHT_DP = 72
         const val EXPANDED_WIDTH_DP = 480
+        const val SCREEN_MARGIN_DP = 8
         const val ACTION_SIZE_DP = 34
-        const val ACTION_GAP_DP = 6
+        const val ACTION_TOUCH_TARGET_DP = 48
+        const val ACTION_GAP_DP = ACTION_TOUCH_TARGET_DP - ACTION_SIZE_DP
         const val ACTION_PADDING_DP = 8
         const val METRIC_ICON_SIZE_DP = 24f
         const val METRIC_ICON_GAP_DP = 2f
         const val ACTION_STOP = 0
         const val ACTION_PAUSE = 1
         const val ACTION_HOME = 2
-        const val EXPAND_DURATION_MS = 240L
+        const val PRESENTATION_DURATION_MS = 240L
+        const val SNAP_DURATION_MS = 280L
         const val PROGRESS_DURATION_MS = 260L
         const val STOP_CONFIRMATION_MS = 3_000L
+        const val AUTO_DOCK_DELAY_MS = 2_400L
         const val HOVER_EXIT_DELAY_MS = 140L
         const val VISION_ASSET_ROOT = "vision/cn_1920x1080"
 

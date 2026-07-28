@@ -47,24 +47,6 @@ class BookmarkStateMachine(
 
     suspend fun run(
         config: RunConfig,
-        gateway: ScreenGateway,
-        awaitRunPermission: suspend () -> Unit,
-        onStatus: (AutomationPhase, RunStats, String, Double?) -> Unit,
-        onDiagnostic: suspend (ScreenFrame, String) -> Unit,
-    ): MachineResult = run(
-        config = config,
-        session = AutomationSession(
-            gateway = gateway,
-            clock = clock,
-            awaitRunPermission = awaitRunPermission,
-            onDiagnostic = onDiagnostic,
-            logger = logger,
-        ),
-        onStatus = onStatus,
-    )
-
-    suspend fun run(
-        config: RunConfig,
         session: AutomationSession,
         onStatus: (AutomationPhase, RunStats, String, Double?) -> Unit,
     ): MachineResult {
@@ -191,7 +173,6 @@ class BookmarkStateMachine(
                                 waitForPage(
                                     expected = ShopPage.SHOP,
                                     timeoutMs = PAGE_TIMEOUT_MS,
-                                    consecutiveMatches = 2,
                                     session = session,
                                 )
                             }
@@ -199,7 +180,6 @@ class BookmarkStateMachine(
                             ShopPage.SHOP -> waitForPage(
                                 expected = ShopPage.SHOP,
                                 timeoutMs = PAGE_TIMEOUT_MS,
-                                consecutiveMatches = 1,
                                 session = session,
                             )
 
@@ -328,7 +308,6 @@ class BookmarkStateMachine(
                             waitForPage(
                                 expected = ShopPage.SHOP,
                                 timeoutMs = PAGE_TIMEOUT_MS,
-                                consecutiveMatches = 2,
                                 session = session,
                             )
                         }
@@ -483,7 +462,6 @@ class BookmarkStateMachine(
                             waitForPage(
                                 expected = ShopPage.SHOP,
                                 timeoutMs = PAGE_TIMEOUT_MS,
-                                consecutiveMatches = 1,
                                 session = session,
                             )
                         }
@@ -499,9 +477,7 @@ class BookmarkStateMachine(
         }
 
     private suspend fun observeShopPage(session: AutomationSession): ShopPage =
-        session.executor.capture("shop.reconcile_page").use { frame ->
-            vision.detectPage(frame)
-        }
+        session.currentUiSnapshot().page.toShopPage()
 
     private fun requireRefreshConfirmation(page: ShopPage?) {
         when (page) {
@@ -537,8 +513,8 @@ class BookmarkStateMachine(
         scanKey: String,
     ) {
         val operations = session.executor
+        val page = session.currentUiSnapshot().page.toShopPage()
         val initialTargets = operations.capture("shop.scan_page").use { frame ->
-            val page = vision.detectPage(frame)
             logger.debug(
                 "scan.page",
                 "sequence" to frame.sequence,
@@ -619,6 +595,7 @@ class BookmarkStateMachine(
                 reason = when (error.failure) {
                     HomeNavigationFailure.SCREENSHOT_FAILED -> StopReason.SCREENSHOT_FAILED
                     HomeNavigationFailure.INVALID_RESOLUTION -> StopReason.INVALID_RESOLUTION
+                    HomeNavigationFailure.UI_STATE_MISMATCH -> StopReason.UNKNOWN_PAGE
                     HomeNavigationFailure.LOW_CONFIDENCE -> StopReason.LOW_CONFIDENCE
                     HomeNavigationFailure.TIMEOUT -> StopReason.TIMEOUT
                     HomeNavigationFailure.GESTURE_FAILED -> StopReason.GESTURE_FAILED
@@ -640,62 +617,25 @@ class BookmarkStateMachine(
     private suspend fun waitForPage(
         expected: ShopPage,
         timeoutMs: Long,
-        consecutiveMatches: Int,
         session: AutomationSession,
     ) {
-        var count = 0
-        var unknownDiagnosticSaved = false
-        val operations = session.executor
         try {
-            operations.waitUntil<Unit>(
-                operationId = "shop.wait_${expected.name.lowercase()}",
+            val snapshot = session.awaitUi(
+                contract = TaskUiContract(
+                    task = TaskKind.SHOP,
+                    step = "wait_${expected.name.lowercase()}",
+                    allowedPages = setOf(
+                        expected.toGameUiPage(),
+                        GameUiPage.RESOURCE_INSUFFICIENT,
+                    ),
+                ),
                 timeoutMs = timeoutMs,
-                pollIntervalMs = POLL_INTERVAL_MS,
-                diagnosticReason = "wait_${expected.name}",
-            ) {
-                val page = operations.capture("shop.observe_${expected.name.lowercase()}")
-                    .use { frame ->
-                        val detected = vision.detectPage(frame)
-                        logger.debug(
-                            "wait.page",
-                            "sequence" to frame.sequence,
-                            "expected" to expected,
-                            "detected" to detected,
-                            "matchCount" to count,
-                        )
-                        if (detected == ShopPage.UNKNOWN && !unknownDiagnosticSaved) {
-                            try {
-                                session.saveDiagnostic(
-                                    frame,
-                                    "unknown_wait_${expected.name}_${frame.sequence}",
-                                )
-                                unknownDiagnosticSaved = true
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (error: Throwable) {
-                                logger.error(
-                                    "diagnostic.save_failed",
-                                    error,
-                                    "sequence" to frame.sequence,
-                                )
-                            }
-                        }
-                        detected
-                    }
-                if (page == ShopPage.RESOURCE_INSUFFICIENT) {
-                    throw MachineStop(
-                        StopReason.RESOURCE_INSUFFICIENT,
-                        "资源不足，已停止",
-                    )
-                }
-                count = if (page == expected) count + 1 else 0
-                Unit.takeIf { count >= consecutiveMatches }
+            )
+            if (snapshot.page == GameUiPage.RESOURCE_INSUFFICIENT) {
+                throw MachineStop(StopReason.RESOURCE_INSUFFICIENT, "资源不足，已停止")
             }
-        } catch (error: OperationExecutionException) {
-            if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
-                throw MachineStop(StopReason.TIMEOUT, "等待 ${expected.name} 超时")
-            }
-            throw error
+        } catch (_: UiStateMismatchException) {
+            throw MachineStop(StopReason.TIMEOUT, "等待 ${expected.name} 超时")
         }
     }
 
@@ -704,45 +644,17 @@ class BookmarkStateMachine(
         timeoutMs: Long,
         session: AutomationSession,
     ): ShopPage {
-        var unknownDiagnosticSaved = false
-        val operations = session.executor
         try {
-            return operations.waitUntil(
-                operationId = "shop.wait_any_page",
+            return session.awaitUi(
+                contract = TaskUiContract(
+                    task = TaskKind.SHOP,
+                    step = "wait_any_page",
+                    allowedPages = expected.mapTo(mutableSetOf(), ShopPage::toGameUiPage),
+                ),
                 timeoutMs = timeoutMs,
-                pollIntervalMs = POLL_INTERVAL_MS,
-                diagnosticReason = "wait_any_page",
-            ) {
-                operations.capture("shop.observe_any_page").use { frame ->
-                    val detected = vision.detectPage(frame)
-                    logger.debug(
-                        "wait.any_page",
-                        "sequence" to frame.sequence,
-                        "expected" to expected.joinToString(),
-                        "detected" to detected,
-                    )
-                    if (detected == ShopPage.UNKNOWN && !unknownDiagnosticSaved) {
-                        try {
-                            session.saveDiagnostic(frame, "unknown_wait_any_${frame.sequence}")
-                            unknownDiagnosticSaved = true
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (error: Throwable) {
-                            logger.error(
-                                "diagnostic.save_failed",
-                                error,
-                                "sequence" to frame.sequence,
-                            )
-                        }
-                    }
-                    detected.takeIf { it in expected }
-                }
-            }
-        } catch (error: OperationExecutionException) {
-            if (error.failure.kind == ExecutionFailureKind.TIMEOUT) {
-                throw MachineStop(StopReason.TIMEOUT, "等待页面变化超时")
-            }
-            throw error
+            ).page.toShopPage()
+        } catch (_: UiStateMismatchException) {
+            throw MachineStop(StopReason.TIMEOUT, "等待页面变化超时")
         }
     }
 
@@ -759,6 +671,7 @@ class BookmarkStateMachine(
     private fun ExecutionFailureKind.toStopReason(): StopReason = when (this) {
         ExecutionFailureKind.SCREENSHOT_FAILED -> StopReason.SCREENSHOT_FAILED
         ExecutionFailureKind.INVALID_RESOLUTION -> StopReason.INVALID_RESOLUTION
+        ExecutionFailureKind.UI_STATE_MISMATCH -> StopReason.UNKNOWN_PAGE
         ExecutionFailureKind.GESTURE_FAILED -> StopReason.GESTURE_FAILED
         ExecutionFailureKind.UNCERTAIN_EFFECT -> StopReason.UNCERTAIN_EFFECT
         ExecutionFailureKind.TIMEOUT -> StopReason.TIMEOUT
@@ -859,7 +772,6 @@ class BookmarkStateMachine(
         const val WAIT_FOR_SHOP_TIMEOUT_MS = 5 * 60 * 1000L
         const val DIALOG_TIMEOUT_MS = 8_000L
         const val PAGE_TIMEOUT_MS = 15_000L
-        const val POLL_INTERVAL_MS = 450L
         const val SCROLL_DURATION_MS = 500L
         const val AFTER_SCROLL_DELAY_MS = 800L
         const val TARGET_REVALIDATE_TOLERANCE_PX = 100

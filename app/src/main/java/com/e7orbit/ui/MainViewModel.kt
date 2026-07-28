@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.e7orbit.AppGraph
+import com.e7orbit.automation.TaskKind
 import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7DataSnapshot
@@ -143,8 +144,7 @@ internal class PersistedDraft<T>(initialValue: T) {
 class MainViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
-    private val runtime = AppGraph.automationRuntime
-    private val huntRuntime = AppGraph.huntRuntime
+    private val taskCoordinator = AppGraph.taskCoordinator
     private val settings = AppGraph.settingsRepository
     private val draftConfig = PersistedDraft(RunConfig())
     private val draftHuntConfig = PersistedDraft(HuntConfig())
@@ -152,8 +152,8 @@ class MainViewModel(
     private val data = MutableStateFlow(DataUiState())
     private var rtaRequestId = 0L
     private val runtimeStatuses = combine(
-        runtime.status,
-        huntRuntime.status,
+        taskCoordinator.shopStatus,
+        taskCoordinator.huntStatus,
     ) { shop, hunt -> shop to hunt }
 
     private val baseUiState: Flow<MainUiState> = combine(
@@ -192,13 +192,11 @@ class MainViewModel(
                 draftHuntConfig.acceptPersisted(saved)
             }
         }
-        runtime.refreshHealth()
-        huntRuntime.refreshHealth()
+        taskCoordinator.refreshHealth()
     }
 
     fun refreshEnvironment() {
-        runtime.refreshHealth()
-        huntRuntime.refreshHealth()
+        taskCoordinator.refreshHealth()
         environment.value = readEnvironment()
     }
 
@@ -410,8 +408,8 @@ class MainViewModel(
         refreshEnvironment()
         viewModelScope.launch {
             val config = draftConfig.value.normalized()
-            runtime.start(config)
-            if (runtime.status.value.isRunning) {
+            taskCoordinator.startShop(config)
+            if (taskCoordinator.shopStatus.value.isRunning) {
                 launchGame()
             }
         }
@@ -421,32 +419,32 @@ class MainViewModel(
         refreshEnvironment()
         viewModelScope.launch {
             val config = draftHuntConfig.value.normalized()
-            huntRuntime.start(config)
-            if (huntRuntime.status.value.isRunning) {
+            taskCoordinator.startHunt(config)
+            if (taskCoordinator.huntStatus.value.isRunning) {
                 launchGame()
             }
         }
     }
 
     fun pauseOrResume() {
-        if (runtime.status.value.phase == com.e7orbit.model.AutomationPhase.PAUSED) {
-            runtime.resume()
+        if (taskCoordinator.shopStatus.value.phase == com.e7orbit.model.AutomationPhase.PAUSED) {
+            taskCoordinator.resume(TaskKind.SHOP)
         } else {
-            runtime.pause()
+            taskCoordinator.pause(TaskKind.SHOP)
         }
     }
 
-    fun stop() = runtime.stop()
+    fun stop() = taskCoordinator.stop(TaskKind.SHOP)
 
     fun pauseOrResumeHunt() {
-        if (huntRuntime.status.value.phase == HuntPhase.PAUSED) {
-            huntRuntime.resume()
+        if (taskCoordinator.huntStatus.value.phase == HuntPhase.PAUSED) {
+            taskCoordinator.resume(TaskKind.HUNT)
         } else {
-            huntRuntime.pause()
+            taskCoordinator.pause(TaskKind.HUNT)
         }
     }
 
-    fun stopHunt() = huntRuntime.stop()
+    fun stopHunt() = taskCoordinator.stop(TaskKind.HUNT)
 
     fun openAccessibilitySettings() {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {

@@ -39,12 +39,10 @@ class BookmarkStateMachineTest {
         )
         val gateway = FakeGateway()
 
-        val result = machine(vision).run(
+        val result = runMachine(
+            vision = vision,
             config = RunConfig(maxRefreshes = 1),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertTrue(result.successful)
@@ -70,6 +68,7 @@ class BookmarkStateMachineTest {
         val machine = machine(vision)
         val session = AutomationSession(
             gateway = FakeGateway(),
+            uiStateSource = vision.uiStateSource,
             clock = FakeClock(),
             awaitRunPermission = {},
             onDiagnostic = { _, _ -> },
@@ -116,12 +115,10 @@ class BookmarkStateMachineTest {
             swipeResults = listOf(GestureResult.CANCELLED, GestureResult.COMPLETED),
         )
 
-        val result = machine(vision).run(
+        val result = runMachine(
+            vision = vision,
             config = RunConfig(maxRefreshes = 1),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertTrue(result.successful)
@@ -149,12 +146,10 @@ class BookmarkStateMachineTest {
             ),
         )
 
-        val result = machine(vision).run(
+        val result = runMachine(
+            vision = vision,
             config = RunConfig(maxRefreshes = 1),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -178,12 +173,10 @@ class BookmarkStateMachineTest {
         )
         val gateway = FakeGateway()
 
-        val result = machine(vision).run(
+        val result = runMachine(
+            vision = vision,
             config = RunConfig(maxRefreshes = 1),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -221,12 +214,10 @@ class BookmarkStateMachineTest {
         )
         val gateway = FakeGateway()
 
-        val result = machine(vision).run(
+        val result = runMachine(
+            vision = vision,
             config = RunConfig(maxRefreshes = 1),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertTrue(result.successful)
@@ -265,12 +256,10 @@ class BookmarkStateMachineTest {
             ),
         )
 
-        val result = machine(vision).run(
+        val result = runMachine(
+            vision = vision,
             config = RunConfig(maxRefreshes = 1),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -290,12 +279,10 @@ class BookmarkStateMachineTest {
             targets = emptyList(),
         )
 
-        val result = machine(vision).run(
+        val result = runMachine(
+            vision = vision,
             config = RunConfig(maxRefreshes = 10),
             gateway = FakeGateway(),
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -315,12 +302,10 @@ class BookmarkStateMachineTest {
             targets = emptyList(),
         )
 
-        val result = machine(vision).run(
+        val result = runMachine(
+            vision = vision,
             config = RunConfig(maxRefreshes = 10),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -340,15 +325,14 @@ class BookmarkStateMachineTest {
 
         var cancelled = false
         try {
-            machine(vision).run(
+            runMachine(
+                vision = vision,
                 config = RunConfig(maxRefreshes = 10),
                 gateway = gateway,
                 awaitRunPermission = {
                     gateCalls += 1
                     if (gateCalls >= 3) throw CancellationException("paused job cancelled")
                 },
-                onStatus = { _, _, _, _ -> },
-                onDiagnostic = { _, _ -> },
             )
         } catch (_: CancellationException) {
             cancelled = true
@@ -370,6 +354,22 @@ class BookmarkStateMachineTest {
             templates = emptyList(),
         ),
         clock = FakeClock(),
+    )
+
+    private suspend fun runMachine(
+        vision: FakeVision,
+        config: RunConfig,
+        gateway: ScreenGateway,
+        awaitRunPermission: suspend () -> Unit = {},
+    ): MachineResult = machine(vision).run(
+        config = config,
+        session = testSession(
+            gateway = gateway,
+            uiStateSource = vision.uiStateSource,
+            clock = FakeClock(),
+            awaitRunPermission = awaitRunPermission,
+        ),
+        onStatus = { _, _, _, _ -> },
     )
 }
 
@@ -411,7 +411,10 @@ private class FakeVision(
     targets: List<List<PurchaseTarget>>,
     private val fallbackPage: ShopPage = ShopPage.SHOP,
 ) : ShopVision {
-    private val pages = ArrayDeque(pages)
+    val uiStateSource = TestGameUiStateSource(
+        pages = pages.map(ShopPage::toGameUiPage),
+        fallbackPage = fallbackPage.toGameUiPage(),
+    )
     private val targets = ArrayDeque(targets)
     val actions = mutableListOf<VisualAction>()
 
@@ -423,7 +426,7 @@ private class FakeVision(
     )
 
     override suspend fun detectPage(frame: ScreenFrame): ShopPage =
-        pages.pollFirst() ?: fallbackPage
+        fallbackPage
 
     override suspend fun findTargets(
         frame: ScreenFrame,

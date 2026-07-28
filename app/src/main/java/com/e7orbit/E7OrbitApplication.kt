@@ -2,13 +2,14 @@ package com.e7orbit
 
 import android.app.Application
 import android.content.Context
-import com.e7orbit.automation.AutomationRuntime
-import com.e7orbit.automation.AutomationRunCoordinator
-import com.e7orbit.automation.AutomationSessionManager
+import com.e7orbit.automation.CompositeGameUiRecognizer
 import com.e7orbit.automation.FileWorkflowCheckpointStore
+import com.e7orbit.automation.GameUiMonitor
 import com.e7orbit.automation.GlobalUiVision
-import com.e7orbit.automation.HuntRuntime
 import com.e7orbit.automation.HomeNavigator
+import com.e7orbit.automation.HuntTaskRunner
+import com.e7orbit.automation.ShopTaskRunner
+import com.e7orbit.automation.TaskCoordinator
 import com.e7orbit.capture.ProjectionCaptureRepository
 import com.e7orbit.data.DiagnosticStore
 import com.e7orbit.data.E7DataRepository
@@ -44,9 +45,7 @@ object AppGraph {
         private set
     lateinit var templateRepository: TemplateRepository
         private set
-    lateinit var automationRuntime: AutomationRuntime
-        private set
-    lateinit var huntRuntime: HuntRuntime
+    lateinit var taskCoordinator: TaskCoordinator
         private set
 
     var openCvReady: Boolean = false
@@ -66,38 +65,44 @@ object AppGraph {
         e7DataRepository = E7DataRepository(appContext)
         diagnosticStore = DiagnosticStore(appContext)
         templateRepository = TemplateRepository(appContext, openCvReady)
-        val runCoordinator = AutomationRunCoordinator()
         val checkpointStore = FileWorkflowCheckpointStore(
             appContext.filesDir.resolve("automation/workflow-checkpoints.jsonl"),
         )
-        val sessionManager = AutomationSessionManager(
-            coordinator = runCoordinator,
-            checkpointStore = checkpointStore,
-        )
         val shopVision = OpenCvShopVision(templateRepository, logger)
+        val huntVision = OpenCvHuntVision(templateRepository, logger)
         val globalUiVision: GlobalUiVision = shopVision
         val homeNavigator = HomeNavigator(
             vision = globalUiVision,
             logger = logger,
         )
-        automationRuntime = AutomationRuntime(
+        val shopRunner = ShopTaskRunner(
             vision = shopVision,
             visionConfig = templateRepository.config,
             settingsRepository = settingsRepository,
-            diagnosticStore = diagnosticStore,
             logger = logger,
-            captureReady = { projectionCapture.isReady.value },
-            sessionManager = sessionManager,
             homeNavigator = homeNavigator,
         )
-        huntRuntime = HuntRuntime(
-            vision = OpenCvHuntVision(templateRepository, logger),
+        val huntRunner = HuntTaskRunner(
+            vision = huntVision,
             settingsRepository = settingsRepository,
+            logger = logger,
+            homeNavigator = homeNavigator,
+        )
+        val uiMonitor = GameUiMonitor(
+            recognizer = CompositeGameUiRecognizer(
+                shopVision = shopVision,
+                huntVision = huntVision,
+                globalVision = globalUiVision,
+            ),
+        )
+        taskCoordinator = TaskCoordinator(
+            shopRunner = shopRunner,
+            huntRunner = huntRunner,
+            uiMonitor = uiMonitor,
             diagnosticStore = diagnosticStore,
+            checkpointStore = checkpointStore,
             logger = logger,
             captureReady = { projectionCapture.isReady.value },
-            sessionManager = sessionManager,
-            homeNavigator = homeNavigator,
         )
         initialized = true
     }
@@ -105,8 +110,7 @@ object AppGraph {
     @Synchronized
     fun close() {
         if (!initialized) return
-        automationRuntime.shutdown()
-        huntRuntime.shutdown()
+        taskCoordinator.shutdown()
         templateRepository.close()
         logger.close()
         initialized = false

@@ -47,31 +47,28 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
         AppGraph.logger.info("service.connected")
         overlay = AutomationOverlay(
             this,
-            AppGraph.automationRuntime,
-            AppGraph.huntRuntime,
+            AppGraph.taskCoordinator,
         )
-        AppGraph.automationRuntime.attachGateway(this)
-        AppGraph.huntRuntime.attachGateway(this)
+        AppGraph.taskCoordinator.attachGateway(this)
         statusJob?.cancel()
         statusJob = serviceScope.launch {
             combine(
-                AppGraph.automationRuntime.status,
-                AppGraph.huntRuntime.status,
+                AppGraph.taskCoordinator.shopStatus,
+                AppGraph.taskCoordinator.huntStatus,
             ) { shop, hunt -> shop to hunt }
                 .collectLatest { (shop, hunt) -> overlay?.render(shop, hunt) }
         }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.packageName?.toString() == E7_CN_PACKAGE) {
-            targetAppForeground.value = true
+        event?.packageName?.toString()?.let { packageName ->
+            targetAppForeground.value = packageName == E7_CN_PACKAGE
         }
     }
 
     override fun onInterrupt() {
         AppGraph.logger.warn("service.interrupted")
-        AppGraph.automationRuntime.pause()
-        AppGraph.huntRuntime.pause()
+        AppGraph.taskCoordinator.activeTask.value?.let(AppGraph.taskCoordinator::pause)
     }
 
     override fun onDestroy() {
@@ -79,8 +76,7 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
         statusJob?.cancel()
         overlay?.destroy()
         overlay = null
-        AppGraph.automationRuntime.detachGateway(this)
-        AppGraph.huntRuntime.detachGateway(this)
+        AppGraph.taskCoordinator.detachGateway(this)
         targetAppForeground.value = false
         serviceScope.cancel()
         super.onDestroy()
@@ -94,6 +90,9 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
         } != null
     }
 
+    override fun isTargetAppForeground(): Boolean =
+        rootInActiveWindow?.packageName?.toString() == E7_CN_PACKAGE
+
     override suspend fun capture(): ScreenFrame = captureMutex.withLock {
         val elapsed = SystemClock.elapsedRealtime() - lastCaptureAt
         if (elapsed < MIN_CAPTURE_INTERVAL_MS) {
@@ -101,16 +100,23 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
         }
 
         try {
+            withContext(Dispatchers.Main.immediate) {
+                overlay?.setCaptureSuppressed(true)
+            }
+            delay(OVERLAY_SETTLE_DELAY_MS)
             AppGraph.projectionCapture.capture().also { frame ->
                 AppGraph.logger.debug(
                     "service.capture",
                     "sequence" to frame.sequence,
                     "width" to frame.width,
                     "height" to frame.height,
-                    "overlayHidden" to false,
+                    "overlayHidden" to true,
                 )
             }
         } finally {
+            withContext(Dispatchers.Main.immediate) {
+                overlay?.setCaptureSuppressed(false)
+            }
             lastCaptureAt = SystemClock.elapsedRealtime()
         }
     }
@@ -199,6 +205,7 @@ class E7AccessibilityService : AccessibilityService(), ScreenGateway {
 
     private companion object {
         const val MIN_CAPTURE_INTERVAL_MS = 360L
+        const val OVERLAY_SETTLE_DELAY_MS = 34L
         const val TAP_DURATION_MS = 80L
         const val GESTURE_CALLBACK_TIMEOUT_MS = 5_000L
     }

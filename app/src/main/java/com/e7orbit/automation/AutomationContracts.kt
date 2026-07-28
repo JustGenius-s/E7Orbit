@@ -1,6 +1,5 @@
 package com.e7orbit.automation
 
-import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.GameLocation
 import com.e7orbit.model.GestureResult
 import com.e7orbit.model.HuntDungeon
@@ -12,9 +11,9 @@ import com.e7orbit.model.ScreenFrame
 import com.e7orbit.model.ScreenPoint
 import com.e7orbit.model.ShopPage
 import com.e7orbit.model.VisualAction
-import kotlinx.coroutines.flow.StateFlow
 
 interface ScreenGateway {
+    fun isTargetAppForeground(): Boolean = true
     suspend fun awaitTargetApp(timeoutMs: Long): Boolean = true
     suspend fun capture(): ScreenFrame
     suspend fun tap(point: ScreenPoint): GestureResult
@@ -28,6 +27,8 @@ interface ScreenGateway {
 internal class SwitchingScreenGateway(
     private val currentGateway: () -> ScreenGateway?,
 ) : ScreenGateway {
+    override fun isTargetAppForeground(): Boolean = current().isTargetAppForeground()
+
     override suspend fun awaitTargetApp(timeoutMs: Long): Boolean =
         current().awaitTargetApp(timeoutMs)
 
@@ -83,14 +84,6 @@ interface HuntVision : VisualActionVision {
     suspend fun findDungeon(frame: ScreenFrame, dungeon: HuntDungeon): MatchResult
     suspend fun isManagedBattleEnabled(frame: ScreenFrame): Boolean
     suspend fun managedProgressSignature(frame: ScreenFrame): Long
-}
-
-interface AutomationController {
-    val status: StateFlow<AutomationStatus>
-    suspend fun start(config: RunConfig)
-    fun pause()
-    fun resume()
-    fun stop()
 }
 
 interface AutomationClock {

@@ -46,6 +46,7 @@ class HuntStateMachineTest {
         )
         val session = AutomationSession(
             gateway = gateway,
+            uiStateSource = vision.uiStateSource,
             clock = clock,
             awaitRunPermission = {},
             onDiagnostic = { _, _ -> },
@@ -96,15 +97,10 @@ class HuntStateMachineTest {
             progressSignatures = listOf(10L, 20L),
         )
 
-        val result = HuntStateMachine(
+        val result = runMachine(
             vision = vision,
-            clock = FakeHuntClock(),
-        ).run(
             config = HuntConfig(runCount = 2),
             gateway = FakeHuntGateway(),
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -135,15 +131,10 @@ class HuntStateMachineTest {
             ),
         )
 
-        val result = HuntStateMachine(
+        val result = runMachine(
             vision = vision,
-            clock = FakeHuntClock(),
-        ).run(
             config = HuntConfig(runCount = 1),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -175,19 +166,14 @@ class HuntStateMachineTest {
         }
         val gateway = FakeHuntGateway()
 
-        val result = HuntStateMachine(
+        val result = runMachine(
             vision = FakeHuntVision(
                 pages = managedPages,
                 managedStates = listOf(true),
                 progressSignatures = signatures,
             ),
-            clock = FakeHuntClock(),
-        ).run(
             config = HuntConfig(runCount = 31),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -213,19 +199,14 @@ class HuntStateMachineTest {
         }
         val gateway = FakeHuntGateway()
 
-        val result = HuntStateMachine(
+        val result = runMachine(
             vision = FakeHuntVision(
                 pages = pages,
                 managedStates = listOf(true),
                 progressSignatures = List(901) { 0L },
             ),
-            clock = FakeHuntClock(),
-        ).run(
             config = HuntConfig(runCount = 1),
             gateway = gateway,
-            awaitRunPermission = {},
-            onStatus = { _, _, _, _ -> },
-            onDiagnostic = { _, _ -> },
         )
 
         assertFalse(result.successful)
@@ -239,7 +220,10 @@ class HuntStateMachineTest {
         managedStates: List<Boolean>,
         progressSignatures: List<Long>,
     ) : HuntVision {
-        private val pages = ArrayDeque(pages)
+        val uiStateSource = TestGameUiStateSource(
+            pages = pages.map(HuntPage::toGameUiPage),
+            fallbackPage = pages.lastOrNull()?.toGameUiPage() ?: GameUiPage.UNKNOWN,
+        )
         private val managedStates = ArrayDeque(managedStates)
         private val signatures = ArrayDeque(progressSignatures)
 
@@ -251,7 +235,7 @@ class HuntStateMachineTest {
         )
 
         override suspend fun detectPage(frame: ScreenFrame): HuntPage =
-            pages.removeFirst()
+            HuntPage.UNKNOWN
 
         override suspend fun findDungeon(
             frame: ScreenFrame,
@@ -312,6 +296,23 @@ class HuntStateMachineTest {
         override suspend fun delay(durationMs: Long) {
             now += durationMs
         }
+    }
+
+    private suspend fun runMachine(
+        vision: FakeHuntVision,
+        config: HuntConfig,
+        gateway: ScreenGateway,
+    ): HuntMachineResult {
+        val clock = FakeHuntClock()
+        return HuntStateMachine(vision = vision, clock = clock).run(
+            config = config,
+            session = testSession(
+                gateway = gateway,
+                uiStateSource = vision.uiStateSource,
+                clock = clock,
+            ),
+            onStatus = { _, _, _, _ -> },
+        )
     }
 
 }

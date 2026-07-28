@@ -55,6 +55,7 @@ data class OperationPolicy(
 enum class ExecutionFailureKind {
     SCREENSHOT_FAILED,
     INVALID_RESOLUTION,
+    UI_STATE_MISMATCH,
     GESTURE_FAILED,
     UNCERTAIN_EFFECT,
     TIMEOUT,
@@ -84,6 +85,7 @@ class OperationExecutor(
     private val awaitRunPermission: suspend () -> Unit,
     private val onDiagnostic: suspend (ScreenFrame, String) -> Unit,
     private val onGestureReceipt: (GestureReceipt) -> Unit = {},
+    private val beforeGesture: suspend (String) -> Unit = {},
     private val logger: OrbitLogger = NoOpOrbitLogger,
 ) {
     private var excludedPermissionWaitMs = 0L
@@ -151,6 +153,7 @@ class OperationExecutor(
     ): GestureResult {
         repeat(policy.maxAttempts) { attempt ->
             awaitActive()
+            beforeGesture(operationId)
             val token = GestureToken(nextGestureToken.incrementAndGet())
             recordGesture(
                 token = token,
