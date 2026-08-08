@@ -20,7 +20,8 @@ object GearExportSerializer {
             put("enhance", JsonPrimitive(gear.enhance))
             put("main", serializeStat(gear.mainStat))
             put("substats", JsonArray(gear.substats.map(::serializeStat)))
-            put("ingameId", JsonPrimitive(gear.id.toString()))
+            put("id", JsonPrimitive(gear.id))
+            put("ingameId", JsonPrimitive(gear.id))
             gear.equippedHeroId?.let {
                 put("ingameEquippedId", JsonPrimitive(it.toString()))
             }
