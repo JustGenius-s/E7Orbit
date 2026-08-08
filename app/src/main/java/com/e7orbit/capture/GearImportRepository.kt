@@ -2,6 +2,7 @@ package com.e7orbit.capture
 
 import android.content.Context
 import com.e7orbit.data.E7Gear
+import com.e7orbit.data.GearExportSerializer
 import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.GearImportState
 import com.e7orbit.logging.OrbitLogger
@@ -37,6 +38,7 @@ class GearImportRepository(
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val storeFile = appContext.filesDir.resolve("gear-scan/imported-gears.json")
+    private val exportFile = appContext.filesDir.resolve("gear-scan/gear.txt")
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -63,15 +65,24 @@ class GearImportRepository(
                 val root = json.parseToJsonElement(response).jsonObject
                 val status = root["status"]?.jsonPrimitive?.contentOrNull
                 check(status == "SUCCESS") { "解析服务返回 $status" }
-                val gears = root["data"]?.jsonArray
-                    ?.mapNotNull { element -> GearImportParser.parseItem(element.jsonObject) }
+                val rawItems = root["data"]?.jsonArray
+                    ?.mapNotNull { it as? JsonObject }
                     .orEmpty()
+                val gears = rawItems.mapNotNull(GearImportParser::parseItem)
                 check(gears.isNotEmpty()) { "解析服务没有识别到装备，请重新打开背包后扫描" }
-                val heroCount = root["units"]?.jsonArray
-                    ?.maxOfOrNull { (it as? JsonArray)?.size ?: 0 }
-                    ?: 0
+                val rawHeroes = root["units"]?.jsonArray
+                    ?.mapNotNull { it as? JsonArray }
+                    ?.maxByOrNull(JsonArray::size)
+                    ?.mapNotNull { it as? JsonObject }
+                    .orEmpty()
+                val heroCount = rawHeroes.size
                 val importedAt = System.currentTimeMillis()
-                persist(gears, heroCount, importedAt)
+                val export = GearExportSerializer.serializeScannerExport(
+                    gears = gears,
+                    rawItems = rawItems,
+                    rawHeroes = rawHeroes,
+                )
+                persist(gears, heroCount, importedAt, export)
                 _state.value = GearImportState(
                     phase = GearImportPhase.READY,
                     gears = gears,
@@ -121,13 +132,32 @@ class GearImportRepository(
         }
     }
 
-    private fun persist(gears: List<E7Gear>, heroCount: Int, importedAt: Long) {
+    fun hasCompatibleExport(): Boolean = exportFile.exists()
+
+    fun readGearExport(): String {
+        check(hasCompatibleExport()) {
+            "当前装备数据来自旧版本，请重新抓包并打开背包后再导出"
+        }
+        return exportFile.readText(Charsets.UTF_8)
+    }
+
+    private fun persist(
+        gears: List<E7Gear>,
+        heroCount: Int,
+        importedAt: Long,
+        export: String,
+    ) {
         storeFile.parentFile?.mkdirs()
         val saved = SavedGearImport(gears, heroCount, importedAt)
-        val temp = storeFile.resolveSibling("${storeFile.name}.tmp")
-        temp.writeText(json.encodeToString(saved), Charsets.UTF_8)
-        if (storeFile.exists()) check(storeFile.delete()) { "无法更新装备数据" }
-        check(temp.renameTo(storeFile)) { "无法保存装备数据" }
+        writeAtomically(storeFile, json.encodeToString(saved))
+        writeAtomically(exportFile, export)
+    }
+
+    private fun writeAtomically(file: File, content: String) {
+        val temp = file.resolveSibling("${file.name}.tmp")
+        temp.writeText(content, Charsets.UTF_8)
+        if (file.exists()) check(file.delete()) { "无法更新 ${file.name}" }
+        check(temp.renameTo(file)) { "无法保存 ${file.name}" }
     }
 
     private fun loadSavedState(): GearImportState = runCatching {

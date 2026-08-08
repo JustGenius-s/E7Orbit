@@ -57,7 +57,6 @@ import com.e7orbit.AppGraph
 import com.e7orbit.R
 import com.e7orbit.capture.MediaProjectionCaptureService
 import com.e7orbit.capture.VpnCaptureService
-import com.e7orbit.data.GearExportSerializer
 import com.e7orbit.ui.theme.E7OrbitTheme
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -106,11 +105,10 @@ class MainActivity : ComponentActivity() {
         runCatching {
             val gears = AppGraph.gearImportRepository.state.value.gears
             check(gears.isNotEmpty()) { "没有可导出的装备" }
+            val export = AppGraph.gearImportRepository.readGearExport()
             val output = contentResolver.openOutputStream(uri, "wt")
                 ?: error("无法打开导出文件")
-            output.bufferedWriter(Charsets.UTF_8).use {
-                it.write(GearExportSerializer.serialize(gears))
-            }
+            output.bufferedWriter(Charsets.UTF_8).use { it.write(export) }
             AppGraph.logger.info("gear.export_succeeded", "items" to gears.size, "uri" to uri)
             Toast.makeText(this, "已导出 ${gears.size} 件装备", Toast.LENGTH_LONG).show()
         }.onFailure { error ->
@@ -149,7 +147,7 @@ class MainActivity : ComponentActivity() {
                     onLoadData = viewModel::loadData,
                     onDataSectionChanged = viewModel::setDataSection,
                     onDataQueryChanged = viewModel::setDataQuery,
-                    onExportGear = { gearExportLauncher.launch("gear.txt") },
+                    onExportGear = ::startGearExport,
                     onSelectHero = viewModel::selectHero,
                     onSelectArtifact = viewModel::selectArtifact,
                     onRtaSeasonChanged = viewModel::setRtaSeason,
@@ -163,6 +161,18 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshEnvironment()
+    }
+
+    private fun startGearExport() {
+        if (!AppGraph.gearImportRepository.hasCompatibleExport()) {
+            Toast.makeText(
+                this,
+                "当前数据来自旧版本，请重新抓包并打开背包后再导出",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        gearExportLauncher.launch("gear.txt")
     }
 
     private fun requestProjection(automation: PendingAutomation) {
