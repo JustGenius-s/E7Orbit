@@ -34,6 +34,16 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 
 国服识图模板随 APK 一并打包；主页“识图模板”应显示已加载。游戏更新可能使模板失效，低置信度或未知页面会触发安全停止并自动保留诊断截图，可通过 `.\tools\export-diagnostics.ps1` 导出分析。
 
+## 装备导入
+
+1. 在首页开启“装备抓包”，完成 Android VPN 授权。
+2. 冷启动第七史诗并打开一次背包。
+3. 返回 E7 Orbit，点击“停止”；应用会关闭 VPN 并异步解析装备。
+4. 在“数据 → 装备”中查看、搜索和按部位筛选装备。
+5. 点击“导出 gear.txt”，可在 Fribbels Optimizer 中通过 Merge 导入。
+
+装备抓包只保存游戏 `3333/5222` 端口的连接载荷。停止抓包后，载荷会提交至 Fribbels 公开客户端使用的远端解析接口；解析需要联网，结果会保存在应用私有目录。抓包使用本地 VPN 转发，不能与其他 Android VPN 同时运行。
+
 ## 诊断日志
 
 - 实时查看：`E:\Lib\AndroidSdk\platform-tools\adb.exe logcat -s E7Orbit`

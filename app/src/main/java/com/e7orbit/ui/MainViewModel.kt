@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.VpnService
 import android.provider.Settings
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
@@ -12,9 +13,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.e7orbit.AppGraph
 import com.e7orbit.automation.TaskKind
+import com.e7orbit.capture.VpnCaptureService
 import com.e7orbit.data.E7Artifact
+import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7DataSnapshot
+import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.HeroRtaAnalysis
 import com.e7orbit.data.RtaSeason
 import com.e7orbit.data.RtaTier
@@ -62,9 +66,24 @@ data class MainUiState(
     val environment: EnvironmentStatus = EnvironmentStatus(),
     val lastSummary: RunSummary = RunSummary(),
     val data: DataUiState = DataUiState(),
+    val vpnCapture: VpnCaptureUiState = VpnCaptureUiState(),
+)
+
+data class VpnCaptureUiState(
+    val running: Boolean = false,
+    val packets: Long = 0L,
+    val bytes: Long = 0L,
+    val capturedSegments: Long = 0L,
+    val capturedBytes: Long = 0L,
+    val importPhase: GearImportPhase = GearImportPhase.IDLE,
+    val importedGearCount: Int = 0,
+    val importedHeroCount: Int = 0,
+    val importedAtEpochMs: Long = 0L,
+    val errorMessage: String? = null,
 )
 
 enum class DataSection {
+    EQUIPMENT,
     HEROES,
     ARTIFACTS,
 }
@@ -78,9 +97,10 @@ enum class DataLoadState {
 
 data class DataUiState(
     val loadState: DataLoadState = DataLoadState.IDLE,
+    val gears: List<E7Gear> = emptyList(),
     val heroes: List<E7Hero> = emptyList(),
     val artifacts: List<E7Artifact> = emptyList(),
-    val section: DataSection = DataSection.HEROES,
+    val section: DataSection = DataSection.EQUIPMENT,
     val query: String = "",
     val selectedHeroCode: String? = null,
     val selectedArtifactCode: String? = null,
@@ -156,6 +176,34 @@ class MainViewModel(
         taskCoordinator.huntStatus,
     ) { shop, hunt -> shop to hunt }
 
+    private val vpnStatus = combine(
+        combine(
+            AppGraph.vpnCapture.isRunning,
+            AppGraph.vpnCapture.packets,
+            AppGraph.vpnCapture.bytes,
+            AppGraph.vpnCapture.capturedSegments,
+            AppGraph.vpnCapture.capturedBytes,
+        ) { running, packets, bytes, segments, capturedBytes ->
+            VpnCaptureUiState(
+                running = running,
+                packets = packets,
+                bytes = bytes,
+                capturedSegments = segments,
+                capturedBytes = capturedBytes,
+            )
+        },
+        AppGraph.vpnCapture.lastError,
+        AppGraph.gearImportRepository.state,
+    ) { state, captureError, import ->
+        state.copy(
+            importPhase = import.phase,
+            importedGearCount = import.gears.size,
+            importedHeroCount = import.heroCount,
+            importedAtEpochMs = import.importedAtEpochMs,
+            errorMessage = captureError ?: import.errorMessage,
+        )
+    }
+
     private val baseUiState: Flow<MainUiState> = combine(
         draftConfig.state,
         draftHuntConfig.state,
@@ -175,6 +223,10 @@ class MainViewModel(
 
     val uiState: StateFlow<MainUiState> = baseUiState.combine(data) { state, dataState ->
         state.copy(data = dataState)
+    }.combine(AppGraph.gearImportRepository.state) { state, import ->
+        state.copy(data = state.data.copy(gears = import.gears))
+    }.combine(vpnStatus) { state, vpn ->
+        state.copy(vpnCapture = vpn)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000L),
@@ -445,6 +497,21 @@ class MainViewModel(
     }
 
     fun stopHunt() = taskCoordinator.stop(TaskKind.HUNT)
+
+    /**
+     * 开启装备抓包。若尚未授予 VPN 权限,通过 [onConsent]
+     * 把授权 intent 交给 Activity 发起系统确认弹窗。
+     */
+    fun startVpnCapture(onConsent: (Intent) -> Unit) {
+        val intent = VpnService.prepare(getApplication())
+        if (intent == null) {
+            VpnCaptureService.start(getApplication())
+        } else {
+            onConsent(intent)
+        }
+    }
+
+    fun stopVpnCapture() = VpnCaptureService.stop(getApplication())
 
     fun openAccessibilitySettings() {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {

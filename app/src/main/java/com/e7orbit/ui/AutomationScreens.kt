@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.e7orbit.R
+import com.e7orbit.data.GearImportPhase
 import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.HuntDifficulty
 import com.e7orbit.model.HuntDungeon
@@ -69,6 +70,8 @@ internal fun HomeScreen(
     onPauseOrResumeHunt: () -> Unit,
     onStopHunt: () -> Unit,
     onEnableAccessibility: () -> Unit,
+    onStartVpnCapture: () -> Unit,
+    onStopVpnCapture: () -> Unit,
 ) {
     LazyColumn(
         modifier = modifier,
@@ -84,6 +87,13 @@ internal fun HomeScreen(
                 onStopShop = onStopShop,
                 onPauseOrResumeHunt = onPauseOrResumeHunt,
                 onStopHunt = onStopHunt,
+            )
+        }
+        item(contentType = "vpn") {
+            GearScanCard(
+                state = state.vpnCapture,
+                onStart = onStartVpnCapture,
+                onStop = onStopVpnCapture,
             )
         }
         if (!state.environment.canPrepare) {
@@ -219,6 +229,64 @@ private fun HomeStatusHero(
             }
         }
     }
+}
+
+@Composable
+private fun GearScanCard(
+    state: VpnCaptureUiState,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    SectionSurface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentPadding = PaddingValues(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "装备抓包",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = when {
+                        state.running -> "抓包中 · 装备流 ${formatBytes(state.capturedBytes)}(${state.capturedSegments} 段) · 流量 ${formatBytes(state.bytes)}"
+                        state.importPhase == GearImportPhase.PARSING -> "正在解析装备数据"
+                        state.errorMessage != null -> "上次失败: ${state.errorMessage}"
+                        state.importedGearCount > 0 -> "已导入 ${state.importedGearCount} 件装备 · ${state.importedHeroCount} 个英雄"
+                        else -> "先开启抓包，再进入游戏打开背包"
+                    },
+                    color = if (state.errorMessage != null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            if (state.running) {
+                OutlinedButton(onClick = onStop) {
+                    Text("停止")
+                }
+            } else {
+                Button(onClick = onStart) {
+                    Text("开启抓包")
+                }
+            }
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1_048_576 -> "%.1f MB".format(bytes / 1_048_576.0)
+    bytes >= 1_024 -> "%.1f KB".format(bytes / 1_024.0)
+    else -> "$bytes B"
 }
 
 @Composable

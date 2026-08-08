@@ -10,7 +10,9 @@ import com.e7orbit.automation.HomeNavigator
 import com.e7orbit.automation.HuntTaskRunner
 import com.e7orbit.automation.ShopTaskRunner
 import com.e7orbit.automation.TaskCoordinator
+import com.e7orbit.capture.GearImportRepository
 import com.e7orbit.capture.ProjectionCaptureRepository
+import com.e7orbit.capture.VpnCaptureRepository
 import com.e7orbit.data.DiagnosticStore
 import com.e7orbit.data.E7DataRepository
 import com.e7orbit.data.SettingsRepository
@@ -43,6 +45,10 @@ object AppGraph {
         private set
     lateinit var projectionCapture: ProjectionCaptureRepository
         private set
+    lateinit var vpnCapture: VpnCaptureRepository
+        private set
+    lateinit var gearImportRepository: GearImportRepository
+        private set
     lateinit var templateRepository: TemplateRepository
         private set
     lateinit var taskCoordinator: TaskCoordinator
@@ -59,6 +65,8 @@ object AppGraph {
         val appContext = context.applicationContext
         logger = FileOrbitLogger(appContext)
         projectionCapture = ProjectionCaptureRepository()
+        vpnCapture = VpnCaptureRepository()
+        gearImportRepository = GearImportRepository(appContext, logger)
         openCvReady = OpenCVLoader.initLocal()
         logger.info("app.initialize", "openCvReady" to openCvReady)
         settingsRepository = SettingsRepository(appContext)
@@ -111,6 +119,7 @@ object AppGraph {
     fun close() {
         if (!initialized) return
         taskCoordinator.shutdown()
+        gearImportRepository.close()
         templateRepository.close()
         logger.close()
         initialized = false

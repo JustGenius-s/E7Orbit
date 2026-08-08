@@ -8,3 +8,8 @@ captures/
 *.jks
 *.keystore
 *.apk
+/.analysis/
+/.tmp-*
+/gear.txt
+/log.txt
+/capture-*.gz

@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.e7orbit.R
 import com.e7orbit.data.E7Artifact
+import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7HeroStats
 import com.e7orbit.data.HeroRtaAnalysis
@@ -69,6 +70,7 @@ internal fun DataBrowserScreen(
     modifier: Modifier = Modifier,
     onSectionChanged: (DataSection) -> Unit,
     onQueryChanged: (String) -> Unit,
+    onExportGear: () -> Unit,
     onSelectHero: (String) -> Unit,
     onSelectArtifact: (String) -> Unit,
     onLoad: () -> Unit,
@@ -85,7 +87,15 @@ internal fun DataBrowserScreen(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             shape = CircleShape,
-            label = { Text(if (data.section == DataSection.HEROES) "搜索英雄" else "搜索神器") },
+            label = {
+                Text(
+                    when (data.section) {
+                        DataSection.EQUIPMENT -> "搜索装备"
+                        DataSection.HEROES -> "搜索英雄"
+                        DataSection.ARTIFACTS -> "搜索神器"
+                    },
+                )
+            },
             placeholder = { Text("名称或编码") },
             leadingIcon = {
                 Icon(
@@ -114,7 +124,15 @@ internal fun DataBrowserScreen(
                         index = index,
                         count = DataSection.entries.size,
                     ),
-                    label = { Text(if (section == DataSection.HEROES) "英雄" else "神器") },
+                    label = {
+                        Text(
+                            when (section) {
+                                DataSection.EQUIPMENT -> "装备"
+                                DataSection.HEROES -> "英雄"
+                                DataSection.ARTIFACTS -> "神器"
+                            },
+                        )
+                    },
                 )
             }
         }
@@ -126,35 +144,44 @@ internal fun DataBrowserScreen(
         )
         Spacer(Modifier.height(8.dp))
 
-        when (data.loadState) {
-            DataLoadState.IDLE -> DataEmptyState(
-                title = "数据尚未加载",
-                detail = "从官方 Stove 和 Fribbels 读取英雄与神器资料。",
-                action = "加载数据",
-                onAction = onLoad,
+        if (data.section == DataSection.EQUIPMENT) {
+            EquipmentList(
+                data = data,
+                filter = selectedFilter,
+                onExport = onExportGear,
             )
-
-            DataLoadState.LOADING -> DataLoadingState()
-            DataLoadState.ERROR -> DataEmptyState(
-                title = "数据读取失败",
-                detail = data.errorMessage ?: "公开数据暂时不可用",
-                action = "重新尝试",
-                onAction = onLoad,
-                error = true,
-            )
-
-            DataLoadState.READY -> when (data.section) {
-                DataSection.HEROES -> HeroList(
-                    data = data,
-                    filter = selectedFilter,
-                    onSelect = onSelectHero,
+        } else {
+            when (data.loadState) {
+                DataLoadState.IDLE -> DataEmptyState(
+                    title = "数据尚未加载",
+                    detail = "从官方 Stove 和 Fribbels 读取英雄与神器资料。",
+                    action = "加载数据",
+                    onAction = onLoad,
                 )
 
-                DataSection.ARTIFACTS -> ArtifactList(
-                    data = data,
-                    filter = selectedFilter,
-                    onSelect = onSelectArtifact,
+                DataLoadState.LOADING -> DataLoadingState()
+                DataLoadState.ERROR -> DataEmptyState(
+                    title = "数据读取失败",
+                    detail = data.errorMessage ?: "公开数据暂时不可用",
+                    action = "重新尝试",
+                    onAction = onLoad,
+                    error = true,
                 )
+
+                DataLoadState.READY -> when (data.section) {
+                    DataSection.EQUIPMENT -> Unit
+                    DataSection.HEROES -> HeroList(
+                        data = data,
+                        filter = selectedFilter,
+                        onSelect = onSelectHero,
+                    )
+
+                    DataSection.ARTIFACTS -> ArtifactList(
+                        data = data,
+                        filter = selectedFilter,
+                        onSelect = onSelectArtifact,
+                    )
+                }
             }
         }
     }
@@ -166,10 +193,10 @@ private fun FilterRow(
     selected: String,
     onSelected: (String) -> Unit,
 ) {
-    val filters = if (section == DataSection.HEROES) {
-        listOf("全部", "火", "冰", "木", "光", "暗")
-    } else {
-        listOf("全部", "骑士", "战士", "射手", "法师", "盗贼", "奶妈")
+    val filters = when (section) {
+        DataSection.EQUIPMENT -> listOf("全部", "武器", "头盔", "铠甲", "项链", "戒指", "鞋子")
+        DataSection.HEROES -> listOf("全部", "火", "冰", "木", "光", "暗")
+        DataSection.ARTIFACTS -> listOf("全部", "骑士", "战士", "射手", "法师", "盗贼", "奶妈")
     }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(filters, key = { it }) { filter ->
@@ -180,6 +207,146 @@ private fun FilterRow(
             )
         }
     }
+}
+
+@Composable
+private fun ColumnScope.EquipmentList(
+    data: DataUiState,
+    filter: String,
+    onExport: () -> Unit,
+) {
+    val filtered = remember(data.gears, data.query, filter) {
+        data.gears.filter { gear ->
+            val query = data.query.trim()
+            val matchesQuery = query.isEmpty() ||
+                gear.code.contains(query, ignoreCase = true) ||
+                gear.setName.contains(query, ignoreCase = true) ||
+                gear.slot.label.contains(query, ignoreCase = true) ||
+                gear.mainStat.label.contains(query, ignoreCase = true) ||
+                gear.substats.any { it.label.contains(query, ignoreCase = true) }
+            val matchesFilter = filter == "全部" || gear.slot.label == filter
+            matchesQuery && matchesFilter
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "${filtered.size} 个结果",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "共 ${data.gears.size} 项",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedButton(
+            onClick = onExport,
+            enabled = data.gears.isNotEmpty(),
+        ) {
+            Text("导出 gear.txt")
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    if (data.gears.isEmpty()) {
+        NoResultsState("尚未导入装备，请在首页开启抓包并打开游戏背包")
+        return
+    }
+    if (filtered.isEmpty()) {
+        NoResultsState("没有匹配的装备")
+        return
+    }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f),
+        contentPadding = PaddingValues(vertical = 4.dp),
+    ) {
+        items(
+            items = filtered,
+            key = { it.id },
+            contentType = { "gear" },
+        ) { gear ->
+            GearListItem(gear)
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 64.dp, end = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+}
+
+@Composable
+private fun GearListItem(gear: E7Gear) {
+    ListItem(
+        headlineContent = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${gear.slot.label} · ${gear.setName}",
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "Lv.${gear.level}  +${gear.enhance}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+        supportingContent = {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = "主属性  ${gear.mainStat.label} ${gear.mainStat.displayValue()}",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+                Text(
+                    text = gear.substats.joinToString(" · ") { stat ->
+                        "${stat.label} ${stat.displayValue()}${if (stat.modified) "*" else ""}"
+                    }.ifBlank { "无副属性" },
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = buildString {
+                        append(gear.rank)
+                        if (gear.equippedHeroId != null) append(" · 已装备")
+                        if (gear.locked) append(" · 已锁定")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        leadingContent = {
+            Surface(
+                modifier = Modifier.size(44.dp),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        gear.slot.label.take(1),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
+    )
 }
 
 @Composable

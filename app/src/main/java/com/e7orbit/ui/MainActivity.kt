@@ -3,6 +3,7 @@ package com.e7orbit.ui
 import android.app.Activity
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -55,6 +56,8 @@ import androidx.lifecycle.lifecycleScope
 import com.e7orbit.AppGraph
 import com.e7orbit.R
 import com.e7orbit.capture.MediaProjectionCaptureService
+import com.e7orbit.capture.VpnCaptureService
+import com.e7orbit.data.GearExportSerializer
 import com.e7orbit.ui.theme.E7OrbitTheme
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -85,6 +88,37 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val vpnLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            VpnCaptureService.start(this)
+        } else {
+            AppGraph.logger.warn("vpn.consent_denied")
+        }
+        viewModel.refreshEnvironment()
+    }
+
+    private val gearExportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        runCatching {
+            val gears = AppGraph.gearImportRepository.state.value.gears
+            check(gears.isNotEmpty()) { "没有可导出的装备" }
+            val output = contentResolver.openOutputStream(uri, "wt")
+                ?: error("无法打开导出文件")
+            output.bufferedWriter(Charsets.UTF_8).use {
+                it.write(GearExportSerializer.serialize(gears))
+            }
+            AppGraph.logger.info("gear.export_succeeded", "items" to gears.size, "uri" to uri)
+            Toast.makeText(this, "已导出 ${gears.size} 件装备", Toast.LENGTH_LONG).show()
+        }.onFailure { error ->
+            AppGraph.logger.error("gear.export_failed", error)
+            Toast.makeText(this, error.message ?: "装备导出失败", Toast.LENGTH_LONG).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -110,9 +144,12 @@ class MainActivity : ComponentActivity() {
                     onPrepareHunt = { requestProjection(PendingAutomation.HUNT) },
                     onPauseOrResumeHunt = viewModel::pauseOrResumeHunt,
                     onStopHunt = viewModel::stopHunt,
+                    onStartVpnCapture = { viewModel.startVpnCapture { vpnLauncher.launch(it) } },
+                    onStopVpnCapture = viewModel::stopVpnCapture,
                     onLoadData = viewModel::loadData,
                     onDataSectionChanged = viewModel::setDataSection,
                     onDataQueryChanged = viewModel::setDataQuery,
+                    onExportGear = { gearExportLauncher.launch("gear.txt") },
                     onSelectHero = viewModel::selectHero,
                     onSelectArtifact = viewModel::selectArtifact,
                     onRtaSeasonChanged = viewModel::setRtaSeason,
@@ -196,9 +233,12 @@ private fun OrbitApp(
     onPrepareHunt: () -> Unit,
     onPauseOrResumeHunt: () -> Unit,
     onStopHunt: () -> Unit,
+    onStartVpnCapture: () -> Unit,
+    onStopVpnCapture: () -> Unit,
     onLoadData: (Boolean) -> Unit,
     onDataSectionChanged: (DataSection) -> Unit,
     onDataQueryChanged: (String) -> Unit,
+    onExportGear: () -> Unit,
     onSelectHero: (String) -> Unit,
     onSelectArtifact: (String) -> Unit,
     onRtaSeasonChanged: (String) -> Unit,
@@ -349,6 +389,8 @@ private fun OrbitApp(
                             onPauseOrResumeHunt = onPauseOrResumeHunt,
                             onStopHunt = onStopHunt,
                             onEnableAccessibility = onEnableAccessibility,
+                            onStartVpnCapture = onStartVpnCapture,
+                            onStopVpnCapture = onStopVpnCapture,
                         )
 
                         OrbitDestination.TASKS -> TaskListScreen(
@@ -364,6 +406,7 @@ private fun OrbitApp(
                             modifier = screenModifier,
                             onSectionChanged = onDataSectionChanged,
                             onQueryChanged = onDataQueryChanged,
+                            onExportGear = onExportGear,
                             onSelectHero = { code ->
                                 onSelectHero(code)
                                 detailName = DetailRoute.HERO.name
