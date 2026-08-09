@@ -2,6 +2,18 @@ package com.e7orbit.ui
 
 import androidx.annotation.DrawableRes
 import com.e7orbit.R
+import com.e7orbit.data.GearSlot
+
+@DrawableRes
+internal fun gearSlotIconRes(slot: GearSlot): Int? = when (slot) {
+    GearSlot.WEAPON -> R.drawable.e7_gear_weapon
+    GearSlot.HELMET -> R.drawable.e7_gear_helmet
+    GearSlot.ARMOR -> R.drawable.e7_gear_armor
+    GearSlot.NECKLACE -> R.drawable.e7_gear_necklace
+    GearSlot.RING -> R.drawable.e7_gear_ring
+    GearSlot.BOOTS -> R.drawable.e7_gear_boots
+    GearSlot.UNKNOWN -> null
+}
 
 @DrawableRes
 internal fun gearSetIconRes(setCode: String): Int? = when (setCode) {

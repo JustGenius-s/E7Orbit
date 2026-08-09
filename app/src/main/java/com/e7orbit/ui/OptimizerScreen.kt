@@ -2,6 +2,8 @@ package com.e7orbit.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -45,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -1055,7 +1059,7 @@ private fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
                 .padding(vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(slot.label, modifier = Modifier.width(62.dp), fontWeight = FontWeight.Bold)
+            GearSlotLabel(slot = slot, rank = null, modifier = Modifier.width(62.dp))
             Text("未装备", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
@@ -1067,7 +1071,7 @@ private fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.width(62.dp)) {
-                Text(slot.label, fontWeight = FontWeight.Bold)
+                GearSlotLabel(slot = slot, rank = gear.rank)
                 Text(
                     "+${gear.enhance}",
                     style = MaterialTheme.typography.labelSmall,
@@ -1128,7 +1132,7 @@ private fun InventoryGearCard(gear: E7Gear, equippedName: String?) {
         Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.width(64.dp)) {
-                    Text(gear.slot.label, fontWeight = FontWeight.Bold)
+                    GearSlotLabel(slot = gear.slot, rank = gear.rank)
                     Text(
                         "+${gear.enhance}",
                         style = MaterialTheme.typography.labelSmall,
@@ -1178,6 +1182,70 @@ private fun InventoryGearCard(gear: E7Gear, equippedName: String?) {
             }
         }
     }
+}
+
+@Composable
+private fun GearSlotLabel(
+    slot: GearSlot,
+    rank: String?,
+    modifier: Modifier = Modifier,
+) {
+    if (slot == GearSlot.UNKNOWN) {
+        Text(
+            slot.label,
+            modifier = modifier,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        return
+    }
+    GearSlotAsset(
+        slot = slot,
+        rank = rank,
+        modifier = modifier.size(33.dp),
+    )
+}
+
+@Composable
+private fun GearSlotAsset(
+    slot: GearSlot,
+    rank: String?,
+    modifier: Modifier = Modifier,
+) {
+    val iconRes = gearSlotIconRes(slot) ?: return
+    val style = gearRankIconStyle(rank)
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(style.background)
+            .border(1.5.dp, style.border, RoundedCornerShape(3.dp))
+            .padding(2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        GearAssetIcon(
+            resId = iconRes,
+            contentDescription = slot.label,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+private data class GearRankIconStyle(
+    val border: Color,
+    val background: Color,
+)
+
+private fun gearRankIconStyle(rank: String?): GearRankIconStyle = when (rank?.lowercase()) {
+    "epic", "传说" -> GearRankIconStyle(Color(0xFFA20707), Color(0xFFE53935))
+    "heroic", "英雄" -> GearRankIconStyle(Color(0xFF8E24AA), Color(0xFFD05CE3))
+    "rare", "稀有" -> GearRankIconStyle(Color(0xFF1722F9), Color(0xFF4D8DFF))
+    "good", "优秀" -> GearRankIconStyle(Color(0xFF009208), Color(0xFF50C85A))
+    "normal", "普通" -> GearRankIconStyle(Color(0xFF616161), Color(0xFFB5B8B7))
+    else -> GearRankIconStyle(
+        border = Color(0xFF8A9099),
+        background = Color(0x263A414B),
+    )
 }
 
 @Composable
