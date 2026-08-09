@@ -2,7 +2,11 @@ package com.e7orbit.capture
 
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7GearStat
+import com.e7orbit.data.E7ScannedHero
 import com.e7orbit.data.GearSlot
+import java.nio.ByteBuffer
+import java.security.MessageDigest
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -19,6 +23,47 @@ import kotlinx.serialization.json.longOrNull
 import kotlin.math.round
 
 internal object GearImportParser {
+    data class ParsedExport(
+        val gears: List<E7Gear>,
+        val heroes: List<E7ScannedHero>,
+    )
+
+    fun parseExport(payload: String): ParsedExport {
+        val root = Json.parseToJsonElement(payload).jsonObject
+        val heroObjects = root["heroes"]?.jsonArray
+            ?.mapNotNull { it as? JsonObject }
+            .orEmpty()
+        val heroes = heroObjects.mapNotNull(::parseHero)
+        val topLevelItems = root["items"]?.jsonArray
+            ?.mapNotNull { it as? JsonObject }
+            .orEmpty()
+        val parsed = LinkedHashMap<Long, E7Gear>()
+        topLevelItems.forEach { item ->
+            (parseItem(item) ?: parseConvertedItem(item))?.let { parsed[it.id] = it }
+        }
+        heroObjects.forEach { hero ->
+            val heroId = hero.stableId("id") ?: return@forEach
+            val equipment = hero["equipment"] as? JsonObject ?: return@forEach
+            equipment.values.forEach { element ->
+                val item = element as? JsonObject ?: return@forEach
+                parseConvertedItem(item, equippedHeroId = heroId)?.let { parsed[it.id] = it }
+            }
+        }
+        return ParsedExport(gears = parsed.values.toList(), heroes = heroes)
+    }
+
+    fun parseHeroExport(payload: String): List<E7ScannedHero> = parseExport(payload).heroes
+
+    fun parseHero(unit: JsonObject): E7ScannedHero? {
+        val name = unit.string("name")?.takeIf(String::isNotBlank) ?: return null
+        return E7ScannedHero(
+            id = unit.stableId("id") ?: return null,
+            name = name,
+            stars = unit.int("g") ?: unit.int("stars"),
+            awaken = unit.int("z") ?: unit.int("awaken"),
+        )
+    }
+
     fun parseItem(item: JsonObject): E7Gear? {
         val setCode = item.string("f") ?: return null
         val level = item.int("level") ?: return null
@@ -48,6 +93,56 @@ internal object GearImportParser {
             locked = item.boolean("l") ?: false,
             equippedHeroId = item.long("p"),
         )
+    }
+
+    private fun parseConvertedItem(
+        item: JsonObject,
+        equippedHeroId: Long? = null,
+    ): E7Gear? {
+        val slot = CONVERTED_SLOTS[item.string("gear")] ?: return null
+        val setValue = item.string("set") ?: return null
+        val setCode = CONVERTED_SETS[setValue] ?: setValue.takeIf { it.startsWith("set_") }
+            ?: return null
+        val main = item["main"] as? JsonObject ?: return null
+        val mainType = main.string("type") ?: return null
+        val mainValue = main.double("value") ?: return null
+        val sourceId = item.string("ingameId")
+            ?.takeUnless { it == "undefined" }
+            ?: item.string("id")
+            ?: return null
+        val id = sourceId.toLongOrNull() ?: stableLongId(sourceId)
+        val substats = (item["substats"] as? JsonArray)
+            ?.mapNotNull { element ->
+                val stat = element as? JsonObject ?: return@mapNotNull null
+                E7GearStat(
+                    type = stat.string("type") ?: return@mapNotNull null,
+                    value = stat.double("value") ?: return@mapNotNull null,
+                    rolls = stat.int("rolls"),
+                    modified = stat.boolean("modified") ?: false,
+                )
+            }
+            .orEmpty()
+        return E7Gear(
+            id = id,
+            code = item.string("code") ?: item.string("name").orEmpty(),
+            slot = slot,
+            setCode = setCode,
+            setName = SET_NAMES[setCode] ?: setValue,
+            rank = CONVERTED_RANKS[item.string("rank")] ?: item.string("rank").orEmpty(),
+            level = item.int("level") ?: return null,
+            enhance = item.int("enhance") ?: 0,
+            mainStat = E7GearStat(type = mainType, value = mainValue),
+            substats = substats,
+            locked = item.boolean("locked") ?: false,
+            equippedHeroId = equippedHeroId
+                ?: item.stableId("equippedById")
+                ?: item.stableId("ingameEquippedId"),
+        )
+    }
+
+    private fun stableLongId(value: String): Long {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return ByteBuffer.wrap(digest).long and Long.MAX_VALUE
     }
 
     private fun aggregateSubstats(elements: List<JsonElement>): List<E7GearStat> {
@@ -117,6 +212,9 @@ internal object GearImportParser {
         (this as? JsonPrimitive)?.takeUnless { it is JsonNull }
 
     private fun JsonObject.string(key: String): String? = this[key].primitive()?.contentOrNull
+    private fun JsonObject.stableId(key: String): Long? = string(key)
+        ?.takeUnless { it == "undefined" || it == "null" }
+        ?.let { it.toLongOrNull() ?: stableLongId(it) }
     private fun JsonObject.int(key: String): Int? = this[key].primitive()?.intOrNull
     private fun JsonObject.long(key: String): Long? = this[key].primitive()?.longOrNull
     private fun JsonObject.double(key: String): Double? = this[key].primitive()?.doubleOrNull
@@ -126,6 +224,47 @@ internal object GearImportParser {
 
     private val FLAT_STATS = setOf("max_hp", "speed", "att", "def")
     private val RANKS = listOf("未知", "普通", "优秀", "稀有", "英雄", "传说")
+    private val CONVERTED_RANKS = mapOf(
+        "Normal" to "普通",
+        "Good" to "优秀",
+        "Rare" to "稀有",
+        "Heroic" to "英雄",
+        "Epic" to "传说",
+    )
+    private val CONVERTED_SLOTS = mapOf(
+        "Weapon" to GearSlot.WEAPON,
+        "Helmet" to GearSlot.HELMET,
+        "Armor" to GearSlot.ARMOR,
+        "Necklace" to GearSlot.NECKLACE,
+        "Ring" to GearSlot.RING,
+        "Boots" to GearSlot.BOOTS,
+    )
+    private val CONVERTED_SETS = mapOf(
+        "HitSet" to "set_acc",
+        "AttackSet" to "set_att",
+        "UnitySet" to "set_coop",
+        "CounterSet" to "set_counter",
+        "DestructionSet" to "set_cri_dmg",
+        "CriticalSet" to "set_cri",
+        "DefenseSet" to "set_def",
+        "ImmunitySet" to "set_immune",
+        "HealthSet" to "set_max_hp",
+        "PenetrationSet" to "set_penetrate",
+        "RageSet" to "set_rage",
+        "ResistSet" to "set_res",
+        "RevengeSet" to "set_revenge",
+        "InjurySet" to "set_scar",
+        "SpeedSet" to "set_speed",
+        "LifestealSet" to "set_vampire",
+        "ProtectionSet" to "set_shield",
+        "TorrentSet" to "set_torrent",
+        "ReversalSet" to "set_revenant",
+        "RiposteSet" to "set_riposte",
+        "PursuitSet" to "set_chase",
+        "WarfareSet" to "set_opener",
+        "WeakeningSet" to "set_weak",
+        "FervorSet" to "set_might",
+    )
     private val COUNT_BY_RANK = mapOf("普通" to 5, "优秀" to 6, "稀有" to 7, "英雄" to 8, "传说" to 9)
     private val OFFSET_BY_RANK = mapOf("普通" to 0, "优秀" to 1, "稀有" to 2, "英雄" to 3, "传说" to 4)
     private val STAT_TYPES = mapOf(

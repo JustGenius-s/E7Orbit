@@ -10,6 +10,105 @@ import org.junit.Test
 
 class GearImportParserTest {
     @Test
+    fun parsesConvertedFribbelsExportWithEquippedRelationships() {
+        val parsed = GearImportParser.parseExport(
+            """
+            {
+              "items": [
+                {
+                  "id":"gear-uuid-1",
+                  "gear":"Weapon",
+                  "rank":"Epic",
+                  "set":"SpeedSet",
+                  "level":90,
+                  "enhance":15,
+                  "main":{"type":"Attack","value":525},
+                  "substats":[{"type":"Speed","value":17}],
+                  "equippedById":"hero-uuid-1",
+                  "locked":true
+                }
+              ],
+              "heroes": [
+                {
+                  "id":"hero-uuid-1",
+                  "name":"Ruele of Light",
+                  "stars":6,
+                  "awaken":6,
+                  "equipment":{
+                    "Weapon":{
+                      "id":"gear-uuid-1",
+                      "gear":"Weapon",
+                      "rank":"Epic",
+                      "set":"SpeedSet",
+                      "level":90,
+                      "enhance":15,
+                      "main":{"type":"Attack","value":525},
+                      "substats":[{"type":"Speed","value":17}],
+                      "locked":true
+                    }
+                  }
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, parsed.heroes.size)
+        assertEquals(1, parsed.gears.size)
+        assertEquals(parsed.heroes.single().id, parsed.gears.single().equippedHeroId)
+        assertEquals(GearSlot.WEAPON, parsed.gears.single().slot)
+        assertEquals("set_speed", parsed.gears.single().setCode)
+        assertEquals("速度套装", parsed.gears.single().setName)
+        assertEquals("传说", parsed.gears.single().rank)
+        assertEquals(17.0, parsed.gears.single().substats.single().value, 0.0)
+        assertTrue(parsed.gears.single().locked)
+    }
+
+    @Test
+    fun parsesHeroesFromCompatibleExport() {
+        val heroes = GearImportParser.parseHeroExport(
+            """
+            {
+              "items": [],
+              "heroes": [
+                {"id":987654321,"name":"Ruele of Light","g":6,"z":6},
+                {"id":123456789,"name":"Arbiter Vildred","stars":6,"awaken":5}
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(2, heroes.size)
+        assertEquals("Ruele of Light", heroes[0].name)
+        assertEquals(6, heroes[1].stars)
+        assertEquals(5, heroes[1].awaken)
+    }
+
+    @Test
+    fun parsesScannedHeroIdentity() {
+        val unit = Json.parseToJsonElement(
+            """{"id":987654321,"name":"Ruele of Light","g":6,"z":6}""",
+        ).jsonObject
+
+        val hero = GearImportParser.parseHero(unit)
+
+        assertNotNull(hero)
+        assertEquals(987654321L, hero?.id)
+        assertEquals("Ruele of Light", hero?.name)
+        assertEquals(6, hero?.stars)
+        assertEquals(6, hero?.awaken)
+    }
+
+    @Test
+    fun ignoresScannedHeroWithoutStableIdentity() {
+        val missingName = Json.parseToJsonElement("""{"id":123}""").jsonObject
+        val missingId = Json.parseToJsonElement("""{"name":"Ruele of Light"}""").jsonObject
+
+        assertEquals(null, GearImportParser.parseHero(missingName))
+        assertEquals(null, GearImportParser.parseHero(missingId))
+    }
+
+    @Test
     fun parsesFribbelsGearAndAggregatesSubstats() {
         val item = Json.parseToJsonElement(
             """

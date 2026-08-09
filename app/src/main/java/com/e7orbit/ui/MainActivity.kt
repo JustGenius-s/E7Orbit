@@ -58,9 +58,11 @@ import com.e7orbit.R
 import com.e7orbit.capture.MediaProjectionCaptureService
 import com.e7orbit.capture.VpnCaptureService
 import com.e7orbit.ui.theme.E7OrbitTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : ComponentActivity() {
@@ -98,8 +100,36 @@ class MainActivity : ComponentActivity() {
         viewModel.refreshEnvironment()
     }
 
+    private val gearImportLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            runCatching {
+                val payload = withContext(Dispatchers.IO) {
+                    val input = contentResolver.openInputStream(uri)
+                        ?: error("无法打开导入文件")
+                    input.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                }
+                AppGraph.gearImportRepository.importExport(payload)
+            }.onSuccess { imported ->
+                Toast.makeText(
+                    this@MainActivity,
+                    "已导入 ${imported.gears.size} 件装备 · ${imported.heroes.size} 个英雄",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }.onFailure { error ->
+                Toast.makeText(
+                    this@MainActivity,
+                    error.message ?: "装备文件导入失败",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
+
     private val gearExportLauncher = registerForActivityResult(
-        ActivityResultContracts.CreateDocument("text/plain"),
+        ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
         if (uri == null) return@registerForActivityResult
         runCatching {
@@ -147,12 +177,24 @@ class MainActivity : ComponentActivity() {
                     onLoadData = viewModel::loadData,
                     onDataSectionChanged = viewModel::setDataSection,
                     onDataQueryChanged = viewModel::setDataQuery,
+                    onImportGear = ::startGearImport,
                     onExportGear = ::startGearExport,
                     onSelectHero = viewModel::selectHero,
                     onSelectArtifact = viewModel::selectArtifact,
                     onRtaSeasonChanged = viewModel::setRtaSeason,
                     onRtaTierChanged = viewModel::setRtaTier,
                     onRetryHeroRta = viewModel::retryHeroRta,
+                    onOptimizerContentChanged = viewModel::setOptimizerContent,
+                    onOptimizerHeroQueryChanged = viewModel::setOptimizerHeroQuery,
+                    onEquippedHeroSelected = viewModel::selectEquippedHero,
+                    onOptimizerMetricChanged = viewModel::setOptimizerMetric,
+                    onOptimizerMinimumChanged = viewModel::setOptimizerMinimum,
+                    onOptimizerRequiredSetToggled = viewModel::toggleOptimizerRequiredSet,
+                    onOptimizerAllowLockedChanged = viewModel::setOptimizerAllowLocked,
+                    onOptimizerAllowEquippedChanged = viewModel::setOptimizerAllowEquipped,
+                    onOptimizerOnlyMaxedChanged = viewModel::setOptimizerOnlyMaxed,
+                    onStartOptimizer = viewModel::startOptimizer,
+                    onStopOptimizer = viewModel::stopOptimizer,
                 )
             }
         }
@@ -161,6 +203,12 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshEnvironment()
+    }
+
+    private fun startGearImport() {
+        gearImportLauncher.launch(
+            arrayOf("application/json", "text/plain", "application/octet-stream"),
+        )
     }
 
     private fun startGearExport() {
@@ -172,7 +220,7 @@ class MainActivity : ComponentActivity() {
             ).show()
             return
         }
-        gearExportLauncher.launch("gear.txt")
+        gearExportLauncher.launch("e7orbit-gear.json")
     }
 
     private fun requestProjection(automation: PendingAutomation) {
@@ -202,6 +250,7 @@ internal enum class OrbitDestination(
     HOME("首页", R.drawable.ic_nav_home),
     TASKS("任务", R.drawable.ic_nav_tasks),
     DATA("数据", R.drawable.ic_nav_data),
+    OPTIMIZER("配装", R.drawable.ic_nav_optimizer),
     SETTINGS("设置", R.drawable.ic_nav_settings),
 }
 
@@ -212,6 +261,7 @@ private enum class DetailRoute(val title: String) {
     HUNT("讨伐"),
     HERO("英雄详情"),
     ARTIFACT("神器详情"),
+    OPTIMIZER_HERO("英雄配装"),
 }
 
 private data class OrbitRoute(
@@ -248,12 +298,24 @@ private fun OrbitApp(
     onLoadData: (Boolean) -> Unit,
     onDataSectionChanged: (DataSection) -> Unit,
     onDataQueryChanged: (String) -> Unit,
+    onImportGear: () -> Unit,
     onExportGear: () -> Unit,
     onSelectHero: (String) -> Unit,
     onSelectArtifact: (String) -> Unit,
     onRtaSeasonChanged: (String) -> Unit,
     onRtaTierChanged: (com.e7orbit.data.RtaTier) -> Unit,
     onRetryHeroRta: () -> Unit,
+    onOptimizerContentChanged: (com.e7orbit.optimizer.OptimizerContent) -> Unit,
+    onOptimizerHeroQueryChanged: (String) -> Unit,
+    onEquippedHeroSelected: (Long) -> Unit,
+    onOptimizerMetricChanged: (com.e7orbit.optimizer.OptimizerMetric) -> Unit,
+    onOptimizerMinimumChanged: (com.e7orbit.optimizer.OptimizerStat, Int) -> Unit,
+    onOptimizerRequiredSetToggled: (String) -> Unit,
+    onOptimizerAllowLockedChanged: (Boolean) -> Unit,
+    onOptimizerAllowEquippedChanged: (Boolean) -> Unit,
+    onOptimizerOnlyMaxedChanged: (Boolean) -> Unit,
+    onStartOptimizer: () -> Unit,
+    onStopOptimizer: () -> Unit,
 ) {
     var destinationName by rememberSaveable { mutableStateOf(OrbitDestination.HOME.name) }
     var detailName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -263,7 +325,9 @@ private fun OrbitApp(
     val topAppBarScrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     BackHandler(enabled = detail != null) { detailName = null }
     LaunchedEffect(destination) {
-        if (destination == OrbitDestination.DATA) onLoadData(false)
+        if (destination == OrbitDestination.DATA || destination == OrbitDestination.OPTIMIZER) {
+            onLoadData(false)
+        }
     }
     LaunchedEffect(route) {
         topAppBarScrollBehavior.state.contentOffset = 0f
@@ -388,6 +452,19 @@ private fun OrbitApp(
                         modifier = screenModifier,
                     )
 
+                    DetailRoute.OPTIMIZER_HERO -> OptimizerHeroDetailScreen(
+                        state = state,
+                        modifier = screenModifier,
+                        onMetricChanged = onOptimizerMetricChanged,
+                        onMinimumChanged = onOptimizerMinimumChanged,
+                        onRequiredSetToggled = onOptimizerRequiredSetToggled,
+                        onAllowLockedChanged = onOptimizerAllowLockedChanged,
+                        onAllowEquippedChanged = onOptimizerAllowEquippedChanged,
+                        onOnlyMaxedChanged = onOptimizerOnlyMaxedChanged,
+                        onStart = onStartOptimizer,
+                        onStop = onStopOptimizer,
+                    )
+
                     null -> when (animatedRoute.destination) {
                         OrbitDestination.HOME -> HomeScreen(
                             state = state,
@@ -416,7 +493,6 @@ private fun OrbitApp(
                             modifier = screenModifier,
                             onSectionChanged = onDataSectionChanged,
                             onQueryChanged = onDataQueryChanged,
-                            onExportGear = onExportGear,
                             onSelectHero = { code ->
                                 onSelectHero(code)
                                 detailName = DetailRoute.HERO.name
@@ -426,6 +502,19 @@ private fun OrbitApp(
                                 detailName = DetailRoute.ARTIFACT.name
                             },
                             onLoad = { onLoadData(true) },
+                        )
+
+                        OrbitDestination.OPTIMIZER -> OptimizerScreen(
+                            state = state,
+                            modifier = screenModifier,
+                            onContentChanged = onOptimizerContentChanged,
+                            onQueryChanged = onOptimizerHeroQueryChanged,
+                            onImportGear = onImportGear,
+                            onExportGear = onExportGear,
+                            onHeroSelected = { instanceId ->
+                                onEquippedHeroSelected(instanceId)
+                                detailName = DetailRoute.OPTIMIZER_HERO.name
+                            },
                         )
 
                         OrbitDestination.SETTINGS -> SettingsScreen(

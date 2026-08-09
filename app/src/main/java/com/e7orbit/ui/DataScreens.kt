@@ -70,7 +70,6 @@ internal fun DataBrowserScreen(
     modifier: Modifier = Modifier,
     onSectionChanged: (DataSection) -> Unit,
     onQueryChanged: (String) -> Unit,
-    onExportGear: () -> Unit,
     onSelectHero: (String) -> Unit,
     onSelectArtifact: (String) -> Unit,
     onLoad: () -> Unit,
@@ -148,7 +147,6 @@ internal fun DataBrowserScreen(
             EquipmentList(
                 data = data,
                 filter = selectedFilter,
-                onExport = onExportGear,
             )
         } else {
             when (data.loadState) {
@@ -213,7 +211,6 @@ private fun FilterRow(
 private fun ColumnScope.EquipmentList(
     data: DataUiState,
     filter: String,
-    onExport: () -> Unit,
 ) {
     val filtered = remember(data.gears, data.query, filter) {
         data.gears.filter { gear ->
@@ -228,28 +225,17 @@ private fun ColumnScope.EquipmentList(
             matchesQuery && matchesFilter
         }
     }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "${filtered.size} 个结果",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = "共 ${data.gears.size} 项",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        OutlinedButton(
-            onClick = onExport,
-            enabled = data.gears.isNotEmpty(),
-        ) {
-            Text("导出 gear.txt")
-        }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "${filtered.size} 个结果",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = "共 ${data.gears.size} 项",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
     Spacer(Modifier.height(8.dp))
     if (data.gears.isEmpty()) {

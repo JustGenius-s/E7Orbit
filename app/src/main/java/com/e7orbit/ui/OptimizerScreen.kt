@@ -1,0 +1,1065 @@
+package com.e7orbit.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.e7orbit.data.E7Gear
+import com.e7orbit.data.E7Hero
+import com.e7orbit.data.GearImportPhase
+import com.e7orbit.data.GearSlot
+import com.e7orbit.optimizer.EquippedHeroBuild
+import com.e7orbit.optimizer.GearOptimizer
+import com.e7orbit.optimizer.OptimizedBuild
+import com.e7orbit.optimizer.OptimizedHeroStats
+import com.e7orbit.optimizer.OptimizerContent
+import com.e7orbit.optimizer.OptimizerMetric
+import com.e7orbit.optimizer.OptimizerStat
+import com.e7orbit.optimizer.buildEquippedHeroes
+import java.text.NumberFormat
+import java.util.Locale
+
+@Composable
+internal fun OptimizerScreen(
+    state: MainUiState,
+    modifier: Modifier = Modifier,
+    onContentChanged: (OptimizerContent) -> Unit,
+    onQueryChanged: (String) -> Unit,
+    onImportGear: () -> Unit,
+    onExportGear: () -> Unit,
+    onHeroSelected: (Long) -> Unit,
+) {
+    val optimizer = state.optimizer
+    val builds = remember(state.data.scannedHeroes, state.data.heroes, state.data.gears) {
+        buildEquippedHeroes(
+            scannedHeroes = state.data.scannedHeroes,
+            catalog = state.data.heroes,
+            gears = state.data.gears,
+        )
+    }
+    val query = optimizer.heroQuery.trim()
+    val filteredBuilds = remember(builds, query) {
+        builds.filter { build ->
+            query.isEmpty() ||
+                build.displayName.contains(query, ignoreCase = true) ||
+                build.sets.any { it.name.contains(query, ignoreCase = true) }
+        }
+    }
+    val filteredGears = remember(state.data.gears, query) {
+        state.data.gears.filter { gear ->
+            query.isEmpty() ||
+                gear.setName.contains(query, ignoreCase = true) ||
+                gear.slot.label.contains(query, ignoreCase = true) ||
+                gear.mainStat.label.contains(query, ignoreCase = true)
+        }.sortedWith(
+            compareByDescending<E7Gear> { it.equippedHeroId != null }
+                .thenBy { it.slot.ordinal }
+                .thenByDescending(E7Gear::level)
+                .thenByDescending(E7Gear::enhance),
+        )
+    }
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(key = "mode") {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                OptimizerContent.entries.forEachIndexed { index, content ->
+                    SegmentedButton(
+                        selected = optimizer.content == content,
+                        onClick = { onContentChanged(content) },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = OptimizerContent.entries.size,
+                        ),
+                        label = {
+                            Text(
+                                when (content) {
+                                    OptimizerContent.HEROES -> "英雄配装"
+                                    OptimizerContent.EQUIPMENT -> "全部装备"
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+        }
+
+        item(key = "summary") {
+            OptimizerOverviewSummary(
+                heroCount = builds.size,
+                completeBuilds = builds.count(EquippedHeroBuild::isComplete),
+                gearCount = state.data.gears.size,
+                equippedCount = state.data.gears.count { it.equippedHeroId != null },
+                content = optimizer.content,
+            )
+        }
+
+        item(key = "file-actions") {
+            GearFileActions(
+                importing = state.vpnCapture.importPhase == GearImportPhase.PARSING,
+                canExport = state.data.gears.isNotEmpty(),
+                onImport = onImportGear,
+                onExport = onExportGear,
+            )
+        }
+
+        if (state.data.gears.isNotEmpty()) {
+            item(key = "search") {
+                OutlinedTextField(
+                    value = optimizer.heroQuery,
+                    onValueChange = onQueryChanged,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = {
+                        Text(
+                            if (optimizer.content == OptimizerContent.HEROES) {
+                                "搜索英雄或套装"
+                            } else {
+                                "搜索套装、部位或主属性"
+                            },
+                        )
+                    },
+                )
+            }
+        }
+
+        when (optimizer.content) {
+            OptimizerContent.HEROES -> {
+                when {
+                    state.data.gears.isEmpty() -> item(key = "empty-gears") {
+                        OptimizerEmptyState(
+                            title = "尚未导入装备",
+                            detail = "请在首页开启抓包并进入游戏背包。",
+                        )
+                    }
+                    builds.isEmpty() -> item(key = "empty-builds") {
+                        OptimizerEmptyState(
+                            title = "没有已配装英雄",
+                            detail = "当前库存中没有关联英雄实例的装备。重新抓包可同步英雄名称。",
+                        )
+                    }
+                    filteredBuilds.isEmpty() -> item(key = "empty-filter") {
+                        OptimizerEmptyState("没有匹配的英雄", "请更换搜索条件。")
+                    }
+                    else -> items(filteredBuilds, key = EquippedHeroBuild::instanceId) { build ->
+                        EquippedHeroCard(
+                            build = build,
+                            preferenceConfigured = optimizer.heroPreferences[build.instanceId]
+                                ?.isConfigured == true,
+                            onClick = { onHeroSelected(build.instanceId) },
+                        )
+                    }
+                }
+            }
+
+            OptimizerContent.EQUIPMENT -> {
+                if (filteredGears.isEmpty()) {
+                    item(key = "empty-equipment") {
+                        OptimizerEmptyState(
+                            title = if (state.data.gears.isEmpty()) "尚未导入装备" else "没有匹配的装备",
+                            detail = if (state.data.gears.isEmpty()) {
+                                "请在首页开启抓包并进入游戏背包。"
+                            } else {
+                                "请更换搜索条件。"
+                            },
+                        )
+                    }
+                } else {
+                    items(filteredGears, key = E7Gear::id) { gear ->
+                        InventoryGearCard(
+                            gear = gear,
+                            equippedName = builds.firstOrNull {
+                                it.instanceId == gear.equippedHeroId
+                            }?.displayName,
+                        )
+                    }
+                }
+            }
+        }
+
+        item(key = "footer") { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+@Composable
+internal fun OptimizerHeroDetailScreen(
+    state: MainUiState,
+    modifier: Modifier = Modifier,
+    onMetricChanged: (OptimizerMetric) -> Unit,
+    onMinimumChanged: (OptimizerStat, Int) -> Unit,
+    onRequiredSetToggled: (String) -> Unit,
+    onAllowLockedChanged: (Boolean) -> Unit,
+    onAllowEquippedChanged: (Boolean) -> Unit,
+    onOnlyMaxedChanged: (Boolean) -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val optimizer = state.optimizer
+    val build = remember(
+        optimizer.selectedEquippedHeroId,
+        state.data.scannedHeroes,
+        state.data.heroes,
+        state.data.gears,
+    ) {
+        buildEquippedHeroes(
+            scannedHeroes = state.data.scannedHeroes,
+            catalog = state.data.heroes,
+            gears = state.data.gears,
+        ).firstOrNull { it.instanceId == optimizer.selectedEquippedHeroId }
+    }
+    val setOptions = remember(state.data.gears) {
+        state.data.gears
+            .asSequence()
+            .filter { GearOptimizer.setPieces(it.setCode) > 0 }
+            .groupBy(E7Gear::setCode)
+            .map { (code, items) ->
+                OptimizerSetOption(
+                    code = code,
+                    name = items.first().setName.removeSuffix("套装"),
+                    pieces = GearOptimizer.setPieces(code),
+                )
+            }
+            .sortedWith(compareBy<OptimizerSetOption> { it.pieces }.thenBy { it.name })
+    }
+
+    if (build == null) {
+        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("该英雄配装已不存在", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(key = "hero") { EquippedHeroHeader(build) }
+
+        item(key = "stats") {
+            SectionSurface {
+                SectionTitle(
+                    title = "最终属性",
+                    detail = if (build.stats == null) {
+                        "需要完整六件装备和可匹配的英雄基础属性。"
+                    } else {
+                        "按当前装备、基础属性和已激活套装计算。"
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+                build.stats?.let { HeroStatsGrid(it) }
+                    ?: Text(
+                        "最终面板暂不可计算",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+            }
+        }
+
+        item(key = "equipment") {
+            SectionSurface(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
+                SectionTitle(
+                    title = "当前装备",
+                    detail = "${build.items.size} / 6 个部位",
+                )
+                Spacer(Modifier.height(8.dp))
+                EQUIPMENT_SLOTS.forEachIndexed { index, slot ->
+                    val gear = build.items.firstOrNull { it.slot == slot }
+                    DetailedGearRow(slot = slot, gear = gear)
+                    if (index != EQUIPMENT_SLOTS.lastIndex) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
+                }
+            }
+        }
+
+        item(key = "preference") {
+            SectionSurface {
+                SectionTitle(
+                    title = "属性偏好",
+                    detail = "设置只属于 ${build.displayName}，计算结果先满足最低属性，再按目标排序。",
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "排序目标",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(OptimizerMetric.entries, key = OptimizerMetric::name) { metric ->
+                        FilterChip(
+                            selected = optimizer.metric == metric,
+                            onClick = { onMetricChanged(metric) },
+                            enabled = optimizer.phase != OptimizerPhase.RUNNING,
+                            label = { Text(metric.label) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "最低属性",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                OptimizerStat.entries.chunked(2).forEachIndexed { index, rowStats ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        rowStats.forEach { stat ->
+                            MinimumStatField(
+                                stat = stat,
+                                value = optimizer.minimums[stat] ?: 0,
+                                enabled = optimizer.phase != OptimizerPhase.RUNNING,
+                                onChanged = { onMinimumChanged(stat, it) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    if (index != OptimizerStat.entries.chunked(2).lastIndex) {
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "必选套装",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(setOptions, key = OptimizerSetOption::code) { set ->
+                        FilterChip(
+                            selected = set.code in optimizer.requiredSets,
+                            onClick = { onRequiredSetToggled(set.code) },
+                            enabled = optimizer.phase != OptimizerPhase.RUNNING,
+                            label = { Text("${set.name} · ${set.pieces}") },
+                        )
+                    }
+                }
+                val requiredPieces = optimizer.requiredSets.sumOf(GearOptimizer::setPieces)
+                if (requiredPieces > 6) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "必选套装合计超过 6 件，请取消一个套装。",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+
+        item(key = "scope") {
+            SectionSurface {
+                SectionTitle("装备范围")
+                ToggleSettingRow(
+                    title = "只使用 +15 装备",
+                    subtitle = "关闭后按装备当前属性参与计算。",
+                    checked = optimizer.onlyMaxed,
+                    enabled = optimizer.phase != OptimizerPhase.RUNNING,
+                    onCheckedChange = onOnlyMaxedChanged,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ToggleSettingRow(
+                    title = "允许已装备",
+                    subtitle = "包含当前穿在其他英雄身上的装备。",
+                    checked = optimizer.allowEquipped,
+                    enabled = optimizer.phase != OptimizerPhase.RUNNING,
+                    onCheckedChange = onAllowEquippedChanged,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ToggleSettingRow(
+                    title = "允许锁定装备",
+                    subtitle = "锁定只作为库存筛选条件。",
+                    checked = optimizer.allowLocked,
+                    enabled = optimizer.phase != OptimizerPhase.RUNNING,
+                    onCheckedChange = onAllowLockedChanged,
+                )
+            }
+        }
+
+        item(key = "action") {
+            OptimizerAction(
+                state = state,
+                selectedHero = build.hero,
+                onStart = onStart,
+                onStop = onStop,
+            )
+        }
+
+        when (optimizer.phase) {
+            OptimizerPhase.IDLE -> Unit
+            OptimizerPhase.RUNNING -> item(key = "running") { OptimizerRunningState() }
+            OptimizerPhase.ERROR -> item(key = "error") {
+                OptimizerMessageCard(
+                    title = "无法开始配装",
+                    detail = optimizer.errorMessage ?: "配装计算失败",
+                    error = true,
+                )
+            }
+            OptimizerPhase.READY -> {
+                item(key = "result-summary") {
+                    val evaluated = NumberFormat.getIntegerInstance(Locale.CHINA)
+                        .format(optimizer.combinationsEvaluated)
+                    OptimizerMessageCard(
+                        title = if (optimizer.results.isEmpty()) {
+                            "没有满足偏好的组合"
+                        } else {
+                            "找到 ${optimizer.results.size} 套方案"
+                        },
+                        detail = "评估 $evaluated 个候选分支 · ${optimizer.elapsedMs} ms",
+                        error = false,
+                    )
+                }
+                items(
+                    items = optimizer.results,
+                    key = { result -> result.items.joinToString("-") { it.id.toString() } },
+                ) { result ->
+                    OptimizedBuildCard(
+                        build = result,
+                        rank = optimizer.results.indexOf(result) + 1,
+                        metric = optimizer.metric,
+                    )
+                }
+            }
+        }
+
+        item(key = "footer") { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+@Composable
+private fun GearFileActions(
+    importing: Boolean,
+    canExport: Boolean,
+    onImport: () -> Unit,
+    onExport: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        OutlinedButton(
+            onClick = onImport,
+            modifier = Modifier.weight(1f),
+            enabled = !importing,
+        ) {
+            if (importing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(if (importing) "正在导入" else "导入文件")
+        }
+        Button(
+            onClick = onExport,
+            modifier = Modifier.weight(1f),
+            enabled = canExport && !importing,
+        ) {
+            Text("导出文件")
+        }
+    }
+}
+
+@Composable
+private fun OptimizerOverviewSummary(
+    heroCount: Int,
+    completeBuilds: Int,
+    gearCount: Int,
+    equippedCount: Int,
+    content: OptimizerContent,
+) {
+    SectionSurface {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            if (content == OptimizerContent.HEROES) {
+                SummaryMetric("已配装英雄", heroCount.toString())
+                SummaryMetric("完整六件", completeBuilds.toString())
+                SummaryMetric("已穿装备", "$equippedCount 件")
+            } else {
+                SummaryMetric("装备总数", "$gearCount 件")
+                SummaryMetric("已装备", "$equippedCount 件")
+                SummaryMetric("库存", "${gearCount - equippedCount} 件")
+            }
+        }
+    }
+}
+
+@Composable
+private fun EquippedHeroCard(
+    build: EquippedHeroBuild,
+    preferenceConfigured: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RemoteImage(
+                    url = build.hero?.assets?.iconUrl ?: build.hero?.assets?.thumbnailUrl,
+                    contentDescription = build.displayName,
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(CircleShape),
+                    contentScale = ContentScale.Crop,
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = build.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = build.setsText(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "${build.items.size}/6",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = if (preferenceConfigured) "已设置偏好" else "查看详情",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (preferenceConfigured) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            build.stats?.let { CompactStatsGrid(it) }
+                ?: Text(
+                    text = if (!build.isComplete) "装备不完整，无法计算最终属性" else "未匹配到英雄基础属性",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+        }
+    }
+}
+
+@Composable
+private fun EquippedHeroHeader(build: EquippedHeroBuild) {
+    SectionSurface {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RemoteImage(
+                url = build.hero?.assets?.iconUrl ?: build.hero?.assets?.thumbnailUrl,
+                contentDescription = build.displayName,
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop,
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = build.displayName,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = listOfNotNull(
+                        build.scannedHero?.stars?.let { "$it 星" },
+                        build.scannedHero?.awaken?.let { "觉醒 $it" },
+                        build.hero?.zodiac,
+                    ).joinToString(" · ").ifBlank { "游戏实例 ${build.instanceId}" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = build.setsText(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactStatsGrid(stats: OptimizedHeroStats) {
+    val values = listOf(
+        "攻击" to formatNumber(stats.attack),
+        "生命" to formatNumber(stats.health),
+        "防御" to formatNumber(stats.defense),
+        "速度" to stats.speed.toString(),
+        "暴击" to "${stats.critChance}%",
+        "暴伤" to "${stats.critDamage}%",
+        "命中" to "${stats.effectiveness}%",
+        "抗性" to "${stats.resistance}%",
+    )
+    values.chunked(4).forEachIndexed { rowIndex, row ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            row.forEach { (label, value) ->
+                StatCell(label, value, Modifier.weight(1f), compact = true)
+            }
+        }
+        if (rowIndex == 0) Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun HeroStatsGrid(stats: OptimizedHeroStats) {
+    val values = listOf(
+        "攻击" to formatNumber(stats.attack),
+        "生命" to formatNumber(stats.health),
+        "防御" to formatNumber(stats.defense),
+        "速度" to stats.speed.toString(),
+        "暴击率" to "${stats.critChance}%",
+        "暴击伤害" to "${stats.critDamage}%",
+        "效果命中" to "${stats.effectiveness}%",
+        "效果抗性" to "${stats.resistance}%",
+        "战斗力" to formatNumber(stats.combatPower),
+        "有效生命" to formatNumber(stats.effectiveHealth),
+        "伤害" to formatNumber(stats.damage),
+        "装备分" to stats.gearScore.toString(),
+    )
+    values.chunked(3).forEachIndexed { rowIndex, row ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            row.forEach { (label, value) ->
+                StatCell(label, value, Modifier.weight(1f), compact = false)
+            }
+        }
+        if (rowIndex != values.chunked(3).lastIndex) Spacer(Modifier.height(10.dp))
+    }
+}
+
+@Composable
+private fun StatCell(label: String, value: String, modifier: Modifier, compact: Boolean) {
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Text(
+            text = value,
+            fontSize = if (compact) 13.sp else 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
+    if (gear == null) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(slot.label, modifier = Modifier.width(62.dp), fontWeight = FontWeight.Bold)
+            Text("未装备", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        return
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.width(62.dp)) {
+                Text(slot.label, fontWeight = FontWeight.Bold)
+                Text(
+                    "+${gear.enhance}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${gear.setName.removeSuffix("套装")} · ${gear.rank}",
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "主属性 ${gear.mainStat.label} ${gear.mainStat.displayValue()} · Lv.${gear.level}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                "分 ${GearOptimizer.gearScore(gear)}",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        if (gear.substats.isNotEmpty()) {
+            Spacer(Modifier.height(7.dp))
+            Text(
+                text = gear.substats.joinToString("  ·  ") { stat ->
+                    "${stat.label} ${stat.displayValue()}${if (stat.modified) "*" else ""}"
+                },
+                modifier = Modifier.padding(start = 62.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun InventoryGearCard(gear: E7Gear, equippedName: String?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.width(64.dp)) {
+                    Text(gear.slot.label, fontWeight = FontWeight.Bold)
+                    Text(
+                        "+${gear.enhance}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "${gear.setName.removeSuffix("套装")} · ${gear.rank} · Lv.${gear.level}",
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "${gear.mainStat.label} ${gear.mainStat.displayValue()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        GearOptimizer.gearScore(gear).toString(),
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        equippedName ?: "库存",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (equippedName == null) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Spacer(Modifier.height(7.dp))
+            Text(
+                gear.substats.joinToString("  ·  ") { "${it.label} ${it.displayValue()}" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MinimumStatField(
+    stat: OptimizerStat,
+    value: Int,
+    enabled: Boolean,
+    onChanged: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = value.takeIf { it > 0 }?.toString().orEmpty(),
+        onValueChange = { input ->
+            val digits = input.filter(Char::isDigit).take(MAX_STAT_DIGITS)
+            onChanged(digits.toIntOrNull() ?: 0)
+        },
+        modifier = modifier,
+        enabled = enabled,
+        singleLine = true,
+        label = { Text(stat.label) },
+        placeholder = { Text("不限") },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+    )
+}
+
+@Composable
+private fun OptimizerAction(
+    state: MainUiState,
+    selectedHero: E7Hero?,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val optimizer = state.optimizer
+    val requiredPieces = optimizer.requiredSets.sumOf(GearOptimizer::setPieces)
+    if (optimizer.phase == OptimizerPhase.RUNNING) {
+        OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) {
+            Text("停止计算")
+        }
+    } else {
+        Button(
+            onClick = onStart,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = selectedHero?.stats != null && state.data.gears.isNotEmpty() && requiredPieces <= 6,
+        ) {
+            Text("按偏好开始配装")
+        }
+        if (selectedHero?.stats == null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "当前英雄未匹配到基础属性，无法运行配装计算。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OptimizerRunningState() {
+    SectionSurface {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("正在组合六个部位", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "计算在后台执行，可随时停止。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun OptimizerMessageCard(title: String, detail: String, error: Boolean) {
+    SectionSurface(
+        color = if (error) {
+            MaterialTheme.colorScheme.errorContainer
+        } else {
+            MaterialTheme.colorScheme.secondaryContainer
+        },
+    ) {
+        Text(
+            title,
+            fontWeight = FontWeight.Bold,
+            color = if (error) {
+                MaterialTheme.colorScheme.onErrorContainer
+            } else {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            },
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            detail,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (error) {
+                MaterialTheme.colorScheme.onErrorContainer
+            } else {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            },
+        )
+    }
+}
+
+@Composable
+private fun OptimizedBuildCard(build: OptimizedBuild, rank: Int, metric: OptimizerMetric) {
+    var expanded by rememberSaveable(
+        build.items.joinToString("-") { it.id.toString() },
+    ) { mutableStateOf(rank == 1) }
+    val formatter = remember { NumberFormat.getIntegerInstance(Locale.CHINA) }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded },
+        shape = MaterialTheme.shapes.small,
+        colors = CardDefaults.cardColors(
+            containerColor = if (rank == 1) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerLow
+            },
+        ),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "#$rank",
+                    modifier = Modifier.width(42.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        build.completedSets.joinToString(" + ") { setCode ->
+                            build.items.firstOrNull { it.setCode == setCode }
+                                ?.setName?.removeSuffix("套装") ?: setCode
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "${metric.label} ${formatter.format(build.rankingValue)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    if (expanded) "收起" else "详情",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            CompactStatsGrid(build.stats)
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    build.items.forEachIndexed { index, gear ->
+                        DetailedGearRow(gear.slot, gear)
+                        if (index != build.items.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptimizerEmptyState(title: String, detail: String) {
+    SectionSurface {
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(3.dp))
+        Text(
+            detail,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SummaryMetric(label: String, value: String) {
+    Column {
+        Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun EquippedHeroBuild.setsText(): String {
+    val completed = sets.filter { it.completedCount > 0 }
+        .joinToString(" + ") { set ->
+            set.name + if (set.completedCount > 1) " x${set.completedCount}" else ""
+        }
+    return completed.ifBlank {
+        sets.joinToString(" + ") { "${it.name} ${it.pieceCount}/${it.requiredPieces}" }
+            .ifBlank { "暂无套装" }
+    }
+}
+
+private fun formatNumber(value: Int): String =
+    NumberFormat.getIntegerInstance(Locale.CHINA).format(value)
+
+private const val MAX_STAT_DIGITS = 7
+private val EQUIPMENT_SLOTS = listOf(
+    GearSlot.WEAPON,
+    GearSlot.HELMET,
+    GearSlot.ARMOR,
+    GearSlot.NECKLACE,
+    GearSlot.RING,
+    GearSlot.BOOTS,
+)

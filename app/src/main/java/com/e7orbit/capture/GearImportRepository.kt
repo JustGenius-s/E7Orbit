@@ -2,6 +2,7 @@ package com.e7orbit.capture
 
 import android.content.Context
 import com.e7orbit.data.E7Gear
+import com.e7orbit.data.E7ScannedHero
 import com.e7orbit.data.GearExportSerializer
 import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.GearImportState
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -75,25 +77,25 @@ class GearImportRepository(
                     ?.maxByOrNull(JsonArray::size)
                     ?.mapNotNull { it as? JsonObject }
                     .orEmpty()
-                val heroCount = rawHeroes.size
+                val heroes = rawHeroes.mapNotNull(GearImportParser::parseHero)
                 val importedAt = System.currentTimeMillis()
                 val export = GearExportSerializer.serializeScannerExport(
                     gears = gears,
                     rawItems = rawItems,
                     rawHeroes = rawHeroes,
                 )
-                persist(gears, heroCount, importedAt, export)
+                persist(gears, heroes, importedAt, export)
                 _state.value = GearImportState(
                     phase = GearImportPhase.READY,
                     gears = gears,
-                    heroCount = heroCount,
+                    heroes = heroes,
                     importedAtEpochMs = importedAt,
                 )
                 cleanupSessions(payload.sessionPath, importSucceeded = true)
                 logger.info(
                     "gear.import_succeeded",
                     "items" to gears.size,
-                    "heroes" to heroCount,
+                    "heroes" to heroes.size,
                     "streams" to payload.streams.size,
                     "bytes" to payload.byteCount,
                 )
@@ -132,6 +134,44 @@ class GearImportRepository(
         }
     }
 
+    suspend fun importExport(payload: String): GearImportState = withContext(Dispatchers.IO) {
+        val previous = _state.value
+        _state.value = previous.copy(
+            phase = GearImportPhase.PARSING,
+            errorMessage = null,
+        )
+        try {
+            val parsed = GearImportParser.parseExport(payload)
+            check(parsed.gears.isNotEmpty()) { "文件中没有可识别的装备" }
+            val importedAt = System.currentTimeMillis()
+            persist(
+                gears = parsed.gears,
+                heroes = parsed.heroes,
+                importedAt = importedAt,
+                export = payload,
+            )
+            GearImportState(
+                phase = GearImportPhase.READY,
+                gears = parsed.gears,
+                heroes = parsed.heroes,
+                importedAtEpochMs = importedAt,
+            ).also { imported ->
+                _state.value = imported
+                logger.info(
+                    "gear.file_import_succeeded",
+                    "items" to imported.gears.size,
+                    "heroes" to imported.heroes.size,
+                )
+            }
+        } catch (error: Throwable) {
+            logger.error("gear.file_import_failed", error)
+            _state.value = previous.copy(
+                errorMessage = error.message ?: "装备文件导入失败",
+            )
+            throw error
+        }
+    }
+
     fun hasCompatibleExport(): Boolean = exportFile.exists()
 
     fun readGearExport(): String {
@@ -143,12 +183,17 @@ class GearImportRepository(
 
     private fun persist(
         gears: List<E7Gear>,
-        heroCount: Int,
+        heroes: List<E7ScannedHero>,
         importedAt: Long,
         export: String,
     ) {
         storeFile.parentFile?.mkdirs()
-        val saved = SavedGearImport(gears, heroCount, importedAt)
+        val saved = SavedGearImport(
+            gears = gears,
+            heroes = heroes,
+            heroCount = heroes.size,
+            importedAtEpochMs = importedAt,
+        )
         writeAtomically(storeFile, json.encodeToString(saved))
         writeAtomically(exportFile, export)
     }
@@ -163,10 +208,24 @@ class GearImportRepository(
     private fun loadSavedState(): GearImportState = runCatching {
         if (!storeFile.exists()) return@runCatching GearImportState()
         val saved = json.decodeFromString<SavedGearImport>(storeFile.readText(Charsets.UTF_8))
+        val heroes = saved.heroes.ifEmpty(::restoreHeroesFromExport)
+        if (saved.heroes.isEmpty() && heroes.isNotEmpty()) {
+            writeAtomically(
+                storeFile,
+                json.encodeToString(
+                    saved.copy(
+                        heroes = heroes,
+                        heroCount = heroes.size,
+                    ),
+                ),
+            )
+            logger.info("gear.import_heroes_migrated", "heroes" to heroes.size)
+        }
         GearImportState(
             phase = GearImportPhase.READY,
             gears = saved.gears,
-            heroCount = saved.heroCount,
+            heroes = heroes,
+            heroCount = heroes.size.takeIf { it > 0 } ?: saved.heroCount,
             importedAtEpochMs = saved.importedAtEpochMs,
         )
     }.getOrElse { error ->
@@ -176,6 +235,13 @@ class GearImportRepository(
             errorMessage = "已保存的装备数据无法读取",
         )
     }
+
+    private fun restoreHeroesFromExport(): List<E7ScannedHero> = runCatching {
+        if (!exportFile.exists()) return@runCatching emptyList()
+        GearImportParser.parseHeroExport(exportFile.readText(Charsets.UTF_8))
+    }.onFailure { error ->
+        logger.warn("gear.import_heroes_migration_failed", "error" to error.message)
+    }.getOrDefault(emptyList())
 
     private fun cleanupSessions(currentPath: String, importSucceeded: Boolean) {
         if (importSucceeded) File(currentPath).deleteRecursively()
@@ -193,7 +259,8 @@ class GearImportRepository(
     @kotlinx.serialization.Serializable
     private data class SavedGearImport(
         val gears: List<E7Gear>,
-        val heroCount: Int,
+        val heroes: List<E7ScannedHero> = emptyList(),
+        val heroCount: Int = heroes.size,
         val importedAtEpochMs: Long,
     )
 

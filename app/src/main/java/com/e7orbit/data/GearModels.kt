@@ -3,6 +3,14 @@ package com.e7orbit.data
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class E7ScannedHero(
+    val id: Long,
+    val name: String,
+    val stars: Int? = null,
+    val awaken: Int? = null,
+)
+
+@Serializable
 data class E7Gear(
     val id: Long,
     val code: String,
@@ -79,7 +87,8 @@ enum class GearImportPhase {
 data class GearImportState(
     val phase: GearImportPhase = GearImportPhase.IDLE,
     val gears: List<E7Gear> = emptyList(),
-    val heroCount: Int = 0,
+    val heroes: List<E7ScannedHero> = emptyList(),
+    val heroCount: Int = heroes.size,
     val importedAtEpochMs: Long = 0L,
     val errorMessage: String? = null,
 )

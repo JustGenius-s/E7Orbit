@@ -17,6 +17,7 @@ import com.e7orbit.capture.VpnCaptureService
 import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7Hero
+import com.e7orbit.data.E7ScannedHero
 import com.e7orbit.data.E7DataSnapshot
 import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.HeroRtaAnalysis
@@ -33,8 +34,21 @@ import com.e7orbit.model.HuntStatus
 import com.e7orbit.model.MAX_SUPPORTED_HUNT_RUNS
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
+import com.e7orbit.optimizer.GearOptimizationConfig
+import com.e7orbit.optimizer.GearOptimizer
+import com.e7orbit.optimizer.HeroOptimizerPreference
+import com.e7orbit.optimizer.OptimizerContent
+import com.e7orbit.optimizer.OptimizerPreferenceStore
+import com.e7orbit.optimizer.matchScannedHero
+import com.e7orbit.optimizer.OptimizerConstraints
+import com.e7orbit.optimizer.OptimizedBuild
+import com.e7orbit.optimizer.OptimizerMetric
+import com.e7orbit.optimizer.OptimizerStat
 import com.e7orbit.service.E7AccessibilityService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +56,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 data class EnvironmentStatus(
@@ -67,6 +82,39 @@ data class MainUiState(
     val lastSummary: RunSummary = RunSummary(),
     val data: DataUiState = DataUiState(),
     val vpnCapture: VpnCaptureUiState = VpnCaptureUiState(),
+    val optimizer: OptimizerUiState = OptimizerUiState(),
+)
+
+enum class OptimizerPhase {
+    IDLE,
+    RUNNING,
+    READY,
+    ERROR,
+}
+
+data class OptimizerSetOption(
+    val code: String,
+    val name: String,
+    val pieces: Int,
+)
+
+data class OptimizerUiState(
+    val phase: OptimizerPhase = OptimizerPhase.IDLE,
+    val content: OptimizerContent = OptimizerContent.HEROES,
+    val selectedHeroCode: String? = null,
+    val selectedEquippedHeroId: Long? = null,
+    val heroQuery: String = "",
+    val metric: OptimizerMetric = OptimizerMetric.COMBAT_POWER,
+    val minimums: Map<OptimizerStat, Int> = emptyMap(),
+    val requiredSets: Set<String> = emptySet(),
+    val allowLocked: Boolean = true,
+    val allowEquipped: Boolean = true,
+    val onlyMaxed: Boolean = true,
+    val heroPreferences: Map<Long, HeroOptimizerPreference> = emptyMap(),
+    val results: List<OptimizedBuild> = emptyList(),
+    val combinationsEvaluated: Long = 0L,
+    val elapsedMs: Long = 0L,
+    val errorMessage: String? = null,
 )
 
 data class VpnCaptureUiState(
@@ -98,6 +146,7 @@ enum class DataLoadState {
 data class DataUiState(
     val loadState: DataLoadState = DataLoadState.IDLE,
     val gears: List<E7Gear> = emptyList(),
+    val scannedHeroes: List<E7ScannedHero> = emptyList(),
     val heroes: List<E7Hero> = emptyList(),
     val artifacts: List<E7Artifact> = emptyList(),
     val section: DataSection = DataSection.EQUIPMENT,
@@ -170,6 +219,14 @@ class MainViewModel(
     private val draftHuntConfig = PersistedDraft(HuntConfig())
     private val environment = MutableStateFlow(readEnvironment())
     private val data = MutableStateFlow(DataUiState())
+    private val optimizerPreferenceStore = OptimizerPreferenceStore(application)
+    private val optimizer = MutableStateFlow(
+        OptimizerUiState(heroPreferences = optimizerPreferenceStore.load()),
+    )
+    private val gearOptimizer = GearOptimizer()
+    private var optimizerJob: Job? = null
+    private var optimizerRequestId = 0L
+    private var importedGearIds: List<Long> = emptyList()
     private var rtaRequestId = 0L
     private val runtimeStatuses = combine(
         taskCoordinator.shopStatus,
@@ -224,9 +281,16 @@ class MainViewModel(
     val uiState: StateFlow<MainUiState> = baseUiState.combine(data) { state, dataState ->
         state.copy(data = dataState)
     }.combine(AppGraph.gearImportRepository.state) { state, import ->
-        state.copy(data = state.data.copy(gears = import.gears))
+        state.copy(
+            data = state.data.copy(
+                gears = import.gears,
+                scannedHeroes = import.heroes,
+            ),
+        )
     }.combine(vpnStatus) { state, vpn ->
         state.copy(vpnCapture = vpn)
+    }.combine(optimizer) { state, optimizerState ->
+        state.copy(optimizer = optimizerState)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000L),
@@ -242,6 +306,15 @@ class MainViewModel(
         viewModelScope.launch {
             settings.huntConfig.collect { saved ->
                 draftHuntConfig.acceptPersisted(saved)
+            }
+        }
+        viewModelScope.launch {
+            AppGraph.gearImportRepository.state.collect { import ->
+                val currentIds = import.gears.map(E7Gear::id)
+                if (currentIds != importedGearIds) {
+                    importedGearIds = currentIds
+                    invalidateOptimizerResults()
+                }
             }
         }
         taskCoordinator.refreshHealth()
@@ -278,6 +351,247 @@ class MainViewModel(
     fun setDataSection(section: DataSection) {
         data.value = data.value.copy(section = section)
     }
+
+    fun setOptimizerContent(content: OptimizerContent) {
+        optimizer.value = optimizer.value.copy(content = content, heroQuery = "")
+    }
+
+    fun selectOptimizerHero(code: String) {
+        updateOptimizerConfig {
+            copy(
+                selectedHeroCode = code,
+                selectedEquippedHeroId = null,
+                heroQuery = "",
+            )
+        }
+    }
+
+    fun selectEquippedHero(instanceId: Long) {
+        val scanned = AppGraph.gearImportRepository.state.value.heroes
+            .firstOrNull { it.id == instanceId }
+        val hero = matchScannedHero(scanned, data.value.heroes)
+        val preference = optimizer.value.heroPreferences[instanceId] ?: HeroOptimizerPreference()
+        updateOptimizerConfig {
+            copy(
+                selectedHeroCode = hero?.code,
+                selectedEquippedHeroId = instanceId,
+                heroQuery = "",
+                metric = preference.metric,
+                minimums = preference.minimums,
+                requiredSets = preference.requiredSets,
+            )
+        }
+    }
+
+    fun setOptimizerHeroQuery(query: String) {
+        optimizer.value = optimizer.value.copy(heroQuery = query)
+    }
+
+    fun setOptimizerMetric(metric: OptimizerMetric) {
+        updateOptimizerPreference { copy(metric = metric) }
+    }
+
+    fun setOptimizerMinimum(stat: OptimizerStat, value: Int) {
+        updateOptimizerPreference {
+            copy(minimums = minimums + (stat to value.coerceAtLeast(0)))
+        }
+    }
+
+    fun toggleOptimizerRequiredSet(code: String) {
+        updateOptimizerPreference {
+            val next = if (code in requiredSets) requiredSets - code else requiredSets + code
+            copy(requiredSets = next)
+        }
+    }
+
+    fun setOptimizerAllowLocked(enabled: Boolean) {
+        updateOptimizerConfig { copy(allowLocked = enabled) }
+    }
+
+    fun setOptimizerAllowEquipped(enabled: Boolean) {
+        updateOptimizerConfig { copy(allowEquipped = enabled) }
+    }
+
+    fun setOptimizerOnlyMaxed(enabled: Boolean) {
+        updateOptimizerConfig { copy(onlyMaxed = enabled) }
+    }
+
+    fun startOptimizer() {
+        val current = optimizer.value
+        val hero = data.value.heroes.firstOrNull { it.code == current.selectedHeroCode }
+        val inventory = AppGraph.gearImportRepository.state.value.gears
+        if (hero == null) {
+            optimizer.value = current.copy(
+                phase = OptimizerPhase.ERROR,
+                errorMessage = "请先选择英雄",
+            )
+            return
+        }
+        if (hero.stats == null) {
+            optimizer.value = current.copy(
+                phase = OptimizerPhase.ERROR,
+                errorMessage = "该英雄缺少六星满觉基础属性",
+            )
+            return
+        }
+        if (inventory.isEmpty()) {
+            optimizer.value = current.copy(
+                phase = OptimizerPhase.ERROR,
+                errorMessage = "尚未导入装备，请先在首页完成抓包",
+            )
+            return
+        }
+        if (current.requiredSets.sumOf(GearOptimizer::setPieces) > 6) {
+            optimizer.value = current.copy(
+                phase = OptimizerPhase.ERROR,
+                errorMessage = "必选套装合计超过 6 件",
+            )
+            return
+        }
+
+        optimizerJob?.cancel()
+        val requestId = ++optimizerRequestId
+        val config = current.toOptimizationConfig()
+        optimizer.value = current.copy(
+            phase = OptimizerPhase.RUNNING,
+            results = emptyList(),
+            combinationsEvaluated = 0L,
+            elapsedMs = 0L,
+            errorMessage = null,
+        )
+        optimizerJob = viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            try {
+                val outcome = withContext(Dispatchers.Default) {
+                    gearOptimizer.optimize(
+                        hero = hero,
+                        inventory = inventory,
+                        config = config,
+                        isCancelled = { requestId != optimizerRequestId || !isActive },
+                    )
+                }
+                if (requestId != optimizerRequestId) return@launch
+                val elapsed = System.currentTimeMillis() - startedAt
+                optimizer.value = optimizer.value.copy(
+                    phase = OptimizerPhase.READY,
+                    results = outcome.builds,
+                    combinationsEvaluated = outcome.combinationsEvaluated,
+                    elapsedMs = elapsed,
+                    errorMessage = null,
+                )
+                AppGraph.logger.info(
+                    "optimizer.completed",
+                    "hero" to hero.code,
+                    "inventory" to inventory.size,
+                    "evaluated" to outcome.combinationsEvaluated,
+                    "results" to outcome.builds.size,
+                    "elapsedMs" to elapsed,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (requestId != optimizerRequestId) return@launch
+                AppGraph.logger.error("optimizer.failed", error, "hero" to hero.code)
+                optimizer.value = optimizer.value.copy(
+                    phase = OptimizerPhase.ERROR,
+                    results = emptyList(),
+                    errorMessage = error.message ?: "配装计算失败",
+                )
+            }
+        }
+    }
+
+    fun stopOptimizer() {
+        if (optimizer.value.phase != OptimizerPhase.RUNNING) return
+        optimizerRequestId++
+        optimizerJob?.cancel()
+        optimizerJob = null
+        optimizer.value = optimizer.value.copy(
+            phase = OptimizerPhase.IDLE,
+            results = emptyList(),
+            errorMessage = null,
+        )
+    }
+
+    private fun updateOptimizerPreference(
+        transform: HeroOptimizerPreference.() -> HeroOptimizerPreference,
+    ) {
+        val instanceId = optimizer.value.selectedEquippedHeroId
+        if (instanceId == null) {
+            val next = HeroOptimizerPreference(
+                metric = optimizer.value.metric,
+                minimums = optimizer.value.minimums,
+                requiredSets = optimizer.value.requiredSets,
+            ).transform()
+            updateOptimizerConfig {
+                copy(
+                    metric = next.metric,
+                    minimums = next.minimums,
+                    requiredSets = next.requiredSets,
+                )
+            }
+            return
+        }
+        val next = (optimizer.value.heroPreferences[instanceId] ?: HeroOptimizerPreference()).transform()
+        updateOptimizerConfig {
+            copy(
+                metric = next.metric,
+                minimums = next.minimums,
+                requiredSets = next.requiredSets,
+                heroPreferences = heroPreferences + (instanceId to next),
+            )
+        }
+        viewModelScope.launch {
+            runCatching { optimizerPreferenceStore.save(optimizer.value.heroPreferences) }
+                .onFailure { AppGraph.logger.error("optimizer.preference_save_failed", it) }
+        }
+    }
+
+    private fun updateOptimizerConfig(transform: OptimizerUiState.() -> OptimizerUiState) {
+        optimizerRequestId++
+        optimizerJob?.cancel()
+        optimizerJob = null
+        optimizer.value = optimizer.value.transform().copy(
+            phase = OptimizerPhase.IDLE,
+            results = emptyList(),
+            combinationsEvaluated = 0L,
+            elapsedMs = 0L,
+            errorMessage = null,
+        )
+    }
+
+    private fun invalidateOptimizerResults() {
+        if (optimizer.value.phase == OptimizerPhase.IDLE && optimizer.value.results.isEmpty()) return
+        optimizerRequestId++
+        optimizerJob?.cancel()
+        optimizerJob = null
+        optimizer.value = optimizer.value.copy(
+            phase = OptimizerPhase.IDLE,
+            results = emptyList(),
+            combinationsEvaluated = 0L,
+            elapsedMs = 0L,
+            errorMessage = null,
+        )
+    }
+
+    private fun OptimizerUiState.toOptimizationConfig(): GearOptimizationConfig =
+        GearOptimizationConfig(
+            metric = metric,
+            constraints = OptimizerConstraints(
+                attack = minimums[OptimizerStat.ATTACK] ?: 0,
+                health = minimums[OptimizerStat.HEALTH] ?: 0,
+                defense = minimums[OptimizerStat.DEFENSE] ?: 0,
+                speed = minimums[OptimizerStat.SPEED] ?: 0,
+                critChance = minimums[OptimizerStat.CRIT_CHANCE] ?: 0,
+                critDamage = minimums[OptimizerStat.CRIT_DAMAGE] ?: 0,
+                effectiveness = minimums[OptimizerStat.EFFECTIVENESS] ?: 0,
+                resistance = minimums[OptimizerStat.RESISTANCE] ?: 0,
+            ),
+            requiredSets = requiredSets,
+            allowLocked = allowLocked,
+            allowEquipped = allowEquipped,
+            onlyMaxed = onlyMaxed,
+        )
 
     fun setDataQuery(query: String) {
         data.value = data.value.copy(query = query)
@@ -418,6 +732,17 @@ class MainViewModel(
             fetchedAtEpochMs = snapshot.fetchedAtEpochMs,
             errorMessage = null,
         )
+        val selectedInstanceId = optimizer.value.selectedEquippedHeroId
+        val selectedScanned = AppGraph.gearImportRepository.state.value.heroes
+            .firstOrNull { it.id == selectedInstanceId }
+        val currentOptimizerHero = matchScannedHero(selectedScanned, snapshot.heroes)
+            ?.takeIf { it.stats != null }
+            ?.code
+            ?: optimizer.value.selectedHeroCode
+                ?.takeIf { selected -> snapshot.heroes.any { it.code == selected && it.stats != null } }
+        if (currentOptimizerHero != optimizer.value.selectedHeroCode) {
+            updateOptimizerConfig { copy(selectedHeroCode = currentOptimizerHero) }
+        }
     }
 
     fun setBuyCovenant(enabled: Boolean) {
