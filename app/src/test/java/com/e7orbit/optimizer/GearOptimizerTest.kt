@@ -85,6 +85,198 @@ class GearOptimizerTest {
     }
 
     @Test
+    fun sortsEquippedHeroesByCombatPowerSpeedRarityAndRole() {
+        val baseItems = listOf(
+            gear(1, GearSlot.WEAPON, "set_speed", E7GearStat("Attack", 500.0)),
+            gear(2, GearSlot.HELMET, "set_speed", E7GearStat("Health", 2_000.0)),
+            gear(3, GearSlot.ARMOR, "set_speed", E7GearStat("Defense", 300.0)),
+            gear(4, GearSlot.NECKLACE, "set_speed", E7GearStat("CriticalHitDamagePercent", 70.0)),
+            gear(5, GearSlot.RING, "set_cri", E7GearStat("AttackPercent", 65.0)),
+            gear(6, GearSlot.BOOTS, "set_cri", E7GearStat("Speed", 45.0)),
+        )
+        val fastHero = hero.copy(code = "fast", name = "Fast", role = "ranger", rarity = 4)
+        val strongHero = hero.copy(code = "strong", name = "Strong", role = "warrior", rarity = 5)
+        val incompleteHero = hero.copy(code = "incomplete", name = "Incomplete", role = "knight", rarity = 3)
+        val scanned = listOf(
+            E7ScannedHero(10L, "Fast", stars = 4),
+            E7ScannedHero(20L, "Strong", stars = 5),
+            E7ScannedHero(30L, "Incomplete", stars = 3),
+        )
+        val gears = buildList {
+            addAll(baseItems.map { it.copy(id = it.id + 100, equippedHeroId = 10L) })
+            addAll(
+                baseItems.map { item ->
+                    item.copy(
+                        id = item.id + 200,
+                        equippedHeroId = 20L,
+                        substats = item.substats + E7GearStat("AttackPercent", 20.0),
+                    )
+                },
+            )
+            add(baseItems.first().copy(id = 301, equippedHeroId = 30L))
+        }
+        val builds = buildEquippedHeroes(
+            scannedHeroes = scanned,
+            catalog = listOf(fastHero, strongHero, incompleteHero),
+            gears = gears,
+        )
+
+        assertEquals(
+            listOf("Strong", "Fast", "Incomplete"),
+            sortEquippedHeroes(builds, HeroBuildSort()).map(EquippedHeroBuild::displayName),
+        )
+        assertEquals(
+            listOf("Fast", "Strong", "Incomplete"),
+            sortEquippedHeroes(
+                builds,
+                HeroBuildSort(HeroBuildSortField.SPEED, GearSortDirection.DESCENDING),
+            ).map(EquippedHeroBuild::displayName),
+        )
+        assertEquals(
+            listOf("Incomplete", "Fast", "Strong"),
+            sortEquippedHeroes(
+                builds,
+                HeroBuildSort(HeroBuildSortField.RARITY, GearSortDirection.ASCENDING),
+            ).map(EquippedHeroBuild::displayName),
+        )
+        assertEquals(
+            listOf("Incomplete", "Fast", "Strong"),
+            sortEquippedHeroes(
+                builds,
+                HeroBuildSort(HeroBuildSortField.ROLE, GearSortDirection.ASCENDING),
+            ).map(EquippedHeroBuild::displayName),
+        )
+    }
+
+    @Test
+    fun filtersGearBySetMainStatSubstatAndMinimumScore() {
+        val lowScore = gear(
+            id = 1L,
+            slot = GearSlot.WEAPON,
+            set = "set_speed",
+            main = E7GearStat("Attack", 500.0),
+            substats = listOf(E7GearStat("Speed", 5.0)),
+        )
+        val matching = gear(
+            id = 2L,
+            slot = GearSlot.HELMET,
+            set = "set_speed",
+            main = E7GearStat("Health", 2_000.0),
+            substats = listOf(
+                E7GearStat("Speed", 10.0),
+                E7GearStat("CriticalHitChancePercent", 10.0),
+            ),
+        )
+        val wrongSet = gear(
+            id = 3L,
+            slot = GearSlot.ARMOR,
+            set = "set_cri",
+            main = E7GearStat("Health", 2_000.0),
+            substats = listOf(E7GearStat("Speed", 20.0)),
+        )
+
+        val filtered = filterAndSortGears(
+            gears = listOf(lowScore, matching, wrongSet),
+            filter = GearInventoryFilter(
+                setCodes = setOf("set_speed"),
+                mainStatTypes = setOf("Attack", "Health"),
+                substatTypes = setOf("Speed"),
+                minimumScore = 20,
+            ),
+            sort = GearInventorySort(
+                field = GearSortField.SCORE,
+                direction = GearSortDirection.DESCENDING,
+            ),
+        )
+
+        assertEquals(listOf(2L), filtered.map(E7Gear::id))
+    }
+
+    @Test
+    fun sortsGearByScoreInBothDirections() {
+        val lower = gear(
+            id = 1L,
+            slot = GearSlot.WEAPON,
+            set = "set_speed",
+            main = E7GearStat("Attack", 500.0),
+            substats = listOf(E7GearStat("Speed", 5.0)),
+        )
+        val higher = gear(
+            id = 2L,
+            slot = GearSlot.HELMET,
+            set = "set_speed",
+            main = E7GearStat("Health", 2_000.0),
+            substats = listOf(E7GearStat("Speed", 10.0)),
+        )
+
+        assertEquals(
+            listOf(2L, 1L),
+            filterAndSortGears(
+                listOf(lower, higher),
+                GearInventoryFilter(),
+                GearInventorySort(GearSortField.SCORE, GearSortDirection.DESCENDING),
+            )
+                .map(E7Gear::id),
+        )
+        assertEquals(
+            listOf(1L, 2L),
+            filterAndSortGears(
+                listOf(lower, higher),
+                GearInventoryFilter(),
+                GearInventorySort(GearSortField.SCORE, GearSortDirection.ASCENDING),
+            )
+                .map(E7Gear::id),
+        )
+    }
+
+    @Test
+    fun sortsBySpecificMainAndSubstatValuesAndRequiresAllSubstatFilters() {
+        val fast = gear(
+            id = 1L,
+            slot = GearSlot.WEAPON,
+            set = "set_speed",
+            main = E7GearStat("Attack", 500.0),
+            substats = listOf(
+                E7GearStat("Speed", 12.0),
+                E7GearStat("AttackPercent", 10.0),
+            ),
+        )
+        val slow = gear(
+            id = 2L,
+            slot = GearSlot.HELMET,
+            set = "set_speed",
+            main = E7GearStat("Health", 2_000.0),
+            substats = listOf(E7GearStat("Speed", 5.0)),
+        )
+
+        val sorted = filterAndSortGears(
+            gears = listOf(slow, fast),
+            filter = GearInventoryFilter(
+                substatTypes = setOf("Speed", "AttackPercent"),
+            ),
+            sort = GearInventorySort(
+                field = GearSortField.SUBSTAT,
+                direction = GearSortDirection.DESCENDING,
+                statType = "Speed",
+            ),
+        )
+
+        assertEquals(listOf(1L), sorted.map(E7Gear::id))
+        assertEquals(
+            listOf(2L, 1L),
+            filterAndSortGears(
+                gears = listOf(slow, fast),
+                filter = GearInventoryFilter(),
+                sort = GearInventorySort(
+                    field = GearSortField.SUBSTAT,
+                    direction = GearSortDirection.ASCENDING,
+                    statType = "Speed",
+                ),
+            ).map(E7Gear::id),
+        )
+    }
+
+    @Test
     fun findsBuildMatchingRequiredSetsAndConstraints() {
         val inventory = buildList {
             GearSlot.entries.filter { it != GearSlot.UNKNOWN }.forEachIndexed { index, slot ->
@@ -203,6 +395,7 @@ class GearOptimizerTest {
         locked: Boolean = false,
         equipped: Boolean = false,
         enhance: Int = 15,
+        substats: List<E7GearStat> = emptyList(),
     ): E7Gear = E7Gear(
         id = id,
         code = "gear-$id",
@@ -213,7 +406,7 @@ class GearOptimizerTest {
         level = 90,
         enhance = enhance,
         mainStat = main,
-        substats = emptyList(),
+        substats = substats,
         locked = locked,
         equippedHeroId = if (equipped) 1L else null,
     )

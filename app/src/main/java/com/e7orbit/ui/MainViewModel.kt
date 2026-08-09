@@ -35,10 +35,14 @@ import com.e7orbit.model.MAX_SUPPORTED_HUNT_RUNS
 import com.e7orbit.model.RunConfig
 import com.e7orbit.model.RunSummary
 import com.e7orbit.optimizer.GearOptimizationConfig
+import com.e7orbit.optimizer.GearInventoryFilter
+import com.e7orbit.optimizer.GearInventorySort
 import com.e7orbit.optimizer.GearOptimizer
+import com.e7orbit.optimizer.HeroBuildSort
 import com.e7orbit.optimizer.HeroOptimizerPreference
 import com.e7orbit.optimizer.OptimizerContent
 import com.e7orbit.optimizer.OptimizerPreferenceStore
+import com.e7orbit.optimizer.OptimizerUiPreferenceStore
 import com.e7orbit.optimizer.matchScannedHero
 import com.e7orbit.optimizer.OptimizerConstraints
 import com.e7orbit.optimizer.OptimizedBuild
@@ -103,7 +107,9 @@ data class OptimizerUiState(
     val content: OptimizerContent = OptimizerContent.HEROES,
     val selectedHeroCode: String? = null,
     val selectedEquippedHeroId: Long? = null,
-    val heroQuery: String = "",
+    val heroSort: HeroBuildSort = HeroBuildSort(),
+    val gearFilter: GearInventoryFilter = GearInventoryFilter(),
+    val gearSort: GearInventorySort = GearInventorySort(),
     val metric: OptimizerMetric = OptimizerMetric.COMBAT_POWER,
     val minimums: Map<OptimizerStat, Int> = emptyMap(),
     val requiredSets: Set<String> = emptySet(),
@@ -131,7 +137,6 @@ data class VpnCaptureUiState(
 )
 
 enum class DataSection {
-    EQUIPMENT,
     HEROES,
     ARTIFACTS,
 }
@@ -149,7 +154,7 @@ data class DataUiState(
     val scannedHeroes: List<E7ScannedHero> = emptyList(),
     val heroes: List<E7Hero> = emptyList(),
     val artifacts: List<E7Artifact> = emptyList(),
-    val section: DataSection = DataSection.EQUIPMENT,
+    val section: DataSection = DataSection.HEROES,
     val query: String = "",
     val selectedHeroCode: String? = null,
     val selectedArtifactCode: String? = null,
@@ -220,8 +225,12 @@ class MainViewModel(
     private val environment = MutableStateFlow(readEnvironment())
     private val data = MutableStateFlow(DataUiState())
     private val optimizerPreferenceStore = OptimizerPreferenceStore(application)
+    private val optimizerUiPreferenceStore = OptimizerUiPreferenceStore(application)
     private val optimizer = MutableStateFlow(
-        OptimizerUiState(heroPreferences = optimizerPreferenceStore.load()),
+        OptimizerUiState(
+            heroSort = optimizerUiPreferenceStore.loadHeroSort(),
+            heroPreferences = optimizerPreferenceStore.load(),
+        ),
     )
     private val gearOptimizer = GearOptimizer()
     private var optimizerJob: Job? = null
@@ -353,17 +362,7 @@ class MainViewModel(
     }
 
     fun setOptimizerContent(content: OptimizerContent) {
-        optimizer.value = optimizer.value.copy(content = content, heroQuery = "")
-    }
-
-    fun selectOptimizerHero(code: String) {
-        updateOptimizerConfig {
-            copy(
-                selectedHeroCode = code,
-                selectedEquippedHeroId = null,
-                heroQuery = "",
-            )
-        }
+        optimizer.value = optimizer.value.copy(content = content)
     }
 
     fun selectEquippedHero(instanceId: Long) {
@@ -375,7 +374,6 @@ class MainViewModel(
             copy(
                 selectedHeroCode = hero?.code,
                 selectedEquippedHeroId = instanceId,
-                heroQuery = "",
                 metric = preference.metric,
                 minimums = preference.minimums,
                 requiredSets = preference.requiredSets,
@@ -383,9 +381,50 @@ class MainViewModel(
         }
     }
 
-    fun setOptimizerHeroQuery(query: String) {
-        optimizer.value = optimizer.value.copy(heroQuery = query)
+    fun setHeroBuildSort(sort: HeroBuildSort) {
+        optimizer.value = optimizer.value.copy(heroSort = sort)
+        viewModelScope.launch {
+            runCatching { optimizerUiPreferenceStore.saveHeroSort(sort) }
+                .onFailure { AppGraph.logger.error("optimizer.hero_sort_save_failed", it) }
+        }
     }
+
+    fun toggleGearSetFilter(code: String) {
+        updateGearFilter {
+            copy(setCodes = setCodes.toggle(code))
+        }
+    }
+
+    fun toggleGearMainStatFilter(type: String) {
+        updateGearFilter {
+            copy(mainStatTypes = mainStatTypes.toggle(type))
+        }
+    }
+
+    fun toggleGearSubstatFilter(type: String) {
+        updateGearFilter {
+            copy(substatTypes = substatTypes.toggle(type))
+        }
+    }
+
+    fun setGearMinimumScore(score: Int) {
+        updateGearFilter { copy(minimumScore = score.coerceAtLeast(0)) }
+    }
+
+    fun setGearSort(sort: GearInventorySort) {
+        optimizer.value = optimizer.value.copy(gearSort = sort)
+    }
+
+    fun clearGearFilters() {
+        optimizer.value = optimizer.value.copy(gearFilter = GearInventoryFilter())
+    }
+
+    private fun updateGearFilter(transform: GearInventoryFilter.() -> GearInventoryFilter) {
+        optimizer.value = optimizer.value.copy(gearFilter = optimizer.value.gearFilter.transform())
+    }
+
+    private fun Set<String>.toggle(value: String): Set<String> =
+        if (value in this) this - value else this + value
 
     fun setOptimizerMetric(metric: OptimizerMetric) {
         updateOptimizerPreference { copy(metric = metric) }

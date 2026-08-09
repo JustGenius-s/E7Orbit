@@ -23,6 +23,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -53,13 +55,21 @@ import com.e7orbit.data.E7Hero
 import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.GearSlot
 import com.e7orbit.optimizer.EquippedHeroBuild
+import com.e7orbit.optimizer.GearInventoryFilter
+import com.e7orbit.optimizer.GearInventorySort
 import com.e7orbit.optimizer.GearOptimizer
+import com.e7orbit.optimizer.GearSortDirection
+import com.e7orbit.optimizer.GearSortField
+import com.e7orbit.optimizer.HeroBuildSort
+import com.e7orbit.optimizer.HeroBuildSortField
 import com.e7orbit.optimizer.OptimizedBuild
 import com.e7orbit.optimizer.OptimizedHeroStats
 import com.e7orbit.optimizer.OptimizerContent
 import com.e7orbit.optimizer.OptimizerMetric
 import com.e7orbit.optimizer.OptimizerStat
 import com.e7orbit.optimizer.buildEquippedHeroes
+import com.e7orbit.optimizer.filterAndSortGears
+import com.e7orbit.optimizer.sortEquippedHeroes
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -68,7 +78,13 @@ internal fun OptimizerScreen(
     state: MainUiState,
     modifier: Modifier = Modifier,
     onContentChanged: (OptimizerContent) -> Unit,
-    onQueryChanged: (String) -> Unit,
+    onHeroSortChanged: (HeroBuildSort) -> Unit,
+    onGearSetToggled: (String) -> Unit,
+    onGearMainStatToggled: (String) -> Unit,
+    onGearSubstatToggled: (String) -> Unit,
+    onGearMinimumScoreChanged: (Int) -> Unit,
+    onGearSortChanged: (GearInventorySort) -> Unit,
+    onClearGearFilters: () -> Unit,
     onImportGear: () -> Unit,
     onExportGear: () -> Unit,
     onHeroSelected: (Long) -> Unit,
@@ -81,26 +97,34 @@ internal fun OptimizerScreen(
             gears = state.data.gears,
         )
     }
-    val query = optimizer.heroQuery.trim()
-    val filteredBuilds = remember(builds, query) {
-        builds.filter { build ->
-            query.isEmpty() ||
-                build.displayName.contains(query, ignoreCase = true) ||
-                build.sets.any { it.name.contains(query, ignoreCase = true) }
-        }
+    val sortedBuilds = remember(builds, optimizer.heroSort) {
+        sortEquippedHeroes(builds, optimizer.heroSort)
     }
-    val filteredGears = remember(state.data.gears, query) {
-        state.data.gears.filter { gear ->
-            query.isEmpty() ||
-                gear.setName.contains(query, ignoreCase = true) ||
-                gear.slot.label.contains(query, ignoreCase = true) ||
-                gear.mainStat.label.contains(query, ignoreCase = true)
-        }.sortedWith(
-            compareByDescending<E7Gear> { it.equippedHeroId != null }
-                .thenBy { it.slot.ordinal }
-                .thenByDescending(E7Gear::level)
-                .thenByDescending(E7Gear::enhance),
+    val filteredGears = remember(state.data.gears, optimizer.gearFilter, optimizer.gearSort) {
+        filterAndSortGears(
+            gears = state.data.gears,
+            filter = optimizer.gearFilter,
+            sort = optimizer.gearSort,
         )
+    }
+    val gearSetOptions = remember(state.data.gears) {
+        state.data.gears
+            .groupBy(E7Gear::setCode)
+            .map { (code, items) -> code to items.first().setName.removeSuffix("套装") }
+            .sortedBy { it.second }
+    }
+    val gearMainStatOptions = remember(state.data.gears) {
+        state.data.gears
+            .map { it.mainStat.type }
+            .distinct()
+            .sortedBy(::statFilterLabel)
+    }
+    val gearSubstatOptions = remember(state.data.gears) {
+        state.data.gears
+            .flatMap { it.substats }
+            .map { it.type }
+            .distinct()
+            .sortedBy(::statFilterLabel)
     }
 
     LazyColumn(
@@ -150,28 +174,16 @@ internal fun OptimizerScreen(
             )
         }
 
-        if (state.data.gears.isNotEmpty()) {
-            item(key = "search") {
-                OutlinedTextField(
-                    value = optimizer.heroQuery,
-                    onValueChange = onQueryChanged,
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = {
-                        Text(
-                            if (optimizer.content == OptimizerContent.HEROES) {
-                                "搜索英雄或套装"
-                            } else {
-                                "搜索套装、部位或主属性"
-                            },
-                        )
-                    },
-                )
-            }
-        }
-
         when (optimizer.content) {
             OptimizerContent.HEROES -> {
+                if (builds.isNotEmpty()) {
+                    item(key = "hero-sort") {
+                        HeroBuildSortControls(
+                            sort = optimizer.heroSort,
+                            onSortChanged = onHeroSortChanged,
+                        )
+                    }
+                }
                 when {
                     state.data.gears.isEmpty() -> item(key = "empty-gears") {
                         OptimizerEmptyState(
@@ -185,10 +197,7 @@ internal fun OptimizerScreen(
                             detail = "当前库存中没有关联英雄实例的装备。重新抓包可同步英雄名称。",
                         )
                     }
-                    filteredBuilds.isEmpty() -> item(key = "empty-filter") {
-                        OptimizerEmptyState("没有匹配的英雄", "请更换搜索条件。")
-                    }
-                    else -> items(filteredBuilds, key = EquippedHeroBuild::instanceId) { build ->
+                    else -> items(sortedBuilds, key = EquippedHeroBuild::instanceId) { build ->
                         EquippedHeroCard(
                             build = build,
                             preferenceConfigured = optimizer.heroPreferences[build.instanceId]
@@ -200,6 +209,23 @@ internal fun OptimizerScreen(
             }
 
             OptimizerContent.EQUIPMENT -> {
+                item(key = "gear-filters") {
+                    GearFilterPanel(
+                        filter = optimizer.gearFilter,
+                        sort = optimizer.gearSort,
+                        resultCount = filteredGears.size,
+                        totalCount = state.data.gears.size,
+                        setOptions = gearSetOptions,
+                        mainStatOptions = gearMainStatOptions,
+                        substatOptions = gearSubstatOptions,
+                        onSetToggled = onGearSetToggled,
+                        onMainStatToggled = onGearMainStatToggled,
+                        onSubstatToggled = onGearSubstatToggled,
+                        onMinimumScoreChanged = onGearMinimumScoreChanged,
+                        onSortChanged = onGearSortChanged,
+                        onClear = onClearGearFilters,
+                    )
+                }
                 if (filteredGears.isEmpty()) {
                     item(key = "empty-equipment") {
                         OptimizerEmptyState(
@@ -477,6 +503,66 @@ internal fun OptimizerHeroDetailScreen(
 }
 
 @Composable
+private fun HeroBuildSortControls(
+    sort: HeroBuildSort,
+    onSortChanged: (HeroBuildSort) -> Unit,
+) {
+    var fieldExpanded by rememberSaveable { mutableStateOf(false) }
+    var directionExpanded by rememberSaveable { mutableStateOf(false) }
+    SectionSurface(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "英雄排序",
+                modifier = Modifier.weight(1f),
+                fontWeight = FontWeight.SemiBold,
+            )
+            Box {
+                OutlinedButton(onClick = { fieldExpanded = true }) {
+                    Text(sort.field.label)
+                }
+                DropdownMenu(
+                    expanded = fieldExpanded,
+                    onDismissRequest = { fieldExpanded = false },
+                ) {
+                    HeroBuildSortField.entries.forEach { field ->
+                        DropdownMenuItem(
+                            text = { Text(field.label) },
+                            onClick = {
+                                fieldExpanded = false
+                                onSortChanged(sort.copy(field = field))
+                            },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Box {
+                OutlinedButton(onClick = { directionExpanded = true }) {
+                    Text(sort.direction.label)
+                }
+                DropdownMenu(
+                    expanded = directionExpanded,
+                    onDismissRequest = { directionExpanded = false },
+                ) {
+                    GearSortDirection.entries.forEach { direction ->
+                        DropdownMenuItem(
+                            text = { Text(direction.label) },
+                            onClick = {
+                                directionExpanded = false
+                                onSortChanged(sort.copy(direction = direction))
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun GearFileActions(
     importing: Boolean,
     canExport: Boolean,
@@ -507,6 +593,194 @@ private fun GearFileActions(
             enabled = canExport && !importing,
         ) {
             Text("导出文件")
+        }
+    }
+}
+
+@Composable
+private fun GearFilterPanel(
+    filter: GearInventoryFilter,
+    sort: GearInventorySort,
+    resultCount: Int,
+    totalCount: Int,
+    setOptions: List<Pair<String, String>>,
+    mainStatOptions: List<String>,
+    substatOptions: List<String>,
+    onSetToggled: (String) -> Unit,
+    onMainStatToggled: (String) -> Unit,
+    onSubstatToggled: (String) -> Unit,
+    onMinimumScoreChanged: (Int) -> Unit,
+    onSortChanged: (GearInventorySort) -> Unit,
+    onClear: () -> Unit,
+) {
+    var sortFieldExpanded by rememberSaveable { mutableStateOf(false) }
+    var sortStatExpanded by rememberSaveable { mutableStateOf(false) }
+    var sortDirectionExpanded by rememberSaveable { mutableStateOf(false) }
+    SectionSurface {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("装备过滤器", fontWeight = FontWeight.Bold)
+                Text(
+                    text = if (filter.hasFilters) {
+                        "匹配 $resultCount / $totalCount 件 · ${filter.activeFilterCount()} 项条件"
+                    } else {
+                        "共 $totalCount 件装备"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (filter.hasFilters) {
+                OutlinedButton(onClick = onClear) { Text("清除") }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        GearFilterGroup(
+            title = "套装",
+            options = setOptions,
+            selected = filter.setCodes,
+            onToggle = onSetToggled,
+        )
+        Spacer(Modifier.height(10.dp))
+        GearFilterGroup(
+            title = "主属性",
+            options = mainStatOptions.map { it to statFilterLabel(it) },
+            selected = filter.mainStatTypes,
+            onToggle = onMainStatToggled,
+        )
+        Spacer(Modifier.height(10.dp))
+        GearFilterGroup(
+            title = "副属性",
+            options = substatOptions.map { it to statFilterLabel(it) },
+            selected = filter.substatTypes,
+            onToggle = onSubstatToggled,
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = filter.minimumScore.takeIf { it > 0 }?.toString().orEmpty(),
+            onValueChange = { input ->
+                onMinimumScoreChanged(
+                    input.filter(Char::isDigit).take(MAX_STAT_DIGITS).toIntOrNull() ?: 0,
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("最低装备分") },
+            placeholder = { Text("不限") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "排序",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(5.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                OutlinedButton(onClick = { sortFieldExpanded = true }) {
+                    Text(sort.field.label)
+                }
+                DropdownMenu(
+                    expanded = sortFieldExpanded,
+                    onDismissRequest = { sortFieldExpanded = false },
+                ) {
+                    GearSortField.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option.label) },
+                            onClick = {
+                                sortFieldExpanded = false
+                                onSortChanged(
+                                    sort.copy(
+                                        field = option,
+                                        statType = when (option) {
+                                            GearSortField.MAIN_STAT -> mainStatOptions.firstOrNull()
+                                            GearSortField.SUBSTAT -> substatOptions.firstOrNull()
+                                            else -> null
+                                        },
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            Box {
+                OutlinedButton(onClick = { sortDirectionExpanded = true }) {
+                    Text(sort.direction.label)
+                }
+                DropdownMenu(
+                    expanded = sortDirectionExpanded,
+                    onDismissRequest = { sortDirectionExpanded = false },
+                ) {
+                    GearSortDirection.entries.forEach { direction ->
+                        DropdownMenuItem(
+                            text = { Text(direction.label) },
+                            onClick = {
+                                sortDirectionExpanded = false
+                                onSortChanged(sort.copy(direction = direction))
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        if (sort.field == GearSortField.MAIN_STAT || sort.field == GearSortField.SUBSTAT) {
+            Spacer(Modifier.height(8.dp))
+            Box {
+                OutlinedButton(onClick = { sortStatExpanded = true }) {
+                    Text(statFilterLabel(sort.statType ?: "选择属性"))
+                }
+                DropdownMenu(
+                    expanded = sortStatExpanded,
+                    onDismissRequest = { sortStatExpanded = false },
+                ) {
+                    val options = if (sort.field == GearSortField.MAIN_STAT) {
+                        mainStatOptions
+                    } else {
+                        substatOptions
+                    }
+                    options.forEach { type ->
+                        DropdownMenuItem(
+                            text = { Text(statFilterLabel(type)) },
+                            onClick = {
+                                sortStatExpanded = false
+                                onSortChanged(sort.copy(statType = type))
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GearFilterGroup(
+    title: String,
+    options: List<Pair<String, String>>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit,
+) {
+    if (options.isEmpty()) return
+    Column {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(5.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(options, key = { it.first }) { (code, label) ->
+                FilterChip(
+                    selected = code in selected,
+                    onClick = { onToggle(code) },
+                    label = { Text(label) },
+                )
+            }
         }
     }
 }
@@ -573,6 +847,13 @@ private fun EquippedHeroCard(
                     Text(
                         text = build.setsText(),
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = build.heroSummaryText(),
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1040,6 +1321,23 @@ private fun SummaryMetric(label: String, value: String) {
     }
 }
 
+private fun EquippedHeroBuild.heroSummaryText(): String = listOfNotNull(
+    hero?.role?.roleDisplayLabel(),
+    (scannedHero?.stars ?: hero?.rarity)?.let { "$it 星" },
+    stats?.combatPower?.let { "战力 ${formatNumber(it)}" },
+    stats?.speed?.let { "速度 $it" },
+).joinToString(" · ").ifBlank { "暂无最终面板" }
+
+private fun String.roleDisplayLabel(): String = when (lowercase()) {
+    "warrior" -> "战士"
+    "knight" -> "骑士"
+    "assassin" -> "盗贼"
+    "ranger" -> "射手"
+    "mage" -> "法师"
+    "manauser" -> "奶妈"
+    else -> this
+}
+
 private fun EquippedHeroBuild.setsText(): String {
     val completed = sets.filter { it.completedCount > 0 }
         .joinToString(" + ") { set ->
@@ -1053,6 +1351,27 @@ private fun EquippedHeroBuild.setsText(): String {
 
 private fun formatNumber(value: Int): String =
     NumberFormat.getIntegerInstance(Locale.CHINA).format(value)
+
+private fun GearInventoryFilter.activeFilterCount(): Int =
+    setCodes.size + mainStatTypes.size + substatTypes.size + minimumScore.takeIf { it > 0 }?.let { 1 }.orZero()
+
+private fun Int?.orZero(): Int = this ?: 0
+
+private fun statFilterLabel(type: String): String = when (type) {
+    "Attack" -> "攻击"
+    "AttackPercent" -> "攻击%"
+    "Health" -> "生命"
+    "HealthPercent" -> "生命%"
+    "Defense" -> "防御"
+    "DefensePercent" -> "防御%"
+    "Speed" -> "速度"
+    "CriticalHitChancePercent" -> "暴击率"
+    "CriticalHitDamagePercent" -> "暴击伤害"
+    "EffectivenessPercent" -> "效果命中"
+    "EffectResistancePercent" -> "效果抗性"
+    "DualAttackChancePercent" -> "夹攻率"
+    else -> type
+}
 
 private const val MAX_STAT_DIGITS = 7
 private val EQUIPMENT_SLOTS = listOf(

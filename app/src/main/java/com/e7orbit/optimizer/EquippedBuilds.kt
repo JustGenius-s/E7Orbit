@@ -19,6 +19,127 @@ enum class OptimizerContent {
     EQUIPMENT,
 }
 
+enum class HeroBuildSortField(val label: String) {
+    ROLE("职业"),
+    RARITY("星级"),
+    COMBAT_POWER("战力"),
+    SPEED("速度"),
+}
+
+data class HeroBuildSort(
+    val field: HeroBuildSortField = HeroBuildSortField.COMBAT_POWER,
+    val direction: GearSortDirection = GearSortDirection.DESCENDING,
+)
+
+enum class GearSortField(val label: String) {
+    SCORE("装备分数"),
+    SET("套装"),
+    MAIN_STAT("主属性数值"),
+    SUBSTAT("副属性数值"),
+    ENHANCE("强化等级"),
+}
+
+enum class GearSortDirection(val label: String) {
+    DESCENDING("降序"),
+    ASCENDING("升序"),
+}
+
+data class GearInventorySort(
+    val field: GearSortField = GearSortField.SCORE,
+    val direction: GearSortDirection = GearSortDirection.DESCENDING,
+    val statType: String? = null,
+)
+
+data class GearInventoryFilter(
+    val setCodes: Set<String> = emptySet(),
+    val mainStatTypes: Set<String> = emptySet(),
+    val substatTypes: Set<String> = emptySet(),
+    val minimumScore: Int = 0,
+) {
+    val hasFilters: Boolean
+        get() = setCodes.isNotEmpty() ||
+            mainStatTypes.isNotEmpty() ||
+            substatTypes.isNotEmpty() ||
+            minimumScore > 0
+}
+
+fun filterAndSortGears(
+    gears: List<E7Gear>,
+    filter: GearInventoryFilter,
+    sort: GearInventorySort,
+): List<E7Gear> = gears
+    .filter { gear -> gear.matches(filter) }
+    .sortedWith(gearComparator(sort))
+
+private fun E7Gear.matches(filter: GearInventoryFilter): Boolean =
+    (filter.setCodes.isEmpty() || setCode in filter.setCodes) &&
+        (filter.mainStatTypes.isEmpty() || mainStat.type in filter.mainStatTypes) &&
+        filter.substatTypes.all { type -> substats.any { it.type == type } } &&
+        GearOptimizer.gearScore(this) >= filter.minimumScore
+
+private fun gearComparator(sort: GearInventorySort): Comparator<E7Gear> {
+    val primary = Comparator<E7Gear> { first, second ->
+        val firstValue = first.sortValue(sort)
+        val secondValue = second.sortValue(sort)
+        when {
+            firstValue == null && secondValue == null -> 0
+            firstValue == null -> 1
+            secondValue == null -> -1
+            else -> {
+                val compared = compareSortValues(firstValue, secondValue)
+                if (sort.direction == GearSortDirection.DESCENDING) -compared else compared
+            }
+        }
+    }
+    return primary
+        .thenByDescending { gear -> GearOptimizer.gearScore(gear) }
+        .thenBy { gear -> gear.slot.ordinal }
+}
+
+private fun E7Gear.sortValue(sort: GearInventorySort): Comparable<*>? = when (sort.field) {
+    GearSortField.SCORE -> GearOptimizer.gearScore(this)
+    GearSortField.SET -> setName
+    GearSortField.MAIN_STAT -> mainStat.value.takeIf {
+        sort.statType == null || mainStat.type == sort.statType
+    }
+    GearSortField.SUBSTAT -> substats.firstOrNull { it.type == sort.statType }?.value
+    GearSortField.ENHANCE -> enhance
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun compareSortValues(first: Comparable<*>, second: Comparable<*>): Int =
+    (first as Comparable<Any>).compareTo(second as Any)
+
+
+fun sortEquippedHeroes(
+    builds: List<EquippedHeroBuild>,
+    sort: HeroBuildSort,
+): List<EquippedHeroBuild> = builds.sortedWith(heroBuildComparator(sort))
+
+private fun heroBuildComparator(sort: HeroBuildSort): Comparator<EquippedHeroBuild> {
+    val primary = Comparator<EquippedHeroBuild> { first, second ->
+        val firstValue = first.sortValue(sort.field)
+        val secondValue = second.sortValue(sort.field)
+        when {
+            firstValue == null && secondValue == null -> 0
+            firstValue == null -> 1
+            secondValue == null -> -1
+            else -> {
+                val compared = compareSortValues(firstValue, secondValue)
+                if (sort.direction == GearSortDirection.DESCENDING) -compared else compared
+            }
+        }
+    }
+    return primary.thenBy { it.displayName.lowercase() }
+}
+
+private fun EquippedHeroBuild.sortValue(field: HeroBuildSortField): Comparable<*>? = when (field) {
+    HeroBuildSortField.ROLE -> hero?.role
+    HeroBuildSortField.RARITY -> scannedHero?.stars ?: hero?.rarity
+    HeroBuildSortField.COMBAT_POWER -> stats?.combatPower
+    HeroBuildSortField.SPEED -> stats?.speed
+}
+
 data class HeroOptimizerPreference(
     val metric: OptimizerMetric = OptimizerMetric.COMBAT_POWER,
     val minimums: Map<OptimizerStat, Int> = emptyMap(),
@@ -125,6 +246,60 @@ private val EQUIPMENT_SLOTS = listOf(
     GearSlot.BOOTS,
 )
 
+private fun writeAtomically(target: File, content: String, errorMessage: String) {
+    target.parentFile?.mkdirs()
+    val temporary = target.resolveSibling("${target.name}.tmp")
+    temporary.writeText(content, Charsets.UTF_8)
+    if (target.exists()) check(target.delete()) { errorMessage }
+    check(temporary.renameTo(target)) { errorMessage }
+}
+
+class OptimizerUiPreferenceStore(context: Context) {
+    private val file = context.applicationContext.filesDir.resolve("optimizer/ui-preferences.json")
+    private val mutex = Mutex()
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
+    fun loadHeroSort(): HeroBuildSort = runCatching {
+        if (!file.exists()) return@runCatching HeroBuildSort()
+        json.decodeFromString<SavedUiPreference>(file.readText(Charsets.UTF_8)).toDomain()
+    }.getOrDefault(HeroBuildSort())
+
+    suspend fun saveHeroSort(sort: HeroBuildSort) {
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                writeAtomically(
+                    file,
+                    json.encodeToString(SavedUiPreference.from(sort)),
+                    "无法保存配装排序偏好",
+                )
+            }
+        }
+    }
+
+    @Serializable
+    private data class SavedUiPreference(
+        val heroSortField: String = HeroBuildSortField.COMBAT_POWER.name,
+        val heroSortDirection: String = GearSortDirection.DESCENDING.name,
+    ) {
+        fun toDomain(): HeroBuildSort = HeroBuildSort(
+            field = runCatching { HeroBuildSortField.valueOf(heroSortField) }
+                .getOrDefault(HeroBuildSortField.COMBAT_POWER),
+            direction = runCatching { GearSortDirection.valueOf(heroSortDirection) }
+                .getOrDefault(GearSortDirection.DESCENDING),
+        )
+
+        companion object {
+            fun from(sort: HeroBuildSort): SavedUiPreference = SavedUiPreference(
+                heroSortField = sort.field.name,
+                heroSortDirection = sort.direction.name,
+            )
+        }
+    }
+}
+
 class OptimizerPreferenceStore(context: Context) {
     private val file = context.applicationContext.filesDir.resolve("optimizer/hero-preferences.json")
     private val mutex = Mutex()
@@ -149,11 +324,7 @@ class OptimizerPreferenceStore(context: Context) {
     }
 
     private fun writeAtomically(target: File, content: String) {
-        target.parentFile?.mkdirs()
-        val temporary = target.resolveSibling("${target.name}.tmp")
-        temporary.writeText(content, Charsets.UTF_8)
-        if (target.exists()) check(target.delete()) { "无法更新英雄配装偏好" }
-        check(temporary.renameTo(target)) { "无法保存英雄配装偏好" }
+        writeAtomically(target, content, "无法保存英雄配装偏好")
     }
 
     @Serializable
