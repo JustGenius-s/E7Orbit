@@ -232,11 +232,21 @@ private fun ColumnScope.HeroList(
                     Text(hero.name, fontWeight = FontWeight.SemiBold)
                 },
                 supportingContent = {
-                    Text(
-                        "${hero.attributeLabel()} · ${hero.roleLabel()} · ${hero.code}",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        HeroIdentityIcons(
+                            attribute = hero.attribute,
+                            role = hero.role,
+                            rarity = hero.rarity,
+                            iconSize = 18.dp,
+                        )
+                        Text(
+                            hero.code,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 },
                 leadingContent = {
                     RemoteImage(
@@ -474,10 +484,11 @@ internal fun HeroDetailScreen(
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.height(6.dp))
-                        Text(
-                            "${hero.attributeLabel()} · ${hero.roleLabel()}" +
-                                (hero.rarity?.let { " · $it 星" } ?: ""),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        HeroIdentityIcons(
+                            attribute = hero.attribute,
+                            role = hero.role,
+                            rarity = hero.rarity,
+                            iconSize = 24.dp,
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(

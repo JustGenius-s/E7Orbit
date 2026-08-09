@@ -873,8 +873,14 @@ private fun EquippedHeroCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     GearSetSummaryRow(build.sets)
+                    HeroIdentityIcons(
+                        attribute = build.hero?.attribute,
+                        role = build.hero?.role,
+                        rarity = build.scannedHero?.stars ?: build.hero?.rarity,
+                        iconSize = 17.dp,
+                    )
                     Text(
-                        text = build.heroSummaryText(),
+                        text = build.combatSummaryText(),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -930,9 +936,14 @@ private fun EquippedHeroHeader(build: EquippedHeroBuild) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                HeroIdentityIcons(
+                    attribute = build.hero?.attribute,
+                    role = build.hero?.role,
+                    rarity = build.scannedHero?.stars ?: build.hero?.rarity,
+                    iconSize = 22.dp,
+                )
                 Text(
                     text = listOfNotNull(
-                        build.scannedHero?.stars?.let { "$it 星" },
                         build.scannedHero?.awaken?.let { "觉醒 $it" },
                         build.hero?.zodiac,
                     ).joinToString(" · ").ifBlank { "游戏实例 ${build.instanceId}" },
@@ -1498,22 +1509,10 @@ private fun optimizerStatType(stat: OptimizerStat): String = when (stat) {
     OptimizerStat.RESISTANCE -> "EffectResistancePercent"
 }
 
-private fun EquippedHeroBuild.heroSummaryText(): String = listOfNotNull(
-    hero?.role?.roleDisplayLabel(),
-    (scannedHero?.stars ?: hero?.rarity)?.let { "$it 星" },
+private fun EquippedHeroBuild.combatSummaryText(): String = listOfNotNull(
     stats?.combatPower?.let { "战力 ${formatNumber(it)}" },
     stats?.speed?.let { "速度 $it" },
 ).joinToString(" · ").ifBlank { "暂无最终面板" }
-
-private fun String.roleDisplayLabel(): String = when (lowercase()) {
-    "warrior" -> "战士"
-    "knight" -> "骑士"
-    "assassin" -> "盗贼"
-    "ranger" -> "射手"
-    "mage" -> "法师"
-    "manauser" -> "奶妈"
-    else -> this
-}
 
 private fun EquippedHeroBuild.setsText(): String {
     val completed = sets.filter { it.completedCount > 0 }
