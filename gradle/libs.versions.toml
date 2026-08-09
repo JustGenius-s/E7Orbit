@@ -8,6 +8,8 @@ datastore = "1.2.1"
 coroutines = "1.11.0"
 serialization = "1.11.0"
 opencv = "5.0.0.1"
+supabase = "3.7.0"
+ktor = "3.5.1"
 junit = "4.13.2"
 
 [libraries]
@@ -25,6 +27,9 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 opencv = { module = "org.opencv:opencv", version.ref = "opencv" }
+supabase-bom = { module = "io.github.jan-tennert.supabase:bom", version.ref = "supabase" }
+supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt" }
+ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
 junit = { module = "junit:junit", version.ref = "junit" }
 
 [plugins]

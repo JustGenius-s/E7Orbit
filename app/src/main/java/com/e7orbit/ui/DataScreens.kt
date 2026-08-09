@@ -1,5 +1,6 @@
 package com.e7orbit.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -57,6 +58,7 @@ import com.e7orbit.R
 import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7HeroStats
+import com.e7orbit.data.E7HeroSkill
 import com.e7orbit.data.HeroRtaAnalysis
 import com.e7orbit.data.RtaTier
 import java.text.DateFormat
@@ -496,6 +498,14 @@ internal fun HeroDetailScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        hero.description?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -526,6 +536,11 @@ internal fun HeroDetailScreen(
                         color = MaterialTheme.colorScheme.outlineVariant,
                     )
                     HeroStats(hero.stats)
+                }
+            }
+            if (hero.skills.isNotEmpty()) {
+                item {
+                    HeroSkills(hero.skills)
                 }
             }
         } else {
@@ -703,24 +718,154 @@ private fun HeroRtaAnalysisContent(analysis: HeroRtaAnalysis) {
 }
 
 @Composable
+private fun HeroSkills(skills: List<E7HeroSkill>) {
+    SectionTitle("技能")
+    Spacer(Modifier.height(8.dp))
+    skills.sortedBy(E7HeroSkill::slot).forEach { skill ->
+        SectionSurface {
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                RemoteImage(
+                    url = skill.iconUrl,
+                    contentDescription = "${skill.name}图标",
+                    modifier = Modifier.size(56.dp),
+                    contentScale = ContentScale.Fit,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = skill.name.ifBlank { "技能 ${skill.slot}" },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    val meta = listOfNotNull(
+                        skill.cooldown?.takeIf { it > 0 }?.let { "冷却 $it 回合" },
+                        skill.soulGain?.takeIf { it > 0 }?.let { "获得灵魂 $it" },
+                        skill.soulRequirement?.takeIf { it > 0 }?.let { "灵魂燃烧 $it" },
+                        skill.isPassive.takeIf { it }?.let { "被动" },
+                    ).joinToString(" · ")
+                    if (meta.isNotBlank()) {
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = meta,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            skill.description?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
+                Spacer(Modifier.height(10.dp))
+                Text(description, style = MaterialTheme.typography.bodyMedium)
+            }
+            skill.soulDescription?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "灵魂燃烧：$description",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            skill.enhancedDescription?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "强化效果：$description",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            if (skill.enhancements.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                skill.enhancements.forEach { enhancement ->
+                    Text(
+                        "· ${enhancement.cleanSkillText()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (skill.attackRate != null || skill.pow != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    listOfNotNull(
+                        skill.attackRate?.let { "攻击倍率 ${it.formatMultiplier()}" },
+                        skill.pow?.let { "POW ${it.formatMultiplier()}" },
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+private fun String.cleanSkillText(): String = replace("\\\\n", "\n")
+    .replace("\\n", "\n")
+    .replace(Regex("<[^>]+>"), "")
+    .replace("&nbsp;", " ")
+    .replace("&amp;", "&")
+    .trim()
+
+private fun Double.formatMultiplier(): String = "%.2f".format(Locale.US, this)
+
+@Composable
 private fun HeroStats(stats: E7HeroStats?) {
     if (stats == null) {
         Text("暂无 Fribbels 属性数据", color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
-    MetricRow("攻击", stats.attack.displayOrDash())
-    MetricRow("生命", stats.health.displayOrDash())
-    MetricRow("防御", stats.defense.displayOrDash())
-    MetricRow("速度", stats.speed.displayOrDash())
+    HeroStatMetricRow("攻击", "Attack", stats.attack.displayOrDash())
+    HeroStatMetricRow("生命", "Health", stats.health.displayOrDash())
+    HeroStatMetricRow("防御", "Defense", stats.defense.displayOrDash())
+    HeroStatMetricRow("速度", "Speed", stats.speed.displayOrDash())
     HorizontalDivider(
         modifier = Modifier.padding(vertical = 4.dp),
         color = MaterialTheme.colorScheme.outlineVariant,
     )
-    MetricRow("暴击", stats.criticalChance.percentOrDash())
-    MetricRow("暴伤", stats.criticalDamage.percentOrDash())
-    MetricRow("效果命中", stats.effectiveness.percentOrDash())
-    MetricRow("效果抗性", stats.effectResistance.percentOrDash())
-    MetricRow("战斗力", stats.combatPower.displayOrDash())
+    HeroStatMetricRow("暴击", "CriticalHitChancePercent", stats.criticalChance.percentOrDash())
+    HeroStatMetricRow("暴伤", "CriticalHitDamagePercent", stats.criticalDamage.percentOrDash())
+    HeroStatMetricRow("效果命中", "EffectivenessPercent", stats.effectiveness.percentOrDash())
+    HeroStatMetricRow("效果抗性", "EffectResistancePercent", stats.effectResistance.percentOrDash())
+    HeroStatMetricRow("战斗力", null, stats.combatPower.displayOrDash())
+}
+
+@Composable
+private fun HeroStatMetricRow(
+    label: String,
+    statType: String?,
+    value: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        statType?.let { type ->
+            gearStatIconRes(type)?.let { iconRes ->
+                Image(
+                    painter = painterResource(iconRes),
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+        }
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = value,
+            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
 }
 
 @Composable

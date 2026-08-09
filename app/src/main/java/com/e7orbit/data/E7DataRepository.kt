@@ -42,6 +42,7 @@ class E7DataRepository(
     context: Context,
 ) {
     private val cacheDir = context.applicationContext.cacheDir.resolve("e7-data")
+    private val supabaseCatalog = SupabaseCatalogRepository(context)
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -50,26 +51,38 @@ class E7DataRepository(
 
     suspend fun load(forceRefresh: Boolean = false): E7DataSnapshot = withContext(Dispatchers.IO) {
         cacheDir.mkdirs()
-        val official = readSource(
-            url = OFFICIAL_HERO_URL,
-            fileName = OFFICIAL_CACHE,
-            forceRefresh = forceRefresh,
-        )
-        val fribbelsHeroes = readSource(
-            url = FRIBBELS_HERO_URL,
-            fileName = FRIBBELS_HERO_CACHE,
-            forceRefresh = forceRefresh,
-        )
-        val fribbelsArtifacts = readSource(
-            url = FRIBBELS_ARTIFACT_URL,
-            fileName = FRIBBELS_ARTIFACT_CACHE,
-            forceRefresh = forceRefresh,
-        )
+        val official = runCatching {
+            readSource(
+                url = OFFICIAL_HERO_URL,
+                fileName = OFFICIAL_CACHE,
+                forceRefresh = forceRefresh,
+            )
+        }.getOrNull()
+        val fribbelsHeroes = runCatching {
+            readSource(
+                url = FRIBBELS_HERO_URL,
+                fileName = FRIBBELS_HERO_CACHE,
+                forceRefresh = forceRefresh,
+            )
+        }.getOrNull()
+        val fribbelsArtifacts = runCatching {
+            readSource(
+                url = FRIBBELS_ARTIFACT_URL,
+                fileName = FRIBBELS_ARTIFACT_CACHE,
+                forceRefresh = forceRefresh,
+            )
+        }.getOrNull()
+        val maintainedCatalog = runCatching {
+            supabaseCatalog.load(forceRefresh)
+        }.getOrNull()
+        if (official == null && fribbelsHeroes == null && maintainedCatalog == null) {
+            throw IllegalStateException("英雄图鉴数据源暂时不可用")
+        }
 
-        val heroes = mergeHeroes(official, fribbelsHeroes)
+        val heroes = mergeHeroes(official, fribbelsHeroes, maintainedCatalog)
         E7DataSnapshot(
             heroes = heroes,
-            artifacts = parseArtifacts(fribbelsArtifacts),
+            artifacts = fribbelsArtifacts?.let(::parseArtifacts).orEmpty(),
             fetchedAtEpochMs = System.currentTimeMillis(),
         )
     }
@@ -207,28 +220,70 @@ class E7DataRepository(
     }
 
     private fun mergeHeroes(
-        officialPayload: String,
-        fribbelsPayload: String,
+        officialPayload: String?,
+        fribbelsPayload: String?,
+        maintainedCatalog: SupabaseCatalog? = null,
     ): List<E7Hero> {
-        val officialHeroes = parseOfficialHeroes(officialPayload)
-        val fribbelsHeroes = parseFribbelsHeroes(fribbelsPayload)
-        return officialHeroes.map { official ->
-            val details = fribbelsHeroes.firstOrNull { candidate ->
-                candidate.code == official.code ||
-                    candidate.name.equals(official.name, ignoreCase = true)
-            }
+        val officialHeroes = officialPayload?.let(::parseOfficialHeroes).orEmpty()
+        val fribbelsHeroes = fribbelsPayload?.let(::parseFribbelsHeroes).orEmpty()
+        val maintainedHeroes = maintainedCatalog?.heroes.orEmpty()
+        val maintainedSkills = maintainedCatalog?.skills.orEmpty()
+            .groupBy { it.heroCode }
+            .mapValues { (_, skills) -> skills.sortedBy(SupabaseSkillRow::slot).map(SupabaseSkillRow::toDomain) }
+        val allCodes = linkedSetOf<String>().apply {
+            officialHeroes.forEach { add(it.code) }
+            fribbelsHeroes.mapNotNull { it.code }.forEach(::add)
+            maintainedHeroes.forEach { add(it.code) }
+        }.filter(String::isNotBlank)
+
+        return allCodes.mapNotNull { code ->
+            val official = officialHeroes.firstOrNull { it.code == code }
+            val maintained = maintainedHeroes.firstOrNull { it.code == code }
+                ?: official?.let { candidate ->
+                    maintainedHeroes.firstOrNull {
+                        it.name.equals(candidate.name, ignoreCase = true)
+                    }
+                }
+            val details = fribbelsHeroes.firstOrNull { it.code == code }
+                ?: maintained?.let { candidate ->
+                    fribbelsHeroes.firstOrNull {
+                        it.name.equals(candidate.name, ignoreCase = true)
+                    }
+                }
+            val name = maintained?.name?.takeIf(String::isNotBlank)
+                ?: details?.name?.takeIf(String::isNotBlank)
+                ?: official?.name?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            val fribbelsAssets = details?.assets?.toDomain() ?: E7HeroAssets()
+            val maintainedAssets = E7HeroAssets(
+                iconUrl = maintained?.iconUrl,
+                thumbnailUrl = maintained?.thumbnailUrl,
+                imageUrl = maintained?.imageUrl,
+            )
             E7Hero(
-                code = official.code,
-                name = details?.name?.takeIf { it.isNotBlank() } ?: official.name,
-                rarity = details?.rarity ?: official.grade.toIntOrNull(),
-                attribute = details?.attribute?.ifBlank { official.attribute } ?: official.attribute,
-                role = details?.role?.ifBlank { official.role } ?: official.role,
-                zodiac = details?.zodiac,
-                stats = details?.stats,
-                assets = details?.assets?.toDomain() ?: E7HeroAssets(),
+                code = code,
+                name = name,
+                rarity = maintained?.rarity ?: details?.rarity ?: official?.grade?.toIntOrNull(),
+                attribute = maintained?.attribute?.ifBlank { details?.attribute ?: official?.attribute.orEmpty() }
+                    ?: details?.attribute?.ifBlank { official?.attribute.orEmpty() }
+                    ?: official?.attribute.orEmpty(),
+                role = maintained?.role?.ifBlank { details?.role ?: official?.role.orEmpty() }
+                    ?: details?.role?.ifBlank { official?.role.orEmpty() }
+                    ?: official?.role.orEmpty(),
+                zodiac = maintained?.zodiac ?: details?.zodiac,
+                stats = maintained?.toStats(details?.stats) ?: details?.stats,
+                assets = maintainedAssets.mergeWith(fribbelsAssets),
+                description = maintained?.description,
+                skills = maintainedSkills[code].orEmpty(),
             )
         }.sortedBy { it.name.lowercase() }
     }
+
+    private fun E7HeroAssets.mergeWith(fallback: E7HeroAssets): E7HeroAssets = E7HeroAssets(
+        iconUrl = iconUrl ?: fallback.iconUrl,
+        thumbnailUrl = thumbnailUrl ?: fallback.thumbnailUrl,
+        imageUrl = imageUrl ?: fallback.imageUrl,
+    )
 
     private fun parseOfficialHeroes(payload: String): List<OfficialHeroDto> {
         val root = json.parseToJsonElement(payload).jsonObject

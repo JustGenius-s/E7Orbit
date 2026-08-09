@@ -1,0 +1,6 @@
+sdk.dir=/path/to/Android/Sdk
+
+# Optional public read configuration for the Android app.
+# Do not put SUPABASE_SERVICE_ROLE_KEY here.
+supabase.url=https://biayslzufpixsyuitjus.supabase.co
+supabase.anonKey=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY

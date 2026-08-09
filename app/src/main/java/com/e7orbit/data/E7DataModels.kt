@@ -1,5 +1,7 @@
 package com.e7orbit.data
 
+import kotlinx.serialization.json.JsonElement
+
 data class E7Hero(
     val code: String,
     val name: String,
@@ -9,7 +11,28 @@ data class E7Hero(
     val zodiac: String?,
     val stats: E7HeroStats?,
     val assets: E7HeroAssets = E7HeroAssets(),
+    val description: String? = null,
+    val skills: List<E7HeroSkill> = emptyList(),
     val source: E7DataSource = E7DataSource.OFFICIAL_AND_FRIBBELS,
+)
+
+/** Maintained hero skill data, normally synced from the user's Supabase catalog. */
+data class E7HeroSkill(
+    val slot: Int,
+    val name: String,
+    val iconUrl: String? = null,
+    val description: String? = null,
+    val enhancedDescription: String? = null,
+    val cooldown: Int? = null,
+    val soulGain: Int? = null,
+    val soulRequirement: Int? = null,
+    val soulDescription: String? = null,
+    val attackRate: Double? = null,
+    val pow: Double? = null,
+    val isPassive: Boolean = false,
+    val canEnhance: Boolean = false,
+    val values: List<JsonElement> = emptyList(),
+    val enhancements: List<String> = emptyList(),
 )
 
 data class E7HeroAssets(

@@ -46,6 +46,46 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 
 装备抓包只保存游戏 `3333/5222` 端口的连接载荷。停止抓包后，载荷会提交至 Fribbels 公开客户端使用的远端解析接口；解析需要联网，结果会保存在应用私有目录。抓包使用本地 VPN 转发，不能与其他 Android VPN 同时运行。
 
+## 英雄数据与 Supabase 维护
+
+英雄图鉴支持可选的 Supabase 维护源。应用通过 HTTPS PostgREST 只读以下公开表：
+
+- `hero_catalog`：英雄身份、图片、六星满觉基础属性和简介
+- `hero_skills`：技能图标、名称、描述、冷却、灵魂效果、倍率和强化列表
+
+没有配置 Supabase，或云端请求失败时，应用仍使用本地缓存以及官方 Stove/Fribbels 公开数据。云端数据成功读取后会缓存 7 天，适合社区源短暂失效时继续使用。
+
+初始化数据库：
+
+1. 在 Supabase SQL Editor 执行 [`supabase/schema.sql`](supabase/schema.sql)。
+2. 在本机 `local.properties` 添加 `supabase.url` 和 `supabase.anonKey`。这两个值会进入本地构建的 `BuildConfig`，不会提交到 Git。
+3. 使用 service-role key 执行同步脚本。service-role key 只放在当前终端环境变量中，不要写入工程文件：
+
+```powershell
+$env:SUPABASE_SERVICE_ROLE_KEY = "你的 service-role key"
+node .\tools\sync-hero-catalog.mjs
+```
+
+脚本从 Fribbels 获取基础属性，并从 EpicSevenDB 获取技能资料，然后以英雄编码幂等 upsert 到 Supabase。默认会先尝试 API；如果 API 因网络或 TLS 不可用，会回退到 Epic7DB 网页。可用环境变量覆盖默认值：`SUPABASE_URL`、`FRIBBELS_HERO_URL`、`EPICSEVENDB_API_URL`、`EPICSEVENDB_WEB`、`EPICSEVENDB_SOURCE`、`EPICSEVENDB_LANGUAGE`、`SYNC_BATCH_SIZE`、`SYNC_CONCURRENCY`。
+
+如果只需要补齐已经成功上传的技能表，使用网页源并跳过英雄表：
+
+```powershell
+$env:EPICSEVENDB_SOURCE = "web"
+$env:SUPABASE_SERVICE_ROLE_KEY = "新生成的 service-role key"
+node .\tools\sync-hero-catalog.mjs --skills-only
+Remove-Item Env:EPICSEVENDB_SOURCE
+Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
+```
+
+网页源会按英雄名称读取 Epic7DB 列表中的实际路径，避免 Fribbels `_id` 与网页 slug 不一致。Epic7DB 没有详情页的英雄会被记录为缺失，不会阻止其他技能上传。需要只补传指定英雄时，可传入逗号分隔的英雄编码：
+
+```powershell
+node .\tools\sync-hero-catalog.mjs --skills-only --hero-codes=c1015,c1161,c2015
+```
+
+不要把 PostgreSQL 连接密码、`sb_secret_...` key 或 service-role key 放进 APK、`local.properties.example`、源码或提交记录。你可以直接在 Supabase Table Editor 维护内容，下一次应用刷新会读取修改后的公开数据。
+
 ## 诊断日志
 
 - 实时查看：`E:\Lib\AndroidSdk\platform-tools\adb.exe logcat -s E7Orbit`
