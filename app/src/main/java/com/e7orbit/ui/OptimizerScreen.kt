@@ -1,6 +1,7 @@
 package com.e7orbit.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,16 +46,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.e7orbit.data.E7Gear
+import com.e7orbit.data.E7GearStat
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.GearSlot
 import com.e7orbit.optimizer.EquippedHeroBuild
+import com.e7orbit.optimizer.EquippedSetSummary
 import com.e7orbit.optimizer.GearInventoryFilter
 import com.e7orbit.optimizer.GearInventorySort
 import com.e7orbit.optimizer.GearOptimizer
@@ -403,11 +407,21 @@ internal fun OptimizerHeroDetailScreen(
                 Spacer(Modifier.height(6.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(setOptions, key = OptimizerSetOption::code) { set ->
+                        val icon = gearSetIconRes(set.code)
                         FilterChip(
                             selected = set.code in optimizer.requiredSets,
                             onClick = { onRequiredSetToggled(set.code) },
                             enabled = optimizer.phase != OptimizerPhase.RUNNING,
                             label = { Text("${set.name} · ${set.pieces}") },
+                            leadingIcon = icon?.let { resId ->
+                                {
+                                    GearAssetIcon(
+                                        resId = resId,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            },
                         )
                     }
                 }
@@ -642,6 +656,7 @@ private fun GearFilterPanel(
             title = "套装",
             options = setOptions,
             selected = filter.setCodes,
+            iconRes = ::gearSetIconRes,
             onToggle = onSetToggled,
         )
         Spacer(Modifier.height(10.dp))
@@ -649,6 +664,7 @@ private fun GearFilterPanel(
             title = "主属性",
             options = mainStatOptions.map { it to statFilterLabel(it) },
             selected = filter.mainStatTypes,
+            iconRes = ::gearStatIconRes,
             onToggle = onMainStatToggled,
         )
         Spacer(Modifier.height(10.dp))
@@ -656,6 +672,7 @@ private fun GearFilterPanel(
             title = "副属性",
             options = substatOptions.map { it to statFilterLabel(it) },
             selected = filter.substatTypes,
+            iconRes = ::gearStatIconRes,
             onToggle = onSubstatToggled,
         )
         Spacer(Modifier.height(10.dp))
@@ -763,6 +780,7 @@ private fun GearFilterGroup(
     title: String,
     options: List<Pair<String, String>>,
     selected: Set<String>,
+    iconRes: (String) -> Int?,
     onToggle: (String) -> Unit,
 ) {
     if (options.isEmpty()) return
@@ -775,10 +793,20 @@ private fun GearFilterGroup(
         Spacer(Modifier.height(5.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(options, key = { it.first }) { (code, label) ->
+                val icon = iconRes(code)
                 FilterChip(
                     selected = code in selected,
                     onClick = { onToggle(code) },
                     label = { Text(label) },
+                    leadingIcon = icon?.let { resId ->
+                        {
+                            GearAssetIcon(
+                                resId = resId,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    },
                 )
             }
         }
@@ -844,13 +872,7 @@ private fun EquippedHeroCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        text = build.setsText(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    GearSetSummaryRow(build.sets)
                     Text(
                         text = build.heroSummaryText(),
                         style = MaterialTheme.typography.labelSmall,
@@ -917,12 +939,8 @@ private fun EquippedHeroHeader(build: EquippedHeroBuild) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = build.setsText(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                Spacer(Modifier.height(4.dp))
+                GearSetSummaryRow(build.sets)
             }
         }
     }
@@ -931,22 +949,22 @@ private fun EquippedHeroHeader(build: EquippedHeroBuild) {
 @Composable
 private fun CompactStatsGrid(stats: OptimizedHeroStats) {
     val values = listOf(
-        "攻击" to formatNumber(stats.attack),
-        "生命" to formatNumber(stats.health),
-        "防御" to formatNumber(stats.defense),
-        "速度" to stats.speed.toString(),
-        "暴击" to "${stats.critChance}%",
-        "暴伤" to "${stats.critDamage}%",
-        "命中" to "${stats.effectiveness}%",
-        "抗性" to "${stats.resistance}%",
+        StatDisplay("Attack", "攻击", formatNumber(stats.attack)),
+        StatDisplay("Health", "生命", formatNumber(stats.health)),
+        StatDisplay("Defense", "防御", formatNumber(stats.defense)),
+        StatDisplay("Speed", "速度", stats.speed.toString()),
+        StatDisplay("CriticalHitChancePercent", "暴击", "${stats.critChance}%"),
+        StatDisplay("CriticalHitDamagePercent", "暴伤", "${stats.critDamage}%"),
+        StatDisplay("EffectivenessPercent", "命中", "${stats.effectiveness}%"),
+        StatDisplay("EffectResistancePercent", "抗性", "${stats.resistance}%"),
     )
     values.chunked(4).forEachIndexed { rowIndex, row ->
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            row.forEach { (label, value) ->
-                StatCell(label, value, Modifier.weight(1f), compact = true)
+            row.forEach { stat ->
+                StatCell(stat, Modifier.weight(1f), compact = true)
             }
         }
         if (rowIndex == 0) Spacer(Modifier.height(8.dp))
@@ -956,43 +974,59 @@ private fun CompactStatsGrid(stats: OptimizedHeroStats) {
 @Composable
 private fun HeroStatsGrid(stats: OptimizedHeroStats) {
     val values = listOf(
-        "攻击" to formatNumber(stats.attack),
-        "生命" to formatNumber(stats.health),
-        "防御" to formatNumber(stats.defense),
-        "速度" to stats.speed.toString(),
-        "暴击率" to "${stats.critChance}%",
-        "暴击伤害" to "${stats.critDamage}%",
-        "效果命中" to "${stats.effectiveness}%",
-        "效果抗性" to "${stats.resistance}%",
-        "战斗力" to formatNumber(stats.combatPower),
-        "有效生命" to formatNumber(stats.effectiveHealth),
-        "伤害" to formatNumber(stats.damage),
-        "装备分" to stats.gearScore.toString(),
+        StatDisplay("Attack", "攻击", formatNumber(stats.attack)),
+        StatDisplay("Health", "生命", formatNumber(stats.health)),
+        StatDisplay("Defense", "防御", formatNumber(stats.defense)),
+        StatDisplay("Speed", "速度", stats.speed.toString()),
+        StatDisplay("CriticalHitChancePercent", "暴击率", "${stats.critChance}%"),
+        StatDisplay("CriticalHitDamagePercent", "暴击伤害", "${stats.critDamage}%"),
+        StatDisplay("EffectivenessPercent", "效果命中", "${stats.effectiveness}%"),
+        StatDisplay("EffectResistancePercent", "效果抗性", "${stats.resistance}%"),
+        StatDisplay(null, "战斗力", formatNumber(stats.combatPower)),
+        StatDisplay(null, "有效生命", formatNumber(stats.effectiveHealth)),
+        StatDisplay(null, "伤害", formatNumber(stats.damage)),
+        StatDisplay(null, "装备分", stats.gearScore.toString()),
     )
     values.chunked(3).forEachIndexed { rowIndex, row ->
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            row.forEach { (label, value) ->
-                StatCell(label, value, Modifier.weight(1f), compact = false)
+            row.forEach { stat ->
+                StatCell(stat, Modifier.weight(1f), compact = false)
             }
         }
         if (rowIndex != values.chunked(3).lastIndex) Spacer(Modifier.height(10.dp))
     }
 }
 
+private data class StatDisplay(
+    val type: String?,
+    val label: String,
+    val value: String,
+)
+
 @Composable
-private fun StatCell(label: String, value: String, modifier: Modifier, compact: Boolean) {
+private fun StatCell(stat: StatDisplay, modifier: Modifier, compact: Boolean) {
     Column(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            stat.type?.let(::gearStatIconRes)?.let { resId ->
+                GearAssetIcon(
+                    resId = resId,
+                    contentDescription = null,
+                    modifier = Modifier.size(if (compact) 14.dp else 16.dp),
+                )
+                Spacer(Modifier.width(3.dp))
+            }
+            Text(
+                text = stat.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
         Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
-        Text(
-            text = value,
+            text = stat.value,
             fontSize = if (compact) 13.sp else 14.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
@@ -1030,17 +1064,30 @@ private fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "${gear.setName.removeSuffix("套装")} · ${gear.rank}",
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "主属性 ${gear.mainStat.label} ${gear.mainStat.displayValue()} · Lv.${gear.level}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    gearSetIconRes(gear.setCode)?.let { resId ->
+                        GearAssetIcon(
+                            resId = resId,
+                            contentDescription = gear.setName,
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                    }
+                    Text(
+                        "${gear.setName.removeSuffix("套装")} · ${gear.rank}",
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    GearStatInline(stat = gear.mainStat, showModified = false)
+                    Text(
+                        " · Lv.${gear.level}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Text(
                 "分 ${GearOptimizer.gearScore(gear)}",
@@ -1050,13 +1097,9 @@ private fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
         }
         if (gear.substats.isNotEmpty()) {
             Spacer(Modifier.height(7.dp))
-            Text(
-                text = gear.substats.joinToString("  ·  ") { stat ->
-                    "${stat.label} ${stat.displayValue()}${if (stat.modified) "*" else ""}"
-                },
+            GearSubstatsRow(
+                substats = gear.substats,
                 modifier = Modifier.padding(start = 62.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -1082,17 +1125,23 @@ private fun InventoryGearCard(gear: E7Gear, equippedName: String?) {
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "${gear.setName.removeSuffix("套装")} · ${gear.rank} · Lv.${gear.level}",
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        "${gear.mainStat.label} ${gear.mainStat.displayValue()}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        gearSetIconRes(gear.setCode)?.let { resId ->
+                            GearAssetIcon(
+                                resId = resId,
+                                contentDescription = gear.setName,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(
+                            "${gear.setName.removeSuffix("套装")} · ${gear.rank} · Lv.${gear.level}",
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    GearStatInline(stat = gear.mainStat, showModified = false)
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
@@ -1112,12 +1161,103 @@ private fun InventoryGearCard(gear: E7Gear, equippedName: String?) {
                     )
                 }
             }
-            Spacer(Modifier.height(7.dp))
-            Text(
-                gear.substats.joinToString("  ·  ") { "${it.label} ${it.displayValue()}" },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (gear.substats.isNotEmpty()) {
+                Spacer(Modifier.height(7.dp))
+                GearSubstatsRow(substats = gear.substats)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GearAssetIcon(
+    resId: Int,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+) {
+    Image(
+        painter = painterResource(resId),
+        contentDescription = contentDescription,
+        modifier = modifier,
+        contentScale = ContentScale.Fit,
+    )
+}
+
+@Composable
+private fun GearSetSummaryRow(sets: List<EquippedSetSummary>) {
+    val visibleSets = sets.filter { it.completedCount > 0 }.ifEmpty { sets }
+    if (visibleSets.isEmpty()) {
+        Text(
+            "暂无套装",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(visibleSets, key = EquippedSetSummary::code) { set ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                gearSetIconRes(set.code)?.let { resId ->
+                    GearAssetIcon(
+                        resId = resId,
+                        contentDescription = set.name,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    text = buildString {
+                        append(set.name)
+                        if (set.completedCount > 1) append(" x${set.completedCount}")
+                        else if (set.completedCount == 0) append(" ${set.pieceCount}/${set.requiredPieces}")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GearStatInline(
+    stat: E7GearStat,
+    modifier: Modifier = Modifier,
+    showModified: Boolean = true,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        gearStatIconRes(stat.type)?.let { resId ->
+            GearAssetIcon(
+                resId = resId,
+                contentDescription = stat.label,
+                modifier = Modifier.size(16.dp),
             )
+            Spacer(Modifier.width(4.dp))
+        }
+        Text(
+            text = "${stat.label} ${stat.displayValue()}${if (showModified && stat.modified) "*" else ""}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun GearSubstatsRow(
+    substats: List<E7GearStat>,
+    modifier: Modifier = Modifier,
+) {
+    LazyRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        items(substats, key = E7GearStat::type) { stat ->
+            GearStatInline(stat)
         }
     }
 }
@@ -1141,6 +1281,15 @@ private fun MinimumStatField(
         singleLine = true,
         label = { Text(stat.label) },
         placeholder = { Text("不限") },
+        leadingIcon = gearStatIconRes(optimizerStatType(stat))?.let { resId ->
+            {
+                GearAssetIcon(
+                    resId = resId,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
     )
 }
@@ -1256,16 +1405,7 @@ private fun OptimizedBuildCard(build: OptimizedBuild, rank: Int, metric: Optimiz
                     fontWeight = FontWeight.Black,
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        build.completedSets.joinToString(" + ") { setCode ->
-                            build.items.firstOrNull { it.setCode == setCode }
-                                ?.setName?.removeSuffix("套装") ?: setCode
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    OptimizedSetRow(build)
                     Text(
                         "${metric.label} ${formatter.format(build.rankingValue)}",
                         style = MaterialTheme.typography.bodySmall,
@@ -1319,6 +1459,43 @@ private fun SummaryMetric(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+@Composable
+private fun OptimizedSetRow(build: OptimizedBuild) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(build.completedSets, key = { it }) { setCode ->
+            val name = build.items.firstOrNull { it.setCode == setCode }
+                ?.setName?.removeSuffix("套装") ?: setCode
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                gearSetIconRes(setCode)?.let { resId ->
+                    GearAssetIcon(
+                        resId = resId,
+                        contentDescription = name,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    text = name,
+                    maxLines = 1,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+}
+
+private fun optimizerStatType(stat: OptimizerStat): String = when (stat) {
+    OptimizerStat.ATTACK -> "Attack"
+    OptimizerStat.HEALTH -> "Health"
+    OptimizerStat.DEFENSE -> "Defense"
+    OptimizerStat.SPEED -> "Speed"
+    OptimizerStat.CRIT_CHANCE -> "CriticalHitChancePercent"
+    OptimizerStat.CRIT_DAMAGE -> "CriticalHitDamagePercent"
+    OptimizerStat.EFFECTIVENESS -> "EffectivenessPercent"
+    OptimizerStat.RESISTANCE -> "EffectResistancePercent"
 }
 
 private fun EquippedHeroBuild.heroSummaryText(): String = listOfNotNull(
