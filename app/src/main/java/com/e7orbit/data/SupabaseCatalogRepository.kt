@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 private const val SUPABASE_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1_000L
-private const val SUPABASE_CACHE_VERSION = 5 // 5: resolve skill effect slug arrays from shared catalog
+private const val SUPABASE_CACHE_VERSION = 6 // 6: add hero awakening and imprint data
 private const val SUPABASE_PAGE_SIZE = 500
 
 /**
@@ -120,6 +120,46 @@ internal data class SupabaseStatusEffectRow(
 )
 
 @Serializable
+internal data class SupabaseResourceCostRow(
+    val code: String = "",
+    val label: String = "",
+    val quantity: Int = 0,
+)
+
+@Serializable
+internal data class SupabaseGrowthStatRow(
+    val label: String = "",
+    val value: String = "",
+)
+
+@Serializable
+internal data class SupabaseAwakeningRow(
+    val rank: Int = 0,
+    val stats: List<SupabaseGrowthStatRow> = emptyList(),
+    val resources: List<SupabaseResourceCostRow> = emptyList(),
+    @SerialName("skill_before") val skillBefore: String? = null,
+    @SerialName("skill_after") val skillAfter: String? = null,
+)
+
+@Serializable
+internal data class SupabaseImprintGradeRow(
+    val rank: String = "",
+    val value: String = "",
+)
+
+@Serializable
+internal data class SupabaseImprintSectionRow(
+    val position: String? = null,
+    val grades: List<SupabaseImprintGradeRow> = emptyList(),
+)
+
+@Serializable
+internal data class SupabaseMemoryImprintRow(
+    val release: SupabaseImprintSectionRow? = null,
+    val concentration: SupabaseImprintSectionRow? = null,
+)
+
+@Serializable
 internal data class SupabaseArtifactRow(
     val code: String = "",
     val name: String = "",
@@ -146,6 +186,8 @@ internal data class SupabaseHeroRow(
     val role: String = "",
     val zodiac: String? = null,
     val description: String? = null,
+    val awakenings: List<SupabaseAwakeningRow> = emptyList(),
+    @SerialName("memory_imprint") val memoryImprint: SupabaseMemoryImprintRow? = null,
     @SerialName("icon_url") val iconUrl: String? = null,
     @SerialName("thumbnail_url") val thumbnailUrl: String? = null,
     @SerialName("image_url") val imageUrl: String? = null,
@@ -237,6 +279,30 @@ internal fun SupabaseSkillRow.toDomain(
         debuffs = normalizedDebuffs,
     )
 }
+
+internal fun SupabaseAwakeningRow.toDomain(): E7HeroAwakening = E7HeroAwakening(
+    rank = rank,
+    stats = stats.map { E7GrowthStat(label = it.label, value = it.value) },
+    resources = resources.map(SupabaseResourceCostRow::toDomain),
+    skillBefore = skillBefore,
+    skillAfter = skillAfter,
+)
+
+internal fun SupabaseMemoryImprintRow.toDomain(): E7MemoryImprint = E7MemoryImprint(
+    release = release?.toDomain(),
+    concentration = concentration?.toDomain(),
+)
+
+private fun SupabaseImprintSectionRow.toDomain(): E7ImprintSection = E7ImprintSection(
+    position = position,
+    grades = grades.map { E7ImprintGrade(rank = it.rank, value = it.value) },
+)
+
+private fun SupabaseResourceCostRow.toDomain(): E7ResourceCost = E7ResourceCost(
+    code = code,
+    label = label,
+    quantity = quantity,
+)
 
 private fun SupabaseStatusEffectRow.toDomain(): E7StatusEffect = E7StatusEffect(
     slug = slug,

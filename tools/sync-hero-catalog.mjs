@@ -21,6 +21,7 @@ const skillSource = process.env.EPICSEVENDB_SOURCE || "auto";
 const batchSize = Number(process.env.SYNC_BATCH_SIZE || 50);
 const concurrency = Number(process.env.SYNC_CONCURRENCY || 6);
 const skillsOnly = process.argv.includes("--skills-only");
+const growthOnly = process.argv.includes("--growth-only");
 const artifactsOnly = process.argv.includes("--artifacts-only");
 const skipArtifacts = process.argv.includes("--skip-artifacts");
 const exportDirArgument = process.argv.find((argument) => argument.startsWith("--export-dir="));
@@ -196,6 +197,61 @@ function htmlAttribute(block, name) {
   return match ? htmlDecode(match[1]) : null;
 }
 
+function extractDivBlocks(html, className) {
+  const blocks = [];
+  const tokens = html.matchAll(/<div\b[^>]*>|<\/div>/gi);
+  let depth = 0;
+  let targetStart = null;
+  let targetDepth = -1;
+  for (const token of tokens) {
+    const tag = token[0];
+    if (/^<div\b/i.test(tag)) {
+      const classes = htmlAttribute(tag, "class")?.split(/\s+/) || [];
+      if (targetStart == null && classes.includes(className)) {
+        targetStart = token.index;
+        targetDepth = depth;
+      }
+      depth += 1;
+    } else {
+      depth -= 1;
+      if (targetStart != null && depth === targetDepth) {
+        blocks.push(html.slice(targetStart, token.index + tag.length));
+        targetStart = null;
+        targetDepth = -1;
+      }
+    }
+  }
+  return blocks;
+}
+
+function titleFromSlug(value) {
+  return String(value || "")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function parseResourceCosts(block) {
+  return extractDivBlocks(block, "resource").map((resource) => {
+    const code = resource.match(/\/resources\/([^\"']+)/i)?.[1] || "";
+    const label = resource.match(/<img[^>]+alt="([^"]+)"/i)?.[1];
+    const quantity = resource.match(/\(([0-9]+)\)/)?.[1];
+    return {
+      code,
+      label: htmlDecode(label || titleFromSlug(code)),
+      quantity: quantity ? Number(quantity) : 0,
+    };
+  }).filter((resource) => resource.code && resource.quantity > 0);
+}
+
+function parseWebEnhancementDescriptions(block) {
+  return extractDivBlocks(block, "upgrade").map((upgrade) => {
+    const description = upgrade.match(/<div class="description">([\s\S]*?)<\/div>/i)?.[1] || "";
+    return htmlText(description);
+  }).filter(Boolean);
+}
+
 function parseWebSkillBlock(hero, block, index, syncedAt) {
   const title = block.match(/<div class="title">[\s\S]*?<h3>([\s\S]*?)<\/h3>/i);
   const icon = block.match(/<div class="icon">[\s\S]*?<img[^>]+src="([^"]+)"/i);
@@ -203,9 +259,7 @@ function parseWebSkillBlock(hero, block, index, syncedAt) {
   const soulGain = block.match(/<div class="soul-gain">([\s\S]*?)<\/div>/i);
   const description = block.match(/<div class="bottom">([\s\S]*?)<\/div>/i);
   const soulBurn = block.match(/<div class="soulburn">([\s\S]*?)<\/div>/i);
-  const enhancements = [...block.matchAll(/<div class="description">\s*([\s\S]*?)\s*<\/div>/gi)]
-    .map((match) => htmlText(match[1]))
-    .filter((value) => value && !value.includes("Gold") && !value.includes("MolaGora"));
+  const enhancements = parseWebEnhancementDescriptions(block);
   const iconUrl = icon?.[1]?.startsWith("http") ? icon[1] :
     icon?.[1] ? `https://epic7db.com${icon[1]}` : skillIconUrl(hero, {}, index + 1);
   const cooldownText = htmlText(cooldown?.[1] || "");
@@ -243,7 +297,7 @@ function parseWebSkillBlock(hero, block, index, syncedAt) {
     is_passive: isPassive,
     can_enhance: block.includes("skill-upgrades"),
     values: [],
-    enhancements: [...new Set(enhancements)].slice(0, 5),
+    enhancements,
     buffs: effects,
     debuffs: [],
     source: "epic7db-web",
@@ -253,14 +307,124 @@ function parseWebSkillBlock(hero, block, index, syncedAt) {
   return rows;
 }
 
-function parseWebHero(hero, html, syncedAt) {
+function webSkillBlocks(html) {
   const skillsStart = html.indexOf('<section id="skills"');
   if (skillsStart < 0) return [];
   const skillsEnd = html.indexOf('</section>', skillsStart);
   const skillsSection = html.slice(skillsStart, skillsEnd < 0 ? undefined : skillsEnd);
-  const blocks = [...skillsSection.matchAll(/<div class="skill accordion[^>]*>[\s\S]*?(?=<div class="skill accordion|$)/gi)]
+  return [...skillsSection.matchAll(/<div class="skill accordion[^>]*>[\s\S]*?(?=<div class="skill accordion|$)/gi)]
     .map((match) => match[0]);
-  return blocks.map((block, index) => parseWebSkillBlock(hero, block, index, syncedAt));
+}
+
+function parseWebHero(hero, html, syncedAt) {
+  return webSkillBlocks(html).map((block, index) => parseWebSkillBlock(hero, block, index, syncedAt));
+}
+
+function htmlSection(html, id) {
+  const start = html.indexOf(`<section id="${id}"`);
+  if (start < 0) return "";
+  const next = html.indexOf('<section id="', start + id.length + 15);
+  return html.slice(start, next < 0 ? undefined : next);
+}
+
+function parseWebAwakenings(html) {
+  return extractDivBlocks(htmlSection(html, "awakenings"), "awakening")
+    .map((block, index) => {
+      const stats = [...block.matchAll(
+        /<li><img class="stat-icon"[^>]*alt="([^"]+)"[^>]*>\s*([^<]+)<\/li>/gi,
+      )].map((match) => {
+        const label = htmlDecode(match[1]).trim();
+        const text = htmlText(match[2]);
+        return {
+          label,
+          value: text.includes(":") ? text.slice(text.indexOf(":") + 1).trim() : text,
+        };
+      });
+      const before = block.match(
+        /<div class="skill-improved before">[\s\S]*?<p>([\s\S]*?)<\/p>/i,
+      )?.[1];
+      const after = block.match(
+        /<div class="skill-improved after">[\s\S]*?<p>([\s\S]*?)<\/p>/i,
+      )?.[1];
+      return {
+        rank: index + 1,
+        stats,
+        resources: parseResourceCosts(block),
+        skill_before: before ? htmlText(before) : null,
+        skill_after: after ? htmlText(after) : null,
+      };
+    })
+    .filter((awakening) =>
+      awakening.stats.length || awakening.resources.length ||
+      awakening.skill_before || awakening.skill_after,
+    );
+}
+
+function parseWebMemoryImprint(html) {
+  const sections = extractDivBlocks(htmlSection(html, "memory-imprints"), "memory-imprint");
+  const result = {};
+  for (const block of sections) {
+    const title = htmlText(block.match(/<h3>([\s\S]*?)<\/h3>/i)?.[1] || "");
+    const key = /concentration/i.test(title) ? "concentration" :
+      /release/i.test(title) ? "release" : null;
+    if (!key) continue;
+    const position = block.match(/images\/imprints\/([^."]+)\.png"[^>]*alt="[^"]*"/i)?.[1] || null;
+    const grades = [...block.matchAll(
+      /images\/imprints\/(SSS|SS|S|A|B)\.png"[^>]*>\s*([^<]+)<\/li>/gi,
+    )].map((match) => ({ rank: match[1].toUpperCase(), value: htmlText(match[2]) }));
+    result[key] = { position, grades };
+  }
+  return result;
+}
+
+function normalizedDescription(value) {
+  return String(value || "").toLowerCase().replace(/<[^>]+>/g, " ").replace(/[^a-z0-9]+/g, "");
+}
+
+function descriptionSimilarity(left, right) {
+  const words = (value) => new Set(
+    String(value || "").toLowerCase().replace(/<[^>]+>/g, " ").match(/[a-z0-9]+/g) || [],
+  );
+  const leftWords = words(left);
+  const rightWords = words(right);
+  if (!leftWords.size || !rightWords.size) return 0;
+  const common = [...leftWords].filter((word) => rightWords.has(word)).length;
+  return common / Math.max(leftWords.size, rightWords.size);
+}
+
+function parseWebGrowth(hero, html, syncedAt) {
+  const skills = parseWebHero(hero, html, syncedAt);
+  const awakenings = parseWebAwakenings(html);
+  for (const awakening of awakenings) {
+    if (!awakening.skill_before || !awakening.skill_after) continue;
+    const before = normalizedDescription(awakening.skill_before);
+    const exact = skills.find((skill) => {
+      const description = normalizedDescription(skill.description);
+      return description === before || description.includes(before) || before.includes(description);
+    });
+    const match = exact || skills
+      .map((skill) => ({ skill, similarity: descriptionSimilarity(skill.description, awakening.skill_before) }))
+      .sort((left, right) => right.similarity - left.similarity)
+      .find((candidate) => candidate.similarity >= 0.7)?.skill;
+    if (match) match.enhanced_description = awakening.skill_after;
+  }
+  return {
+    hero: {
+      code: hero.code,
+      awakenings,
+      memory_imprint: parseWebMemoryImprint(html),
+      source_updated_at: syncedAt,
+      updated_at: syncedAt,
+    },
+    skills: skills.map((skill) => ({
+      hero_code: skill.hero_code,
+      slot: skill.slot,
+      enhancements: skill.enhancements,
+      enhanced_description: skill.enhanced_description,
+      source_updated_at: syncedAt,
+      updated_at: syncedAt,
+    })),
+  };
 }
 
 function damageModifier(skill, name) {
@@ -426,13 +590,15 @@ function toStatusEffects(codes) {
   return result;
 }
 
-function enhancementTexts(skill) {
+function enhancementSource(skill) {
   const source = skill.enhancements || skill.enhancement || [];
-  return Array.isArray(source)
-    ? source
-      .map((item) => typeof item === "string" ? item : item?.string || item?.description)
-      .filter(Boolean)
-    : [];
+  return Array.isArray(source) ? source : [];
+}
+
+function enhancementTexts(skill) {
+  return enhancementSource(skill)
+    .map((item) => typeof item === "string" ? item : item?.string || item?.description)
+    .filter(Boolean);
 }
 
 function toSkillRow(hero, skill, index, syncedAt) {
@@ -470,17 +636,29 @@ function toSkillRow(hero, skill, index, syncedAt) {
   };
 }
 
-async function fetchWebHero(hero, syncedAt) {
+async function resolveWebHeroSlug(hero) {
   const sourceSlug = textOrNull(hero.hero._id) || textOrNull(hero.hero.id);
   const heroName = textOrNull(hero.hero.name);
   const webSlugs = await epicSevenDbWebSlugs();
   const slug = (heroName && webSlugs.get(normalizedHeroName(heroName))) || sourceSlug;
-  if (!slug) return [];
-  if (sourceSlug && slug !== sourceSlug) {
+  if (sourceSlug && slug && slug !== sourceSlug) {
     console.log(`Resolved Epic7DB slug for ${hero.code}: ${sourceSlug} -> ${slug}`);
   }
+  return slug;
+}
+
+async function fetchWebHero(hero, syncedAt) {
+  const slug = await resolveWebHeroSlug(hero);
+  if (!slug) return [];
   const html = await fetchText(`${epicSevenDbWeb}/${encodeURIComponent(slug)}`);
   return parseWebHero(hero, html, syncedAt);
+}
+
+async function fetchWebGrowth(hero, syncedAt) {
+  const slug = await resolveWebHeroSlug(hero);
+  if (!slug) return null;
+  const html = await fetchText(`${epicSevenDbWeb}/${encodeURIComponent(slug)}`);
+  return parseWebGrowth(hero, html, syncedAt);
 }
 
 async function fetchText(url) {
@@ -570,6 +748,29 @@ async function fetchWebSkills(heroes, syncedAt) {
     });
   }
   return details;
+}
+
+async function fetchGrowthRows(heroes, syncedAt) {
+  const rows = [];
+  let completed = 0;
+  for (let start = 0; start < heroes.length; start += concurrency) {
+    const group = heroes.slice(start, start + concurrency);
+    const results = await Promise.all(group.map(async (hero) => {
+      try {
+        return await fetchWebGrowth(hero, syncedAt);
+      } catch (error) {
+        console.warn(`Growth data unavailable for ${hero.code}: ${error.message}`);
+        return null;
+      } finally {
+        completed += 1;
+        if (completed % 25 === 0 || completed === heroes.length) {
+          console.log(`Fetched growth data for ${completed}/${heroes.length} heroes`);
+        }
+      }
+    }));
+    results.filter(Boolean).forEach((result) => rows.push(result));
+  }
+  return rows;
 }
 
 function skillRows(heroes, details, syncedAt) {
@@ -975,6 +1176,62 @@ async function mirrorArtifactImages(artifacts) {
   return artifacts;
 }
 
+async function loadRestRows(table) {
+  const rows = [];
+  let start = 0;
+  do {
+    const response = await fetch(`${supabaseUrl}/rest/v1/${table}?select=*`, {
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        Range: `${start}-${start + 499}`,
+      },
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`Supabase ${table} read failed (${response.status}): ${text.slice(0, 500)}`);
+    }
+    const page = JSON.parse(text);
+    rows.push(...page);
+    start += page.length;
+    if (page.length < 500) break;
+  } while (true);
+  return rows;
+}
+
+async function writeGrowthExport(directory, growthRows) {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    `${directory}/hero_growth.json`,
+    JSON.stringify(growthRows.map((row) => row.hero), null, 2),
+  );
+  await writeFile(
+    `${directory}/hero_skill_growth.json`,
+    JSON.stringify(growthRows.flatMap((row) => row.skills), null, 2),
+  );
+  console.log(`Exported growth data for ${growthRows.length} heroes to ${directory}`);
+}
+
+async function upsertGrowthRows(growthRows) {
+  const heroGrowth = new Map(growthRows.map((row) => [row.hero.code, row.hero]));
+  const skillGrowth = new Map(
+    growthRows.flatMap((row) => row.skills)
+      .map((skill) => [`${skill.hero_code}:${skill.slot}`, skill]),
+  );
+  const currentHeroes = await loadRestRows("hero_catalog");
+  const currentSkills = await loadRestRows("hero_skills");
+  const heroes = currentHeroes
+    .filter((hero) => heroGrowth.has(hero.code))
+    .map((hero) => ({ ...hero, ...heroGrowth.get(hero.code) }));
+  const skills = currentSkills
+    .filter((skill) => skillGrowth.has(`${skill.hero_code}:${skill.slot}`))
+    .map((skill) => ({ ...skill, ...skillGrowth.get(`${skill.hero_code}:${skill.slot}`) }));
+  if (heroes.length) await upsert("hero_catalog", heroes, "code");
+  if (skills.length) await upsert("hero_skills", skills, "hero_code,slot");
+  console.log(`Updated growth data for ${heroes.length} heroes and ${skills.length} skills`);
+}
+
 async function upsert(table, rows, conflictColumns) {
   for (let start = 0; start < rows.length; start += batchSize) {
     const batch = rows.slice(start, start + batchSize);
@@ -1029,6 +1286,18 @@ if (requestedHeroCodes.size) {
   const missingCodes = [...requestedHeroCodes].filter((code) => !matchedCodes.has(code));
   if (missingCodes.length) throw new Error(`Unknown hero codes: ${missingCodes.join(", ")}`);
   console.log(`Filtering sync to hero codes: ${[...requestedHeroCodes].join(", ")}`);
+}
+
+if (growthOnly) {
+  console.log(`Starting growth-only sync for ${fribbelsHeroes.length} heroes...`);
+  const growthRows = await fetchGrowthRows(fribbelsHeroes, syncedAt);
+  if (exportDir) {
+    await writeGrowthExport(exportDir, growthRows);
+  } else {
+    await upsertGrowthRows(growthRows);
+  }
+  console.log(`Growth sync completed: ${growthRows.length}/${fribbelsHeroes.length} heroes`);
+  process.exit(0);
 }
 
 const details = await fetchDetails(fribbelsHeroes);

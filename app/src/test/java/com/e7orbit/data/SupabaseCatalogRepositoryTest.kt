@@ -37,4 +37,21 @@ class SupabaseCatalogRepositoryTest {
         assertEquals("Removes debuffs", domain.buffs.last().description)
         assertEquals("https://example.com/cleanse.png", domain.buffs.last().iconUrl)
     }
+
+    @Test
+    fun `growth rows preserve awakening resources`() {
+        val awakening = SupabaseAwakeningRow(
+            rank = 3,
+            stats = listOf(SupabaseGrowthStatRow(label = "Attack", value = "+20")),
+            resources = listOf(
+                SupabaseResourceCostRow(code = "light-rune", label = "Light Rune", quantity = 20),
+            ),
+            skillBefore = "Before",
+            skillAfter = "After",
+        ).toDomain()
+        assertEquals(3, awakening.rank)
+        assertEquals("+20", awakening.stats.single().value)
+        assertEquals("light-rune", awakening.resources.single().code)
+        assertEquals("After", awakening.skillAfter)
+    }
 }

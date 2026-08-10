@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -70,6 +71,8 @@ import androidx.compose.ui.unit.dp
 import com.e7orbit.R
 import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Hero
+import com.e7orbit.data.E7HeroAwakening
+import com.e7orbit.data.E7ImprintSection
 import com.e7orbit.data.E7StatusEffect
 import com.e7orbit.data.E7HeroStats
 import com.e7orbit.data.E7HeroSkill
@@ -530,7 +533,7 @@ internal fun HeroDetailScreen(
                 modifier = Modifier.fillMaxWidth(),
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
-                listOf("概览", "RTA").forEachIndexed { index, label ->
+                listOf("概览", "成长", "RTA").forEachIndexed { index, label ->
                     Tab(
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
@@ -539,26 +542,28 @@ internal fun HeroDetailScreen(
                 }
             }
         }
-        if (selectedTab == 0) {
-            item {
-                SectionTitle("六星满觉基础属性")
-                Spacer(Modifier.height(8.dp))
-                SectionSurface {
-                    MetricRow("星座", hero.zodiac?.takeIf(String::isNotBlank) ?: "—")
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 4.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                    )
-                    HeroStats(hero.stats)
-                }
-            }
-            if (hero.skills.isNotEmpty()) {
+        when (selectedTab) {
+            0 -> {
                 item {
-                    HeroSkills(hero.skills)
+                    SectionTitle("六星满觉基础属性")
+                    Spacer(Modifier.height(8.dp))
+                    SectionSurface {
+                        MetricRow("星座", hero.zodiac?.takeIf(String::isNotBlank) ?: "—")
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
+                        HeroStats(hero.stats)
+                    }
+                }
+                if (hero.skills.isNotEmpty()) {
+                    item { HeroSkills(hero.skills) }
                 }
             }
-        } else {
-            item {
+
+            1 -> item { HeroGrowthSection(hero) }
+
+            else -> item {
                 HeroRtaSection(
                     state = rta,
                     onSeasonChanged = onSeasonChanged,
@@ -568,6 +573,204 @@ internal fun HeroDetailScreen(
             }
         }
     }
+}
+
+@Composable
+private fun HeroGrowthSection(hero: E7Hero) {
+    if (hero.awakenings.isEmpty() && hero.memoryImprint == null) {
+        SectionSurface {
+            Text("暂无成长资料", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        return
+    }
+
+    if (hero.awakenings.isNotEmpty()) {
+        SectionTitle("觉醒")
+        Spacer(Modifier.height(8.dp))
+        hero.awakenings.sortedBy(E7HeroAwakening::rank).forEach { awakening ->
+            SectionSurface {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    HeroStars(stars = awakening.rank, iconSize = 18.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "${awakening.rank} 星觉醒",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                if (awakening.stats.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        awakening.stats.chunked(2).forEach { stats ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                            ) {
+                                stats.forEach { stat ->
+                                    Row(
+                                        modifier = Modifier.weight(1f),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        growthStatIconRes(stat.label)?.let { iconRes ->
+                                            Image(
+                                                painter = painterResource(iconRes),
+                                                contentDescription = stat.label.growthLabel(),
+                                                modifier = Modifier.size(18.dp),
+                                                contentScale = ContentScale.Fit,
+                                            )
+                                        }
+                                        Text(
+                                            "${stat.label.growthLabel()} ${stat.value}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                    }
+                                }
+                                if (stats.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+                if (awakening.resources.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        awakening.resources.joinToString(" · ") { resource ->
+                            "${resource.label} ×${resource.quantity}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                val before = awakening.skillBefore?.cleanSkillText()?.takeIf(String::isNotBlank)
+                val after = awakening.skillAfter?.cleanSkillText()?.takeIf(String::isNotBlank)
+                if (before != null || after != null) {
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    before?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text("觉醒前", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(3.dp))
+                        Text(it, style = MaterialTheme.typography.bodySmall)
+                    }
+                    after?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "觉醒后",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(it, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+
+    hero.memoryImprint?.let { imprint ->
+        Spacer(Modifier.height(12.dp))
+        SectionTitle("刻印")
+        Spacer(Modifier.height(8.dp))
+        ImprintSection("阵型刻印", imprint.release)
+        Spacer(Modifier.height(8.dp))
+        ImprintSection("自身刻印", imprint.concentration)
+    }
+}
+
+@Composable
+private fun ImprintSection(title: String, section: E7ImprintSection?) {
+    if (section == null || section.grades.isEmpty()) return
+    SectionSurface {
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(10.dp))
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val gradeColumns = if (maxWidth >= 520.dp) 3 else 2
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                val position = section.position?.takeIf(String::isNotBlank)
+                val positionIcon = position?.let(::imprintPositionIconRes)
+                if (positionIcon != null) {
+                    Image(
+                        painter = painterResource(positionIcon),
+                        contentDescription = imprintPositionDescription(position),
+                        modifier = Modifier.size(68.dp),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    section.grades.chunked(gradeColumns).forEach { grades ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            grades.forEach { grade ->
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    imprintRankIconRes(grade.rank)?.let { rankIcon ->
+                                        Image(
+                                            painter = painterResource(rankIcon),
+                                            contentDescription = grade.rank,
+                                            modifier = Modifier
+                                                .width(42.dp)
+                                                .height(25.dp),
+                                            contentScale = ContentScale.Fit,
+                                        )
+                                    } ?: Text(
+                                        grade.rank,
+                                        modifier = Modifier.width(42.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(
+                                        grade.value.imprintValueLabel(),
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                            repeat(gradeColumns - grades.size) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun String.growthLabel(): String = when (lowercase()) {
+    "attack" -> "攻击"
+    "health" -> "生命"
+    "defense" -> "防御"
+    "speed" -> "速度"
+    "critical hit rate", "critical hit chance" -> "暴击"
+    "critical hit damage" -> "暴伤"
+    "effectiveness" -> "效果命中"
+    "effect resistance" -> "效果抗性"
+    else -> this
+}
+
+private fun String.imprintValueLabel(): String = when {
+    startsWith("Effectiveness", ignoreCase = true) -> replaceFirst("Effectiveness", "效果命中", ignoreCase = true)
+    startsWith("Effect Resistance", ignoreCase = true) -> replaceFirst("Effect Resistance", "效果抗性", ignoreCase = true)
+    startsWith("Critical Hit Chance", ignoreCase = true) -> replaceFirst("Critical Hit Chance", "暴击", ignoreCase = true)
+    startsWith("Critical Hit Damage", ignoreCase = true) -> replaceFirst("Critical Hit Damage", "暴伤", ignoreCase = true)
+    startsWith("Attack", ignoreCase = true) -> replaceFirst("Attack", "攻击", ignoreCase = true)
+    startsWith("Health", ignoreCase = true) -> replaceFirst("Health", "生命", ignoreCase = true)
+    startsWith("Defense", ignoreCase = true) -> replaceFirst("Defense", "防御", ignoreCase = true)
+    startsWith("Speed", ignoreCase = true) -> replaceFirst("Speed", "速度", ignoreCase = true)
+    else -> this
 }
 
 @Composable
@@ -847,7 +1050,7 @@ private fun HeroSkillCard(skill: E7HeroSkill) {
             skill.enhancedDescription?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "强化效果：$description",
+                    "觉醒后：$description",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                 )

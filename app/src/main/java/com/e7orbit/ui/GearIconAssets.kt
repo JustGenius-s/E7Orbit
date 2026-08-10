@@ -59,3 +59,19 @@ internal fun gearStatIconRes(statType: String): Int? = when (statType) {
     "EffectResistancePercent" -> R.drawable.e7_stat_resistance
     else -> null
 }
+
+@DrawableRes
+internal fun growthStatIconRes(label: String): Int? {
+    val statType = when (label.lowercase()) {
+        "attack" -> "Attack"
+        "health" -> "Health"
+        "defense" -> "Defense"
+        "speed" -> "Speed"
+        "critical hit rate", "critical hit chance" -> "CriticalHitChancePercent"
+        "critical hit damage" -> "CriticalHitDamagePercent"
+        "effectiveness" -> "EffectivenessPercent"
+        "effect resistance" -> "EffectResistancePercent"
+        else -> return null
+    }
+    return gearStatIconRes(statType)
+}

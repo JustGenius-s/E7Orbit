@@ -279,6 +279,8 @@ class E7DataRepository(
                 stats = maintained?.toStats(details?.stats) ?: details?.stats,
                 assets = maintainedAssets.mergeWith(fribbelsAssets),
                 description = maintained?.description,
+                awakenings = maintained?.awakenings.orEmpty().map(SupabaseAwakeningRow::toDomain),
+                memoryImprint = maintained?.memoryImprint?.toDomain(),
                 skills = maintainedSkills[code].orEmpty(),
             )
         }.sortedBy { it.name.lowercase() }

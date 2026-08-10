@@ -12,6 +12,8 @@ data class E7Hero(
     val stats: E7HeroStats?,
     val assets: E7HeroAssets = E7HeroAssets(),
     val description: String? = null,
+    val awakenings: List<E7HeroAwakening> = emptyList(),
+    val memoryImprint: E7MemoryImprint? = null,
     val skills: List<E7HeroSkill> = emptyList(),
     val source: E7DataSource = E7DataSource.OFFICIAL_AND_FRIBBELS,
 )
@@ -35,6 +37,40 @@ data class E7HeroSkill(
     val enhancements: List<String> = emptyList(),
     val buffs: List<E7StatusEffect> = emptyList(),
     val debuffs: List<E7StatusEffect> = emptyList(),
+)
+
+data class E7HeroAwakening(
+    val rank: Int,
+    val stats: List<E7GrowthStat> = emptyList(),
+    val resources: List<E7ResourceCost> = emptyList(),
+    val skillBefore: String? = null,
+    val skillAfter: String? = null,
+)
+
+data class E7GrowthStat(
+    val label: String,
+    val value: String,
+)
+
+data class E7ResourceCost(
+    val code: String,
+    val label: String,
+    val quantity: Int,
+)
+
+data class E7MemoryImprint(
+    val release: E7ImprintSection? = null,
+    val concentration: E7ImprintSection? = null,
+)
+
+data class E7ImprintSection(
+    val position: String? = null,
+    val grades: List<E7ImprintGrade> = emptyList(),
+)
+
+data class E7ImprintGrade(
+    val rank: String,
+    val value: String,
 )
 
 /** A buff/debuff applied by a skill. [iconUrl] points at the status effect icon. */

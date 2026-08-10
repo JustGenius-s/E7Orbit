@@ -10,6 +10,8 @@ create table if not exists public.hero_catalog (
     role text not null default '',
     zodiac text,
     description text,
+    awakenings jsonb not null default '[]'::jsonb,
+    memory_imprint jsonb not null default '{}'::jsonb,
     icon_url text,
     thumbnail_url text,
     image_url text,
