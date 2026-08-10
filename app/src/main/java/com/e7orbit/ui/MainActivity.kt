@@ -434,7 +434,9 @@ private fun OrbitApp(
             .nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            if (destination == OrbitDestination.OPTIMIZER && detail == null) {
+            if (detail == DetailRoute.HERO) {
+                // Full-screen hero detail renders its own floating back affordance.
+            } else if (destination == OrbitDestination.OPTIMIZER && detail == null) {
                 OptimizerPlanTopBar(
                     plans = state.optimizer.plans,
                     selectedPlan = state.optimizer.selectedPlan,
@@ -493,6 +495,7 @@ private fun OrbitApp(
                 .padding(contentPadding),
         ) {
             val sharedTransitionScope: SharedTransitionScope = this
+            val contentBottomPadding = contentPadding.calculateBottomPadding()
             AnimatedContent(
                 targetState = route,
                 modifier = Modifier.fillMaxSize(),
@@ -504,6 +507,11 @@ private fun OrbitApp(
                 val screenModifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
+                // Detail screens without a top app bar must also escape the top inset.
+                val fullScreenModifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(bottom = contentBottomPadding)
                 when (animatedRoute.detail) {
                     DetailRoute.SHOP -> ShopTaskScreen(
                         state = state,
@@ -539,7 +547,8 @@ private fun OrbitApp(
                             it.code == state.data.selectedHeroCode
                         },
                         rta = state.data.rta,
-                        modifier = screenModifier,
+                        modifier = fullScreenModifier,
+                        onBack = { detailName = null },
                         onSeasonChanged = onRtaSeasonChanged,
                         onTierChanged = onRtaTierChanged,
                         onRetryRta = onRetryHeroRta,
