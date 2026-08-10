@@ -57,7 +57,7 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 
 英雄图鉴支持可选的 Supabase 维护源。应用通过 HTTPS PostgREST 只读以下公开表：
 
-- `hero_catalog`：英雄身份、图片、六星满觉基础属性、觉醒节点/材料和阵型/自身刻印
+- `hero_catalog`：英雄身份、头像/透明立绘、六星满觉基础属性、觉醒节点/材料和阵型/自身刻印
 - `hero_skills`：技能图标、名称、描述、冷却、倍率、强化效果，以及按展示顺序保存的 `buff_slugs`/`debuff_slugs`
 - `status_effect_catalog`：全局唯一的增益/减益名称、说明和图标
 - `artifact_catalog`：神器立绘、满级属性、基础/满级效果描述和背景故事
@@ -71,13 +71,14 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 3. 使用 service-role key 执行同步脚本。service-role key 只放在当前终端环境变量中，不要写入工程文件：
 
 ```powershell
+npm install
 $env:SUPABASE_SERVICE_ROLE_KEY = "你的 service-role key"
 node .\tools\sync-hero-catalog.mjs
 ```
 
-脚本会依次同步英雄、技能和神器。神器数据来自 Fribbels（属性/职业）与 Epic7DB 网页（立绘、基础/满级效果描述、背景故事），以神器编码幂等 upsert 到 `artifact_catalog`。只同步神器可用 `--artifacts-only`，跳过神器可用 `--skip-artifacts`。觉醒、刻印与技能觉醒文本使用 `--growth-only` 单独同步；该模式只抓英雄网页并合并成长字段，不处理图片、神器和 RTA。可用环境变量覆盖默认值：`FRIBBELS_ARTIFACT_URL`、`EPICSEVENDB_ARTIFACTS_WEB`。
+`npm install` 会安装用于压缩透明角色立绘的 `sharp`。脚本会依次同步英雄、技能和神器。神器数据来自 Fribbels（属性/职业）与 Epic7DB 网页（立绘、基础/满级效果描述、背景故事），以神器编码幂等 upsert 到 `artifact_catalog`。只同步神器可用 `--artifacts-only`，跳过神器可用 `--skip-artifacts`。觉醒、刻印与技能觉醒文本使用 `--growth-only` 单独同步；该模式只抓英雄网页并合并成长字段，不处理图片、神器和 RTA。可用环境变量覆盖默认值：`FRIBBELS_ARTIFACT_URL`、`EPICSEVENDB_ARTIFACTS_WEB`。
 
-脚本从 Fribbels 获取基础属性，并从 EpicSevenDB 获取技能资料，然后以英雄编码幂等 upsert 到 Supabase。默认会先尝试 API；如果 API 因网络或 TLS 不可用，会回退到 Epic7DB 网页。可用环境变量覆盖默认值：`SUPABASE_URL`、`FRIBBELS_HERO_URL`、`EPICSEVENDB_API_URL`、`EPICSEVENDB_WEB`、`EPICSEVENDB_SOURCE`、`EPICSEVENDB_LANGUAGE`、`SYNC_BATCH_SIZE`、`SYNC_CONCURRENCY`。
+脚本从 Fribbels 获取基础属性，从 EpicSevenDB 获取技能资料，并从 E7 Codex 获取按英雄编码维护的透明角色立绘，然后以英雄编码幂等 upsert 到 Supabase。立绘会缩放至最长边 1024px、编码为透明 WebP 并保存到 `Epic7/heroes/{code}/art.webp`；Fribbels 的 `question_circle.png` 占位图不会写入目录。默认会先尝试技能 API；如果 API 因网络或 TLS 不可用，会回退到 Epic7DB 网页。可用环境变量覆盖默认值：`SUPABASE_URL`、`FRIBBELS_HERO_URL`、`EPICSEVENDB_API_URL`、`EPICSEVENDB_WEB`、`EPICSEVENDB_SOURCE`、`EPICSEVENDB_LANGUAGE`、`E7_CODEX_URL`、`E7_CODEX_UNITS_URL`、`HERO_ART_MAX_SIZE`、`HERO_ART_QUALITY`、`SYNC_BATCH_SIZE`、`SYNC_CONCURRENCY`。
 
 已有数据库先在 Supabase SQL Editor 执行 [`supabase/add-hero-growth-data.sql`](supabase/add-hero-growth-data.sql)，然后快速同步成长资料：
 
@@ -88,6 +89,16 @@ Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
 ```
 
 也可以使用 `--hero-codes=c2099` 只更新指定英雄。
+
+只同步透明角色立绘并清理旧占位 URL：
+
+```powershell
+$env:SUPABASE_SERVICE_ROLE_KEY = "你的 service-role key"
+node .\tools\sync-hero-catalog.mjs --hero-art-only
+Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
+```
+
+已存在的 `art.webp` 会跳过下载；需要重新压缩并覆盖全部立绘时增加 `--force-hero-art`。可结合 `--hero-codes=c2099` 先验证指定英雄，或结合 `--export-dir=tmp/art` 在不连接 Supabase 的情况下导出 WebP 和 `hero_art.json`。
 
 如果只同步神器：
 

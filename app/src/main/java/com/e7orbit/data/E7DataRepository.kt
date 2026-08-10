@@ -263,7 +263,7 @@ class E7DataRepository(
             val maintainedAssets = E7HeroAssets(
                 iconUrl = maintained?.iconUrl,
                 thumbnailUrl = maintained?.thumbnailUrl,
-                imageUrl = maintained?.imageUrl,
+                imageUrl = maintained?.imageUrl?.takeUnless { it.endsWith("/image.png") },
             )
             E7Hero(
                 code = code,

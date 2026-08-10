@@ -5,6 +5,7 @@ local.properties
 build/
 captures/
 **/build/
+node_modules/
 *.jks
 *.keystore
 *.apk

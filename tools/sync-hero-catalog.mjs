@@ -16,12 +16,18 @@ const epicSevenDbUrl = (process.env.EPICSEVENDB_API_URL || "https://api.epicseve
 const epicSevenDbGitHubRaw = (process.env.EPICSEVENDB_GITHUB_RAW ||
   "https://raw.githubusercontent.com/kmalone86/gamedatabase/master/src/hero").replace(/\/$/, "");
 const epicSevenDbWeb = (process.env.EPICSEVENDB_WEB || "https://epic7db.com/heroes").replace(/\/$/, "");
+const e7CodexUrl = (process.env.E7_CODEX_URL || "https://e7codex.com").replace(/\/$/, "");
+const e7CodexUnitsUrl = process.env.E7_CODEX_UNITS_URL || `${e7CodexUrl}/data/units.json`;
+const heroArtMaxSize = Number(process.env.HERO_ART_MAX_SIZE || 1024);
+const heroArtQuality = Number(process.env.HERO_ART_QUALITY || 84);
 const language = process.env.EPICSEVENDB_LANGUAGE || "cn";
 const skillSource = process.env.EPICSEVENDB_SOURCE || "auto";
 const batchSize = Number(process.env.SYNC_BATCH_SIZE || 50);
 const concurrency = Number(process.env.SYNC_CONCURRENCY || 6);
 const skillsOnly = process.argv.includes("--skills-only");
 const growthOnly = process.argv.includes("--growth-only");
+const heroArtOnly = process.argv.includes("--hero-art-only");
+const forceHeroArt = process.argv.includes("--force-hero-art");
 const artifactsOnly = process.argv.includes("--artifacts-only");
 const skipArtifacts = process.argv.includes("--skip-artifacts");
 const exportDirArgument = process.argv.find((argument) => argument.startsWith("--export-dir="));
@@ -83,6 +89,12 @@ function heroCode(hero) {
   return textOrNull(hero.code) || textOrNull(hero._id) || textOrNull(hero.id);
 }
 
+function isPlaceholderImageUrl(value) {
+  const url = String(value || "").toLowerCase();
+  return ["question_circle", "question-circle", "placeholder", "no_image", "no-image"]
+    .some((marker) => url.includes(marker));
+}
+
 function slugify(value) {
   return htmlDecode(String(value))
     .normalize("NFKD")
@@ -120,6 +132,7 @@ function heroStats(hero) {
 function toHeroRow(hero, syncedAt, detail = null) {
   const code = heroCode(hero);
   if (!code || !hero.name) return null;
+  const sourceImage = textOrNull(hero.assets?.image);
   return {
     code,
     name: hero.name,
@@ -129,7 +142,7 @@ function toHeroRow(hero, syncedAt, detail = null) {
     zodiac: textOrNull(hero.zodiac),
     icon_url: textOrNull(hero.assets?.icon),
     thumbnail_url: textOrNull(hero.assets?.thumbnail),
-    image_url: textOrNull(hero.assets?.image),
+    image_url: sourceImage && !isPlaceholderImageUrl(sourceImage) ? sourceImage : null,
     description: textOrNull(detail?.description),
     ...heroStats(hero),
     source: "fribbels + epic7db",
@@ -190,6 +203,52 @@ async function epicSevenDbWebSlugs() {
       });
   }
   return epicSevenDbWebSlugsPromise;
+}
+
+const HERO_ART_ALIASES = {
+  c5004: "m9194", // Archdemon's Shadow uses the Archdemon Mercedes portrait rig.
+};
+
+async function heroArtSources(heroCodes) {
+  const records = await fetchJson(e7CodexUnitsUrl);
+  if (!Array.isArray(records)) throw new Error("E7 Codex units index was not an array");
+
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  const unitsByBaseId = new Map();
+  for (const record of records) {
+    if (record.kind !== "unit" || !record.base_id || !record.pose) continue;
+    const entries = unitsByBaseId.get(record.base_id) || [];
+    entries.push(record);
+    unitsByBaseId.set(record.base_id, entries);
+  }
+
+  const sources = new Map();
+  for (const code of heroCodes) {
+    const alias = HERO_ART_ALIASES[code];
+    let record = recordsById.get(alias || code);
+    if (!record?.pose && !alias) {
+      const entries = unitsByBaseId.get(code) || [];
+      record = entries.find((entry) => !entry.variant) || entries[0];
+    }
+    if (record?.pose) {
+      const sourceUrl = record.pose.startsWith("http") ? record.pose : `${e7CodexUrl}/${record.pose}`;
+      if (!isPlaceholderImageUrl(sourceUrl)) {
+        sources.set(code, { sourceUrl, unitId: record.id });
+      }
+    }
+  }
+
+  const missing = heroCodes.filter((code) => !sources.has(code));
+  console.log(`Resolved E7 Codex artwork for ${sources.size}/${heroCodes.length} heroes`);
+  if (missing.length) console.warn(`No full artwork for: ${missing.join(", ")}`);
+  return sources;
+}
+
+function assignHeroArtSources(heroes, sources) {
+  for (const hero of heroes) {
+    hero.image_url = sources.get(hero.code)?.sourceUrl || null;
+  }
+  return heroes;
 }
 
 function htmlAttribute(block, name) {
@@ -1048,6 +1107,50 @@ async function downloadImage(url) {
   return Buffer.from(await response.arrayBuffer());
 }
 
+let sharpPromise = null;
+async function sharpProcessor() {
+  if (!sharpPromise) {
+    sharpPromise = import("sharp")
+      .then((module) => module.default)
+      .catch((error) => {
+        throw new Error(`sharp is required for hero artwork; run npm install (${error.message})`);
+      });
+  }
+  return sharpPromise;
+}
+
+async function transformHeroArtwork(sourceUrl) {
+  if (isPlaceholderImageUrl(sourceUrl)) {
+    throw new Error(`Rejected placeholder artwork URL: ${sourceUrl}`);
+  }
+
+  const sharp = await sharpProcessor();
+  const input = await downloadImage(sourceUrl);
+  const image = sharp(input, { failOn: "error" });
+  const metadata = await image.metadata();
+  if (!metadata.width || !metadata.height || Math.max(metadata.width, metadata.height) < 256) {
+    throw new Error(`Rejected undersized artwork (${metadata.width || 0}x${metadata.height || 0})`);
+  }
+  if (!metadata.hasAlpha) {
+    throw new Error("Rejected artwork without a transparency channel");
+  }
+
+  return image
+    .rotate()
+    .resize({
+      width: heroArtMaxSize,
+      height: heroArtMaxSize,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({
+      quality: heroArtQuality,
+      alphaQuality: 95,
+      smartSubsample: true,
+    })
+    .toBuffer();
+}
+
 async function uploadToStorage(path, body, contentType) {
   const response = await fetch(`${supabaseUrl}/storage/v1/object/${storageBucket}/${path}`, {
     method: "POST",
@@ -1090,6 +1193,38 @@ async function mirrorImage(sourceUrl, storagePath) {
   return result;
 }
 
+async function mirrorHeroArtwork(sourceUrl, code) {
+  if (!sourceUrl) return null;
+  const storagePath = `heroes/${code}/art.webp`;
+  try {
+    if (!forceHeroArt && await storageObjectExists(storagePath)) {
+      return storagePublicUrl(storagePath);
+    }
+    const body = await transformHeroArtwork(sourceUrl);
+    await uploadToStorage(storagePath, body, "image/webp");
+    return storagePublicUrl(storagePath);
+  } catch (error) {
+    console.warn(`Hero artwork mirror failed for ${code}: ${error.message}`);
+    return null;
+  }
+}
+
+async function mirrorHeroArtworkRows(heroes) {
+  if (skipImageMirror || !serviceRoleKey) return heroes;
+  let done = 0;
+  for (let start = 0; start < heroes.length; start += concurrency) {
+    const group = heroes.slice(start, start + concurrency);
+    await Promise.all(group.map(async (hero) => {
+      hero.image_url = await mirrorHeroArtwork(hero.image_url, hero.code);
+      done += 1;
+      if (done % 25 === 0 || done === heroes.length) {
+        console.log(`Mirrored hero artwork ${done}/${heroes.length}`);
+      }
+    }));
+  }
+  return heroes;
+}
+
 async function mirrorHeroImages(heroes) {
   if (skipImageMirror || !serviceRoleKey) return heroes;
   console.log(`Mirroring images for ${heroes.length} heroes to bucket ${storageBucket}...`);
@@ -1102,15 +1237,39 @@ async function mirrorHeroImages(heroes) {
     if (hero.thumbnail_url) {
       hero.thumbnail_url = await mirrorImage(hero.thumbnail_url, `heroes/${code}/thumbnail${extensionFromUrl(hero.thumbnail_url)}`);
     }
-    if (hero.image_url) {
-      hero.image_url = await mirrorImage(hero.image_url, `heroes/${code}/image${extensionFromUrl(hero.image_url)}`);
-    }
     done += 1;
     if (done % 50 === 0 || done === heroes.length) {
-      console.log(`Mirrored hero images ${done}/${heroes.length}`);
+      console.log(`Mirrored hero icons ${done}/${heroes.length}`);
     }
   }
-  return heroes;
+  return mirrorHeroArtworkRows(heroes);
+}
+
+async function writeHeroArtExport(directory, heroes) {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const artDirectory = `${directory}/hero-art`;
+  await mkdir(artDirectory, { recursive: true });
+  let done = 0;
+  for (let start = 0; start < heroes.length; start += concurrency) {
+    const group = heroes.slice(start, start + concurrency);
+    await Promise.all(group.map(async (hero) => {
+      if (hero.image_url) {
+        const body = await transformHeroArtwork(hero.image_url);
+        await writeFile(`${artDirectory}/${hero.code}.webp`, body);
+      }
+      done += 1;
+      if (done % 25 === 0 || done === heroes.length) {
+        console.log(`Exported hero artwork ${done}/${heroes.length}`);
+      }
+    }));
+  }
+  const manifest = heroes.map((hero) => ({
+    code: hero.code,
+    name: hero.name,
+    source_url: hero.image_url,
+    image_path: hero.image_url ? `hero-art/${hero.code}.webp` : null,
+  }));
+  await writeFile(`${directory}/hero_art.json`, JSON.stringify(manifest, null, 2));
 }
 
 async function mirrorSkillImages(skills) {
@@ -1288,6 +1447,33 @@ if (requestedHeroCodes.size) {
   console.log(`Filtering sync to hero codes: ${[...requestedHeroCodes].join(", ")}`);
 }
 
+if (heroArtOnly) {
+  console.log(`Starting hero-art-only sync for ${fribbelsHeroes.length} heroes...`);
+  const codes = fribbelsHeroes.map(({ code }) => code);
+  const sources = await heroArtSources(codes);
+  if (exportDir) {
+    const exportRows = fribbelsHeroes.map(({ hero, code }) => ({
+      code,
+      name: hero.name,
+      image_url: sources.get(code)?.sourceUrl || null,
+    }));
+    await writeHeroArtExport(exportDir, exportRows);
+  } else {
+    const requestedCodes = new Set(codes);
+    const rows = (await loadRestRows("hero_catalog"))
+      .filter((hero) => requestedCodes.has(hero.code));
+    assignHeroArtSources(rows, sources);
+    await mirrorHeroArtworkRows(rows);
+    rows.forEach((hero) => {
+      hero.source_updated_at = syncedAt;
+      hero.updated_at = syncedAt;
+    });
+    await upsert("hero_catalog", rows, "code");
+  }
+  console.log(`Hero artwork sync completed: ${sources.size}/${fribbelsHeroes.length} sources`);
+  process.exit(0);
+}
+
 if (growthOnly) {
   console.log(`Starting growth-only sync for ${fribbelsHeroes.length} heroes...`);
   const growthRows = await fetchGrowthRows(fribbelsHeroes, syncedAt);
@@ -1308,6 +1494,10 @@ if ([...details.values()].every((detail) => !detail?.skills?.length)) {
 const heroRows = fribbelsHeroes
   .map(({ hero, code }) => toHeroRow({ ...hero, code }, syncedAt, details.get(code)))
   .filter(Boolean);
+if (!skillsOnly) {
+  const sources = await heroArtSources(heroRows.map((hero) => hero.code));
+  assignHeroArtSources(heroRows, sources);
+}
 const heroes = skillsOnly ? heroRows : await mirrorHeroImages(heroRows);
 const rawSkills = await mirrorSkillImages(skillRows(fribbelsHeroes, details, syncedAt));
 const { skills, effects } = normalizeSkillEffects(rawSkills, syncedAt);

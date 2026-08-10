@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 private const val SUPABASE_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1_000L
-private const val SUPABASE_CACHE_VERSION = 6 // 6: add hero awakening and imprint data
+private const val SUPABASE_CACHE_VERSION = 7 // 7: refresh mirrored full-body hero artwork
 private const val SUPABASE_PAGE_SIZE = 500
 
 /**
