@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -39,6 +40,11 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberTooltipState
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.TooltipBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -57,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import com.e7orbit.R
 import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Hero
+import com.e7orbit.data.E7StatusEffect
 import com.e7orbit.data.E7HeroStats
 import com.e7orbit.data.E7HeroSkill
 import com.e7orbit.data.HeroRtaAnalysis
@@ -734,6 +741,7 @@ private fun HeroSkills(skills: List<E7HeroSkill>) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HeroSkillCard(skill: E7HeroSkill) {
     SectionSurface {
@@ -748,16 +756,32 @@ private fun HeroSkillCard(skill: E7HeroSkill) {
                     contentScale = ContentScale.Fit,
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = skill.name.ifBlank { "技能 ${skill.slot}" },
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = skill.name.ifBlank { "技能 ${skill.slot}" },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        if (skill.isPassive) {
+                            Spacer(Modifier.width(6.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            ) {
+                                Text(
+                                    "被动",
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    }
                     val meta = listOfNotNull(
                         skill.cooldown?.takeIf { it > 0 }?.let { "冷却 $it 回合" },
                         skill.soulGain?.takeIf { it > 0 }?.let { "获得灵魂 $it" },
                         skill.soulRequirement?.takeIf { it > 0 }?.let { "灵魂燃烧 $it" },
-                        skill.isPassive.takeIf { it }?.let { "被动" },
                     ).joinToString(" · ")
                     if (meta.isNotBlank()) {
                         Spacer(Modifier.height(3.dp))
@@ -766,6 +790,37 @@ private fun HeroSkillCard(skill: E7HeroSkill) {
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+                val statusEffects = skill.buffs + skill.debuffs
+                if (statusEffects.isNotEmpty()) {
+                    Spacer(Modifier.width(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        statusEffects.forEach { effect ->
+                            TooltipBox(
+                                positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+                                tooltip = {
+                                    PlainTooltip {
+                                        Column {
+                                            Text(effect.label, fontWeight = FontWeight.SemiBold)
+                                            effect.description?.takeIf(String::isNotBlank)?.let { desc ->
+                                                Text(desc, style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+                                    }
+                                },
+                                state = rememberTooltipState(),
+                            ) {
+                                RemoteImage(
+                                    url = effect.iconUrl,
+                                    contentDescription = effect.label,
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clip(MaterialTheme.shapes.small),
+                                    contentScale = ContentScale.Fit,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -799,13 +854,14 @@ private fun HeroSkillCard(skill: E7HeroSkill) {
                     )
                 }
             }
-            if (skill.attackRate != null || skill.pow != null) {
+            val scaling = listOfNotNull(
+                skill.attackRate?.takeIf { it > 0.0 }?.let { "攻击倍率 ${it.formatMultiplier()}" },
+                skill.pow?.takeIf { it > 0.0 }?.let { "POW ${it.formatMultiplier()}" },
+            ).joinToString(" · ")
+            if (scaling.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    listOfNotNull(
-                        skill.attackRate?.let { "攻击倍率 ${it.formatMultiplier()}" },
-                        skill.pow?.let { "POW ${it.formatMultiplier()}" },
-                    ).joinToString(" · "),
+                    scaling,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

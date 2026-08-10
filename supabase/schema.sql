@@ -44,6 +44,8 @@ create table if not exists public.hero_skills (
     can_enhance boolean not null default false,
     values jsonb not null default '[]'::jsonb,
     enhancements jsonb not null default '[]'::jsonb,
+    buffs jsonb not null default '[]'::jsonb,
+    debuffs jsonb not null default '[]'::jsonb,
     source text not null default 'epic7db',
     source_updated_at timestamptz,
     updated_at timestamptz not null default now(),

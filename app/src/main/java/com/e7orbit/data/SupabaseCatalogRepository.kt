@@ -13,9 +13,12 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 private const val SUPABASE_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1_000L
-private const val SUPABASE_CACHE_VERSION = 3
+private const val SUPABASE_CACHE_VERSION = 4 // 4: add skill buffs/debuffs
 private const val SUPABASE_PAGE_SIZE = 500
 
 /**
@@ -50,6 +53,7 @@ class SupabaseCatalogRepository(
         cacheFile.parentFile?.mkdirs()
         val cacheIsFresh = cacheFile.exists() &&
             System.currentTimeMillis() - cacheFile.lastModified() < SUPABASE_CACHE_MAX_AGE_MS
+        // readCache() enforces the cache version; a version bump forces a refetch.
         if (!forceRefresh && cacheIsFresh) {
             readCache()?.let { return@withContext it }
         }
@@ -162,6 +166,8 @@ internal data class SupabaseSkillRow(
     @SerialName("can_enhance") val canEnhance: Boolean = false,
     val values: List<JsonElement> = emptyList(),
     val enhancements: List<String> = emptyList(),
+    val buffs: List<JsonElement> = emptyList(),
+    val debuffs: List<JsonElement> = emptyList(),
 )
 
 internal fun SupabaseHeroRow.toStats(fallback: E7HeroStats? = null): E7HeroStats? {
@@ -206,4 +212,19 @@ internal fun SupabaseSkillRow.toDomain(): E7HeroSkill = E7HeroSkill(
     canEnhance = canEnhance,
     values = values,
     enhancements = enhancements,
+    buffs = buffs.mapNotNull(::parseStatusEffect),
+    debuffs = debuffs.mapNotNull(::parseStatusEffect),
 )
+
+private fun parseStatusEffect(element: JsonElement): E7StatusEffect? {
+    val obj = element as? JsonObject ?: return null
+    val slug = obj["slug"]?.jsonPrimitive?.contentOrNull ?: return null
+    val label = obj["label"]?.jsonPrimitive?.contentOrNull ?: slug
+    return E7StatusEffect(
+        slug = slug,
+        label = label,
+        description = obj["description"]?.jsonPrimitive?.contentOrNull,
+        iconUrl = obj["icon_url"]?.jsonPrimitive?.contentOrNull
+            ?: obj["iconUrl"]?.jsonPrimitive?.contentOrNull,
+    )
+}

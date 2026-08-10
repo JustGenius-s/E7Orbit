@@ -33,6 +33,16 @@ data class E7HeroSkill(
     val canEnhance: Boolean = false,
     val values: List<JsonElement> = emptyList(),
     val enhancements: List<String> = emptyList(),
+    val buffs: List<E7StatusEffect> = emptyList(),
+    val debuffs: List<E7StatusEffect> = emptyList(),
+)
+
+/** A buff/debuff applied by a skill. [iconUrl] points at the status effect icon. */
+data class E7StatusEffect(
+    val slug: String,
+    val label: String,
+    val description: String? = null,
+    val iconUrl: String? = null,
 )
 
 data class E7HeroAssets(

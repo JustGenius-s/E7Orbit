@@ -213,6 +213,20 @@ function parseWebSkillBlock(hero, block, index, syncedAt) {
   const soulBurnText = htmlText(soulBurn?.[1] || "");
   const soulGainValue = soulGainText.match(/([0-9]+)/)?.[1];
   const soulRequirement = soulBurnText.match(/([0-9]+)\s*souls?/i)?.[1];
+  const effectMatches = [...block.matchAll(/status_effects\/([a-z0-9\-]+)\.png"\s+alt="([^"]*)"/gi)];
+  const seenEffects = new Set();
+  const effects = [];
+  for (const match of effectMatches) {
+    const slug = match[1].toLowerCase();
+    if (seenEffects.has(slug)) continue;
+    seenEffects.add(slug);
+    effects.push({
+      slug,
+      label: htmlDecode(match[2]).trim() || slug.replace(/-/g, " "),
+      icon_url: `https://epic7db.com/images/status_effects/${slug}.png`,
+    });
+  }
+  const isPassive = /^\s*passive\s*$/i.test(cooldownText);
   const rows = {
     hero_code: hero.code,
     slot: index + 1,
@@ -220,16 +234,18 @@ function parseWebSkillBlock(hero, block, index, syncedAt) {
     icon_url: iconUrl,
     description: htmlText(description?.[1] || ""),
     enhanced_description: null,
-    cooldown: cooldownText.match(/([0-9]+)/)?.[1] ? Number(cooldownText.match(/([0-9]+)/)[1]) : 0,
+    cooldown: isPassive ? null : (cooldownText.match(/([0-9]+)/)?.[1] ? Number(cooldownText.match(/([0-9]+)/)[1]) : 0),
     soul_gain: soulGainValue ? Number(soulGainValue) : null,
     soul_requirement: soulRequirement ? Number(soulRequirement) : null,
     soul_description: soulBurn ? htmlText(soulBurn[1]) : null,
     attack_rate: null,
     pow: null,
-    is_passive: false,
+    is_passive: isPassive,
     can_enhance: block.includes("skill-upgrades"),
     values: [],
     enhancements: [...new Set(enhancements)].slice(0, 5),
+    buffs: effects,
+    debuffs: [],
     source: "epic7db-web",
     source_updated_at: syncedAt,
     updated_at: syncedAt,
@@ -249,6 +265,165 @@ function parseWebHero(hero, html, syncedAt) {
 
 function damageModifier(skill, name) {
   return skill.damageModifiers?.find((modifier) => modifier.name === name)?.value ?? null;
+}
+
+// Map gamedatabase buff/debuff codes (efct_*/stic_*) to epic7db status-effect page slugs.
+const EFFECT_SLUG_MAP = {
+  stic_att_up: "increase-attack",
+  stic_att_up2: "increase-attack-greater",
+  stic_def_up: "increase-defense",
+  stic_speed_up: "increase-speed",
+  stic_cri_up: "increase-critical-hit-chance",
+  stic_cridmg_up: "increase-critical-hit-chance",
+  stic_eff_up: "effectiveness",
+  stic_dodge_up: "evasion",
+  stic_counter: "counterattack",
+  stic_invincible: "invincible",
+  stic_immortality: "immortal",
+  stic_hide: "stealth",
+  stic_protect: "barrier",
+  stic_reflect: "reflect",
+  stic_endure: "effectiveness",
+  stic_bless: "revive",
+  stic_heal: "healing",
+  stic_debuf_impossible: "debuff-immunity",
+  stic_rcv_dmg_dn: "barrier",
+  stic_share_dmg: "escort",
+  stic_vampire: "healing",
+  efct_ex_turn: "extra-turn",
+  efct_cr_up: "increase-combat-readiness",
+  efct_cd_dn: "decrease-skill-cooldown",
+  efct_cleanse: "cleanse",
+  efct_dual_att: "dual-attack",
+  efct_buf_extn: "buff-extension",
+  efct_steal: "dispel",
+  efct_rnd_buf: "increase-attack",
+  stic_att_dn: "decrease-attack",
+  stic_def_dn: "decrease-defense",
+  stic_speed_dn: "decrease-speed",
+  stic_cri_dn: "decrease-hit-chance",
+  stic_eff_dn: "decrease-hit-chance",
+  stic_blind: "decrease-hit-chance",
+  stic_stun: "stun",
+  stic_sleep: "sleep",
+  stic_silence: "silence",
+  stic_provoke: "provoke",
+  stic_curse: "curse",
+  stic_blaze: "burn",
+  stic_blood: "bleed",
+  stic_bomb: "bomb",
+  stic_dot: "poison",
+  stic_heal_impossible: "unhealable",
+  stic_buf_impossible: "cannot-buff",
+  stic_madness: "possession",
+  stic_nail: "stigma",
+  stic_sign: "stigma",
+  efct_cr_dn: "decrease-combat-readiness",
+  efct_cd_up: "increase-skill-cooldown",
+  efct_dispel: "dispel",
+  efct_extinct: "stun",
+  efct_detonate: "detonate",
+  efct_def_pen: "penetrate",
+  efct_rnd_debuf: "decrease-attack",
+  efct_soul_dn: "decrease-combat-readiness",
+  efct_debuf_extn: "debuff-extension",
+  stic_debuf_ext: "debuff-extension",
+  efct_trans: "transfer",
+  efct_buf_reduction: "dispel",
+  stic_haki: null,
+  stic_lovely: "loveliness",
+  stic_showtime: "idol",
+  stic_sk_null: "skill-nullifier",
+};
+
+const EFFECT_META = {
+  efct_buf_extn: { label: "Buff Extension", description: "Extend buff duration by X turns" },
+  efct_buf_reduction: { label: "efct_buf_reduction", description: "" },
+  efct_cd_dn: { label: "Cooldown Reduction", description: "Decreases the cooldown of a skill" },
+  efct_cd_up: { label: "Cooldown Increase", description: "Increases the cooldown of a skill" },
+  efct_cleanse: { label: "Cleanse", description: "Removes debuff from target" },
+  efct_cr_dn: { label: "Decrease Combat Readiness", description: "Increases the time to the next turn to move" },
+  efct_cr_up: { label: "Increase Combat Readiness", description: "Decreases the time to the next turn to move" },
+  efct_debuf_extn: { label: "Debuff Extension", description: "Extend debuff duration by X turns" },
+  efct_def_pen: { label: "Penetrate Defense", description: "Ignores the target's Defense when inflicting damage" },
+  efct_detonate: { label: "Detonate", description: "Inflicts damage by activating any DoT effects inflicted on the enemy. Damage is proportional to the number of turns and number of effects" },
+  efct_dispel: { label: "Dispel", description: "Dispel buff from the target" },
+  efct_dual_att: { label: "Dual Attack", description: "Chance to attack an enemy after an ally has attacked them, unless immobilized" },
+  efct_ex_turn: { label: "Extra Turn", description: "Target will be granted an extra turn" },
+  efct_extinct: { label: "Extinction", description: "The target cannot revive when killed by this skill" },
+  efct_rnd_buf: { label: "Random Buff", description: "Target gets random buff. Can receive Increase Attack, Increase Speed, Increase Critical Hit Chance, Increase Critical Hit Damage, Increase Defense, Barrier, Increase Evasion and Debuff Immunity" },
+  efct_rnd_debuf: { label: "Random Debuff", description: "Target gets random debuff. Can receive Decrease Attack, Decrease Speed, Decrease Critical Hit Chance, Decrease Critical Hit Damage, Decrease Defense, Barrier, Decrease Evasion and Debuff Immunity" },
+  efct_soul_dn: { label: "efct_soul_dn", description: "" },
+  efct_steal: { label: "Buff Stealing", description: "Steals buff from enemy" },
+  efct_trans: { label: "Transfer", description: "Transfers debuffs from the caster to the target" },
+  stic_att_dn: { label: "Decrease Attack", description: "Decreases target's Attack" },
+  stic_att_up: { label: "Increase Attack", description: "Increases target's Attack" },
+  stic_att_up2: { label: "stic_att_up2", description: "" },
+  stic_blaze: { label: "Burn", description: "Target receives huge damage proportional to the caster's Attack at the beginning of the turn" },
+  stic_bless: { label: "Revive", description: "If the target dies, they are revived with some Health" },
+  stic_blind: { label: "Blind", description: "Decreases target's hit chance" },
+  stic_blood: { label: "Bleed", description: "Deals damage over time, based off caster's attack" },
+  stic_bomb: { label: "Bomb", description: "At the end of the debuff duration, the target receives damage proportional to the caster's Attack and becomes unable to move for 1 turn. Debuff duration cannot be extended or decreased" },
+  stic_buf_impossible: { label: "Anti Buff", description: "The target is unable to be buffed" },
+  stic_counter: { label: "Counter Attack", description: "Caster will counter attack upon getting hit" },
+  stic_cri_res_up: { label: "Increase Critical Hit Resistance", description: "Decreases the chance of target suffering a Critical Hit by 50%" },
+  stic_cri_up: { label: "Increase Critical Hit Chance", description: "Increases target's Critical Hit chance by 50%" },
+  stic_cridmg_up: { label: "Increase Critical Hit Damage", description: "Increases the target's Critical Hit Damage by 50%" },
+  stic_curse: { label: "stic_curse", description: "" },
+  stic_debuf_impossible: { label: "Debuff Immunity", description: "The target is unable to be debuffed" },
+  stic_def_dn: { label: "Decrease Defense", description: "Decreases target's Defense" },
+  stic_def_up: { label: "Increase Defense", description: "Increases target's Defense" },
+  stic_dodge_up: { label: "Evasion", description: "Increase evasion chance of the target" },
+  stic_dot: { label: "Poison", description: "Targets suffers damage proportional to max Health at the beginning of the turn" },
+  stic_endure: { label: "Skill Nullifier", description: "Negates damage from skills" },
+  stic_haki: { label: "Vigor", description: "Increases Attack and Defense. This buff cannot be dispelled" },
+  stic_heal: { label: "Continuous Heal", description: "Recovers the target's Health poroportional to max Health at the beginning of the turn" },
+  stic_heal_impossible: { label: "Unhealable", description: "Makes the target unable to be healed" },
+  stic_hide: { label: "Stealth", description: "If there are allies, caster will not be target of attack. Damage received from AoE attacks is decreased. Effect is removed when attacked" },
+  stic_immortality: { label: "Immortality", description: "The target cannot be killed during a certain number of turns" },
+  stic_invincible: { label: "Invincible", description: "Neutralizes all of the damage when attacked" },
+  stic_lovely: { label: "Loveliness", description: "'Server me already, meow!' Cannot be dispelled" },
+  stic_madness: { label: "Enrage", description: "Increases Attack and Speed by 10%" },
+  stic_nail: { label: "Magic Nail", description: "When attacked, damage is received proportional to max Health, with a fixed chance to be stunned for 1 turn" },
+  stic_protect: { label: "Barrier", description: "Neutralizes some of the damage taken when attacked" },
+  stic_provoke: { label: "Provoke", description: "On the target's turn, they will attack the enemy who provoked them with basic skill" },
+  stic_rcv_dmg_dn: { label: "stic_rcv_dmg_dn", description: "" },
+  stic_reflect: { label: "Reflect", description: "Reflects some of the damage taken when attacked. Reflected damage can't be higher than caster's max Health" },
+  stic_share_dmg: { label: "stic_share_dmg", description: "" },
+  stic_showtime: { label: "Idol", description: "'My live show won\u2019t stop until my turn is over!' Cannot be dispelled" },
+  stic_sign: { label: "Target", description: "Increases damage taken by the target, while decreasing Evasion Chance" },
+  stic_silence: { label: "Silence", description: "The target cannot use skills that require cooldowns" },
+  stic_sk_null: { label: "stic_sk_null", description: "" },
+  stic_sleep: { label: "Magic Nail", description: "The target becomes unable to act. Received damage counts as a Critical Hit and effect is dispelled if attacked" },
+  stic_speed_dn: { label: "Decrease Speed", description: "Decreases target's Speed" },
+  stic_speed_up: { label: "Increase Speed", description: "Increases target's Speed" },
+  stic_stun: { label: "Stun", description: "The target becomes unable to act" },
+  stic_vampire: { label: "Vampiric Touch", description: "Recovers 10% of the attacker\u2019s Health when attacking the target" },
+};
+
+function statusEffectIconUrl(slug) {
+  return slug ? `https://epic7db.com/images/status_effects/${slug}.png` : null;
+}
+
+function toStatusEffects(codes) {
+  if (!Array.isArray(codes)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const code of codes) {
+    if (typeof code !== "string" || !code) continue;
+    const slug = EFFECT_SLUG_MAP[code] ?? null;
+    const meta = EFFECT_META[code] || {};
+    const key = slug || code;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({
+      slug: slug || code,
+      label: meta.label || code.replace(/^(efct_|stic_)/, "").replace(/_/g, " "),
+      description: meta.description || null,
+      icon_url: slug ? `https://epic7db.com/images/status_effects/${slug}.png` : null,
+    });
+  }
+  return result;
 }
 
 function enhancementTexts(skill) {
@@ -287,6 +462,8 @@ function toSkillRow(hero, skill, index, syncedAt) {
     can_enhance: Boolean(skill.can_enhance ?? skill.canEnhance ?? skill.awakenUpgrade),
     values,
     enhancements,
+    buffs: toStatusEffects(skill.buffs),
+    debuffs: toStatusEffects(skill.debuffs),
     source: "epic7db",
     source_updated_at: syncedAt,
     updated_at: syncedAt,
@@ -714,7 +891,34 @@ async function mirrorSkillImages(skills) {
       console.log(`Mirrored skill images ${done}/${skills.length}`);
     }
   }
+  await mirrorStatusEffectImages(skills);
   return skills;
+}
+
+// Buff/debuff icons are shared across heroes; mirror each unique slug once.
+async function mirrorStatusEffectImages(skills) {
+  const allEffects = skills.flatMap((skill) => [...(skill.buffs || []), ...(skill.debuffs || [])]);
+  const unique = new Map();
+  for (const effect of allEffects) {
+    if (effect?.slug && effect.icon_url && !unique.has(effect.slug)) {
+      unique.set(effect.slug, effect.icon_url);
+    }
+  }
+  if (!unique.size) return;
+  console.log(`Mirroring ${unique.size} shared status-effect icons...`);
+  const mirrored = new Map();
+  for (const [slug, url] of unique) {
+    mirrored.set(slug, await mirrorImage(url, `status-effects/${slug}.png`));
+  }
+  for (const skill of skills) {
+    for (const listName of ["buffs", "debuffs"]) {
+      for (const effect of skill[listName] || []) {
+        if (effect?.slug && mirrored.has(effect.slug)) {
+          effect.icon_url = mirrored.get(effect.slug);
+        }
+      }
+    }
+  }
 }
 
 async function mirrorArtifactImages(artifacts) {
