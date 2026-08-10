@@ -631,16 +631,6 @@ private fun HeroGrowthSection(hero: E7Hero) {
                         }
                     }
                 }
-                if (awakening.resources.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        awakening.resources.joinToString(" · ") { resource ->
-                            "${resource.label} ×${resource.quantity}"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
                 val before = awakening.skillBefore?.cleanSkillText()?.takeIf(String::isNotBlank)
                 val after = awakening.skillAfter?.cleanSkillText()?.takeIf(String::isNotBlank)
                 if (before != null || after != null) {
