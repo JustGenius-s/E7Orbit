@@ -6,6 +6,10 @@ const supabaseUrl = (process.env.SUPABASE_URL || "https://biayslzufpixsyuitjus.s
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const fribbelsUrl = process.env.FRIBBELS_HERO_URL ||
   "https://e7-optimizer-game-data.s3-accelerate.amazonaws.com/herodata.json";
+const fribbelsArtifactUrl = process.env.FRIBBELS_ARTIFACT_URL ||
+  "https://e7-optimizer-game-data.s3-accelerate.amazonaws.com/artifactdata.json";
+const epicSevenDbArtifactsWeb = (process.env.EPICSEVENDB_ARTIFACTS_WEB ||
+  "https://epic7db.com/artifacts").replace(/\/$/, "");
 const epicSevenDbUrl = (process.env.EPICSEVENDB_API_URL || "https://api.epicsevendb.com").replace(/\/$/, "");
 const epicSevenDbGitHubRaw = (process.env.EPICSEVENDB_GITHUB_RAW ||
   "https://raw.githubusercontent.com/kmalone86/gamedatabase/master/src/hero").replace(/\/$/, "");
@@ -15,6 +19,8 @@ const skillSource = process.env.EPICSEVENDB_SOURCE || "auto";
 const batchSize = Number(process.env.SYNC_BATCH_SIZE || 50);
 const concurrency = Number(process.env.SYNC_CONCURRENCY || 6);
 const skillsOnly = process.argv.includes("--skills-only");
+const artifactsOnly = process.argv.includes("--artifacts-only");
+const skipArtifacts = process.argv.includes("--skip-artifacts");
 const exportDirArgument = process.argv.find((argument) => argument.startsWith("--export-dir="));
 const exportDir = exportDirArgument?.slice("--export-dir=".length) || null;
 const heroCodesArgument = process.argv.find((argument) => argument.startsWith("--hero-codes="));
@@ -72,6 +78,16 @@ function firstValue(object, ...keys) {
 
 function heroCode(hero) {
   return textOrNull(hero.code) || textOrNull(hero._id) || textOrNull(hero.id);
+}
+
+function slugify(value) {
+  return htmlDecode(String(value))
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function heroStats(hero) {
@@ -395,12 +411,189 @@ function skillRows(heroes, details, syncedAt) {
   return rows;
 }
 
-async function writeExport(directory, heroes, skills) {
+async function writeExport(directory, heroes, skills, artifacts = []) {
   const { mkdir, writeFile } = await import("node:fs/promises");
   await mkdir(directory, { recursive: true });
   await writeFile(`${directory}/hero_catalog.json`, JSON.stringify(heroes, null, 2));
   await writeFile(`${directory}/hero_skills.json`, JSON.stringify(skills, null, 2));
-  console.log(`Exported ${heroes.length} heroes and ${skills.length} skills to ${directory}`);
+  await writeFile(`${directory}/artifact_catalog.json`, JSON.stringify(artifacts, null, 2));
+  console.log(`Exported ${heroes.length} heroes, ${skills.length} skills and ${artifacts.length} artifacts to ${directory}`);
+}
+
+let epicSevenDbArtifactSlugsPromise = null;
+
+async function epicSevenDbArtifactSlugs() {
+  if (!epicSevenDbArtifactSlugsPromise) {
+    epicSevenDbArtifactSlugsPromise = fetchText(epicSevenDbArtifactsWeb)
+      .then((html) => {
+        const slugs = new Map();
+        const cards = html.matchAll(
+          /<li class="artifact"[^>]*\sdata-name="([^"]+)"[^>]*>[\s\S]*?href="https:\/\/epic7db\.com\/artifacts\/([^"]+)"/gi,
+        );
+        for (const match of cards) {
+          slugs.set(normalizedHeroName(match[1]), match[2]);
+        }
+        if (!slugs.size) throw new Error("Epic7DB artifact list did not contain any links");
+        console.log(`Loaded ${slugs.size} Epic7DB artifact slugs`);
+        return slugs;
+      })
+      .catch((error) => {
+        console.warn(`Epic7DB artifact slug list unavailable (${error.message})`);
+        return [];
+      });
+  }
+  return epicSevenDbArtifactSlugsPromise;
+}
+
+function parseArtifactDetailPage(html, slug, fribbels, syncedAt) {
+  const nameMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  const name = nameMatch ? htmlText(nameMatch[1]) : null;
+  const loreMatch = html.match(/<h1[^>]*>[\s\S]*?<\/h1>\s*<p>([\s\S]*?)<\/p>/i);
+  const lore = loreMatch ? htmlText(loreMatch[1]) : null;
+
+  const baseSection = html.match(/<div class="base">[\s\S]*?<p>([\s\S]*?)<\/p>/i);
+  const maxSection = html.match(/<div class="max">[\s\S]*?<p>([\s\S]*?)<\/p>/i);
+  const description = baseSection ? htmlText(baseSection[1]) : null;
+  const maxDescription = maxSection ? htmlText(maxSection[1]) : null;
+
+  const statMatches = [...html.matchAll(/<div class="(?:attack|health)">[\s\S]*?<p>([0-9]+)<\/p>/gi)];
+  const baseStats = statMatches.length >= 2
+    ? { attack: Number(statMatches[0][1]), health: Number(statMatches[1][1]) }
+    : { attack: null, health: null };
+  const maxStats = statMatches.length >= 4
+    ? { attack: Number(statMatches[2][1]), health: Number(statMatches[3][1]) }
+    : { attack: null, health: null };
+
+  const rarityMatch = html.match(/data-stars="([0-9]+)"/i) || html.match(/([0-9]+)\s*stars?/i);
+  const rarity = rarityMatch ? Number(rarityMatch[1]) : integerOrNull(fribbels?.rarity);
+
+  const imageUrl = `https://epic7db.com/images/artifacts/${slug}.webp`;
+
+  const role = textOrNull(fribbels?.role) || "";
+
+  return {
+    code: textOrNull(fribbels?.code) || slug,
+    name: name || textOrNull(fribbels?.name) || slug,
+    rarity,
+    role,
+    description,
+    max_description: maxDescription,
+    lore,
+    image_url: imageUrl,
+    icon_url: imageUrl,
+    stats_attack: maxStats.attack ?? baseStats.attack ?? integerOrNull(fribbels?.stats?.attack),
+    stats_health: maxStats.health ?? baseStats.health ?? integerOrNull(fribbels?.stats?.health),
+    stats_defense: integerOrNull(fribbels?.stats?.defense),
+    source: "epic7db-web",
+    source_updated_at: syncedAt,
+    updated_at: syncedAt,
+  };
+}
+
+async function fetchArtifactDetail(slug, fribbels, syncedAt) {
+  const html = await fetchText(`${epicSevenDbArtifactsWeb}/${encodeURIComponent(slug)}`);
+  return parseArtifactDetailPage(html, slug, fribbels, syncedAt);
+}
+
+async function headOk(url) {
+  try {
+    const response = await fetch(url, {
+      method: "HEAD",
+      headers: { "User-Agent": "E7Orbit-hero-catalog-sync/1.0" },
+    });
+    return response.ok;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function probeArtifactImageUrl(name) {
+  const base = slugify(name);
+  if (!base) return null;
+  const candidates = [
+    base,
+    base.replace(/-s-/g, "s-"), // "butterfly-s-baptism" -> "butterflys-baptism"
+  ];
+  for (const slug of [...new Set(candidates)]) {
+    const url = `https://epic7db.com/images/artifacts/${slug}.webp`;
+    if (await headOk(url)) return url;
+  }
+  return null;
+}
+
+async function artifactRowFallback(code, name, fribbels, syncedAt) {
+  const imageUrl = await probeArtifactImageUrl(name);
+  return {
+    code,
+    name,
+    rarity: integerOrNull(fribbels?.rarity),
+    role: textOrNull(fribbels?.role) || "",
+    description: null,
+    max_description: null,
+    lore: null,
+    image_url: imageUrl,
+    icon_url: imageUrl,
+    stats_attack: integerOrNull(fribbels?.stats?.attack),
+    stats_health: integerOrNull(fribbels?.stats?.health),
+    stats_defense: integerOrNull(fribbels?.stats?.defense),
+    source: "fribbels-fallback",
+    source_updated_at: syncedAt,
+    updated_at: syncedAt,
+  };
+}
+
+async function syncArtifacts(syncedAt) {
+  const fribbelsArtifacts = await fetchJson(fribbelsArtifactUrl);
+  const fribbelsList = Object.values(fribbelsArtifacts)
+    .map((artifact) => ({ artifact, code: textOrNull(artifact.code) }))
+    .filter(({ code }) => code);
+  const fribbelsByCode = new Map(fribbelsList.map(({ artifact, code }) => [code, artifact]));
+
+  const slugByName = await epicSevenDbArtifactSlugs();
+  const slugByCode = new Map();
+  for (const { artifact, code } of fribbelsList) {
+    const slug = slugByName.get(normalizedHeroName(artifact.name || "")) ||
+      slugify(artifact.name || code);
+    if (slug) slugByCode.set(code, slug);
+  }
+
+  const artifacts = [];
+  let completed = 0;
+  const entries = [...slugByCode.entries()];
+  for (let start = 0; start < entries.length; start += concurrency) {
+    const group = entries.slice(start, start + concurrency);
+    const results = await Promise.all(group.map(async ([code, slug]) => {
+      const fribbels = fribbelsByCode.get(code);
+      try {
+        return await fetchArtifactDetail(slug, fribbels, syncedAt);
+      } catch (error) {
+        console.warn(`Artifact ${code} (${slug}) failed: ${error.message.split(":")[0]}`);
+        return await artifactRowFallback(code, textOrNull(fribbels?.name) || slug, fribbels, syncedAt);
+      } finally {
+        completed += 1;
+        if (completed % 25 === 0 || completed === entries.length) {
+          console.log(`Fetched artifact data for ${completed}/${entries.length} artifacts`);
+        }
+      }
+    }));
+    results.filter(Boolean).forEach((artifact) => artifacts.push(artifact));
+  }
+
+  const incomplete = artifacts.filter((artifact) => !artifact.description);
+  const missingImages = artifacts.filter((artifact) => !artifact.image_url);
+  if (incomplete.length || missingImages.length) {
+    console.log("\n--- Artifact sync summary ---");
+    if (incomplete.length) {
+      console.log(`Missing description (${incomplete.length}):`);
+      incomplete.forEach((artifact) => console.log(`  ${artifact.code}  ${artifact.name}`));
+    }
+    if (missingImages.length) {
+      console.log(`Missing image (${missingImages.length}):`);
+      missingImages.forEach((artifact) => console.log(`  ${artifact.code}  ${artifact.name}`));
+    }
+    console.log("Re-run --artifacts-only after Epic7DB adds these artifacts to fill them in.\n");
+  }
+  return artifacts;
 }
 
 async function upsert(table, rows, conflictColumns) {
@@ -428,6 +621,22 @@ async function upsert(table, rows, conflictColumns) {
 }
 
 const syncedAt = new Date().toISOString();
+
+if (artifactsOnly) {
+  console.log("Starting artifact-only sync...");
+  const artifacts = await syncArtifacts(syncedAt);
+
+  if (exportDir) {
+    await writeExport(exportDir, [], [], artifacts);
+  }
+  if (!exportDir && artifacts.length) {
+    console.log(`Preparing ${artifacts.length} artifact rows`);
+    await upsert("artifact_catalog", artifacts, "code");
+  }
+  console.log(`Artifact catalog sync completed: ${artifacts.length} artifacts`);
+  process.exit(0);
+}
+
 const fribbels = await fetchJson(fribbelsUrl);
 const allFribbelsHeroes = Object.values(fribbels)
   .map((hero) => ({ hero, code: heroCode(hero) }))
@@ -453,7 +662,7 @@ const heroes = fribbelsHeroes
   .filter(Boolean);
 const skills = skillRows(fribbelsHeroes, details, syncedAt);
 if (exportDir) {
-  await writeExport(exportDir, heroes, skills);
+  await writeExport(exportDir, heroes, skills, []);
 }
 if (!exportDir && !skillsOnly) {
   console.log(`Preparing ${heroes.length} hero rows`);
@@ -465,6 +674,21 @@ if (skills.length && !exportDir) {
   await upsert("hero_skills", skills, "hero_code,slot");
 } else if (!skills.length) {
   console.warn("No skill rows were returned; hero_catalog was not changed in skills-only mode.");
+}
+
+if (!skipArtifacts && !skillsOnly && !exportDir) {
+  try {
+    console.log("Starting artifact sync (inline)...");
+    const artifacts = await syncArtifacts(syncedAt);
+
+    if (artifacts.length) {
+      console.log(`Preparing ${artifacts.length} artifact rows`);
+      await upsert("artifact_catalog", artifacts, "code");
+    }
+    console.log(`Artifact sync completed: ${artifacts.length} artifacts`);
+  } catch (error) {
+    console.warn(`Artifact sync failed (non-fatal): ${error.message}`);
+  }
 }
 
 console.log(`Hero catalog sync completed: ${heroes.length} heroes, ${skills.length} skills`);

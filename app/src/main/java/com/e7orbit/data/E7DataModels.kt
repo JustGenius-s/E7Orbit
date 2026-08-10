@@ -56,12 +56,16 @@ data class E7HeroStats(
 data class E7Artifact(
     val code: String,
     val name: String,
-    val rarity: String?,
+    val rarity: Int?,
     val role: String?,
     val attack: Int?,
     val health: Int?,
     val defense: Int?,
     val description: String?,
+    val maxDescription: String? = null,
+    val lore: String? = null,
+    val imageUrl: String? = null,
+    val iconUrl: String? = null,
 )
 
 enum class E7DataSource {

@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 private const val SUPABASE_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1_000L
-private const val SUPABASE_CACHE_VERSION = 2
+private const val SUPABASE_CACHE_VERSION = 3
 private const val SUPABASE_PAGE_SIZE = 500
 
 /**
@@ -59,6 +59,7 @@ class SupabaseCatalogRepository(
                 cacheVersion = SUPABASE_CACHE_VERSION,
                 heroes = loadAllRows("hero_catalog", listOf("code")),
                 skills = loadAllRows("hero_skills", listOf("hero_code", "slot")),
+                artifacts = loadAllRows("artifact_catalog", listOf("code")),
             )
             cacheFile.writeText(json.encodeToString(payload))
             payload
@@ -101,6 +102,23 @@ internal data class SupabaseCatalogPayload(
     val cacheVersion: Int = 0,
     val heroes: List<SupabaseHeroRow> = emptyList(),
     val skills: List<SupabaseSkillRow> = emptyList(),
+    val artifacts: List<SupabaseArtifactRow> = emptyList(),
+)
+
+@Serializable
+internal data class SupabaseArtifactRow(
+    val code: String = "",
+    val name: String = "",
+    val rarity: Int? = null,
+    val role: String = "",
+    val description: String? = null,
+    @SerialName("max_description") val maxDescription: String? = null,
+    val lore: String? = null,
+    @SerialName("image_url") val imageUrl: String? = null,
+    @SerialName("icon_url") val iconUrl: String? = null,
+    @SerialName("stats_attack") val attack: Int? = null,
+    @SerialName("stats_health") val health: Int? = null,
+    @SerialName("stats_defense") val defense: Int? = null,
 )
 
 @Serializable

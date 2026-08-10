@@ -82,7 +82,7 @@ class E7DataRepository(
         val heroes = mergeHeroes(official, fribbelsHeroes, maintainedCatalog)
         E7DataSnapshot(
             heroes = heroes,
-            artifacts = fribbelsArtifacts?.let(::parseArtifacts).orEmpty(),
+            artifacts = mergeArtifacts(fribbelsArtifacts, maintainedCatalog),
             fetchedAtEpochMs = System.currentTimeMillis(),
         )
     }
@@ -311,12 +311,51 @@ class E7DataRepository(
             E7Artifact(
                 code = objectValue.stringValue("code", "artifactCode", "id") ?: key,
                 name = name,
-                rarity = objectValue.stringValue("rarity", "grade", "maxLevel"),
+                rarity = objectValue.intValue("rarity", "grade", "maxLevel"),
                 role = objectValue.stringValue("role", "job", "job_cd"),
                 attack = stats?.intValue("attack", "atk"),
                 health = stats?.intValue("health", "hp"),
                 defense = stats?.intValue("defense", "def"),
                 description = objectValue.stringValue("description", "desc", "skillDesc"),
+            )
+        }
+    }
+
+    private fun mergeArtifacts(
+        fribbelsPayload: String?,
+        maintainedCatalog: SupabaseCatalog?,
+    ): List<E7Artifact> {
+        val fribbelsArtifacts = fribbelsPayload?.let(::parseArtifacts).orEmpty()
+        val maintainedArtifacts = maintainedCatalog?.artifacts.orEmpty()
+        val allCodes = linkedSetOf<String>().apply {
+            fribbelsArtifacts.forEach { add(it.code) }
+            maintainedArtifacts.forEach { add(it.code) }
+        }.filter(String::isNotBlank)
+
+        return allCodes.mapNotNull { code ->
+            val fribbels = fribbelsArtifacts.firstOrNull { it.code == code }
+            val maintained = maintainedArtifacts.firstOrNull { it.code == code }
+                ?: fribbels?.let { candidate ->
+                    maintainedArtifacts.firstOrNull {
+                        it.name.equals(candidate.name, ignoreCase = true)
+                    }
+                }
+            val name = maintained?.name?.takeIf(String::isNotBlank)
+                ?: fribbels?.name?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            E7Artifact(
+                code = code,
+                name = name,
+                rarity = maintained?.rarity ?: fribbels?.rarity,
+                role = maintained?.role?.takeIf(String::isNotBlank) ?: fribbels?.role,
+                attack = maintained?.attack ?: fribbels?.attack,
+                health = maintained?.health ?: fribbels?.health,
+                defense = maintained?.defense ?: fribbels?.defense,
+                description = maintained?.description ?: fribbels?.description,
+                maxDescription = maintained?.maxDescription,
+                lore = maintained?.lore,
+                imageUrl = maintained?.imageUrl ?: maintained?.iconUrl,
+                iconUrl = maintained?.iconUrl ?: maintained?.imageUrl,
             )
         }.sortedBy { it.name.lowercase() }
     }

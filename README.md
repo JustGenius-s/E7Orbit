@@ -52,6 +52,7 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 
 - `hero_catalog`：英雄身份、图片、六星满觉基础属性和简介
 - `hero_skills`：技能图标、名称、描述、冷却、灵魂效果、倍率和强化列表
+- `artifact_catalog`：神器立绘、满级属性、基础/满级效果描述和背景故事
 
 没有配置 Supabase，或云端请求失败时，应用仍使用本地缓存以及官方 Stove/Fribbels 公开数据。云端数据成功读取后会缓存 7 天，适合社区源短暂失效时继续使用。
 
@@ -66,7 +67,17 @@ $env:SUPABASE_SERVICE_ROLE_KEY = "你的 service-role key"
 node .\tools\sync-hero-catalog.mjs
 ```
 
+脚本会依次同步英雄、技能和神器。神器数据来自 Fribbels（属性/职业）与 Epic7DB 网页（立绘、基础/满级效果描述、背景故事），以神器编码幂等 upsert 到 `artifact_catalog`。只同步神器可用 `--artifacts-only`，跳过神器可用 `--skip-artifacts`。可用环境变量覆盖默认值：`FRIBBELS_ARTIFACT_URL`、`EPICSEVENDB_ARTIFACTS_WEB`。
+
 脚本从 Fribbels 获取基础属性，并从 EpicSevenDB 获取技能资料，然后以英雄编码幂等 upsert 到 Supabase。默认会先尝试 API；如果 API 因网络或 TLS 不可用，会回退到 Epic7DB 网页。可用环境变量覆盖默认值：`SUPABASE_URL`、`FRIBBELS_HERO_URL`、`EPICSEVENDB_API_URL`、`EPICSEVENDB_WEB`、`EPICSEVENDB_SOURCE`、`EPICSEVENDB_LANGUAGE`、`SYNC_BATCH_SIZE`、`SYNC_CONCURRENCY`。
+
+如果只同步神器：
+
+```powershell
+$env:SUPABASE_SERVICE_ROLE_KEY = "你的 service-role key"
+node .\tools\sync-hero-catalog.mjs --artifacts-only
+Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
+```
 
 如果只需要补齐已经成功上传的技能表，使用网页源并跳过英雄表：
 

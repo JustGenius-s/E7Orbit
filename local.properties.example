@@ -4,3 +4,4 @@ sdk.dir=/path/to/Android/Sdk
 # Do not put SUPABASE_SERVICE_ROLE_KEY here.
 supabase.url=https://biayslzufpixsyuitjus.supabase.co
 supabase.anonKey=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
+# Example: sb_publishable_xxx (Settings -> API -> publishable key)

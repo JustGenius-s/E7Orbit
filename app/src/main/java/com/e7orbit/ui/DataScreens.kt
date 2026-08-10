@@ -241,13 +241,6 @@ private fun ColumnScope.HeroList(
                             rarity = hero.rarity,
                             iconSize = 18.dp,
                         )
-                        Text(
-                            hero.code,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
                     }
                 },
                 leadingContent = {
@@ -316,26 +309,38 @@ private fun ColumnScope.ArtifactList(
                     Text(artifact.name, fontWeight = FontWeight.SemiBold)
                 },
                 supportingContent = {
-                    Text(
-                        listOfNotNull(artifact.rarity, artifact.role?.roleLabel(), artifact.code)
-                            .joinToString(" · "),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        HeroIdentityIcons(
+                            attribute = null,
+                            role = artifact.role,
+                            rarity = artifact.rarity,
+                            iconSize = 18.dp,
+                        )
+                    }
                 },
                 leadingContent = {
-                    Surface(
-                        modifier = Modifier.size(48.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                artifact.name.take(1),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
+                    if (artifact.iconUrl != null) {
+                        RemoteImage(
+                            url = artifact.iconUrl,
+                            contentDescription = artifact.name,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(MaterialTheme.shapes.medium),
+                        )
+                    } else {
+                        Surface(
+                            modifier = Modifier.size(48.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    artifact.name.take(1),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
                         }
                     }
                 },
@@ -491,12 +496,6 @@ internal fun HeroDetailScreen(
                             role = hero.role,
                             rarity = hero.rarity,
                             iconSize = 24.dp,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            hero.code,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         hero.description?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
                             Spacer(Modifier.height(8.dp))
@@ -887,32 +886,53 @@ internal fun ArtifactDetailScreen(
                 color = MaterialTheme.colorScheme.tertiaryContainer,
                 contentPadding = PaddingValues(20.dp),
             ) {
-                Surface(
-                    modifier = Modifier.size(72.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.tertiary,
-                    contentColor = MaterialTheme.colorScheme.onTertiary,
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    if (artifact.imageUrl != null) {
+                        RemoteImage(
+                            url = artifact.imageUrl,
+                            contentDescription = artifact.name,
+                            modifier = Modifier
+                                .width(72.dp)
+                                .height(96.dp)
+                                .clip(MaterialTheme.shapes.medium),
+                            contentScale = ContentScale.Crop,
+                        )
+                    } else {
+                        Surface(
+                            modifier = Modifier
+                                .width(72.dp)
+                                .height(96.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            contentColor = MaterialTheme.colorScheme.onTertiary,
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    artifact.name.take(1),
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                )
+                            }
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            artifact.name.take(1),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.ExtraBold,
+                            artifact.name,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        HeroIdentityIcons(
+                            attribute = null,
+                            role = artifact.role,
+                            rarity = artifact.rarity,
+                            iconSize = 24.dp,
                         )
                     }
                 }
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    artifact.name,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    listOfNotNull(artifact.rarity, artifact.role?.roleLabel(), artifact.code)
-                        .joinToString(" · "),
-                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                )
             }
         }
         item {
@@ -922,7 +942,6 @@ internal fun ArtifactDetailScreen(
                 MetricRow("攻击", artifact.attack.displayOrDash())
                 MetricRow("生命", artifact.health.displayOrDash())
                 MetricRow("防御", artifact.defense.displayOrDash())
-                MetricRow("适用职业", artifact.role?.roleLabel() ?: "—")
             }
         }
         artifact.description?.takeIf(String::isNotBlank)?.let { description ->
@@ -934,6 +953,32 @@ internal fun ArtifactDetailScreen(
                         description,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            }
+        }
+        artifact.maxDescription?.takeIf(String::isNotBlank)?.let { maxDescription ->
+            item {
+                SectionTitle("满级效果")
+                Spacer(Modifier.height(8.dp))
+                SectionSurface {
+                    Text(
+                        maxDescription,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            }
+        }
+        artifact.lore?.takeIf(String::isNotBlank)?.let { lore ->
+            item {
+                SectionTitle("背景故事")
+                Spacer(Modifier.height(8.dp))
+                SectionSurface {
+                    Text(
+                        lore,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }

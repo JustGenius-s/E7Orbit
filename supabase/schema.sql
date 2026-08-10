@@ -67,5 +67,31 @@ create policy "Public can read hero skills"
     to anon, authenticated
     using (true);
 
+create table if not exists public.artifact_catalog (
+    code text primary key,
+    name text not null,
+    rarity integer,
+    role text not null default '',
+    description text,
+    max_description text,
+    lore text,
+    image_url text,
+    icon_url text,
+    stats_attack integer,
+    stats_health integer,
+    stats_defense integer,
+    source text not null default 'epic7db',
+    source_updated_at timestamptz,
+    updated_at timestamptz not null default now()
+);
+
+alter table public.artifact_catalog enable row level security;
+
+drop policy if exists "Public can read artifact catalog" on public.artifact_catalog;
+create policy "Public can read artifact catalog"
+    on public.artifact_catalog for select
+    to anon, authenticated
+    using (true);
+
 -- The service_role key bypasses RLS for tools/sync-hero-catalog.mjs.
 -- Do not create anonymous INSERT/UPDATE policies: mobile clients must be read-only.
