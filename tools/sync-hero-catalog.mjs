@@ -663,6 +663,8 @@ function parseArtifactDetailPage(html, slug, fribbels, syncedAt) {
     stats_attack: maxStats.attack ?? baseStats.attack ?? integerOrNull(fribbels?.stats?.attack),
     stats_health: maxStats.health ?? baseStats.health ?? integerOrNull(fribbels?.stats?.health),
     stats_defense: integerOrNull(fribbels?.stats?.defense),
+    base_attack: baseStats.attack,
+    base_health: baseStats.health,
     source: "epic7db-web",
     source_updated_at: syncedAt,
     updated_at: syncedAt,

@@ -356,6 +356,8 @@ class E7DataRepository(
                 lore = maintained?.lore,
                 imageUrl = maintained?.imageUrl ?: maintained?.iconUrl,
                 iconUrl = maintained?.iconUrl ?: maintained?.imageUrl,
+                baseAttack = maintained?.baseAttack,
+                baseHealth = maintained?.baseHealth,
             )
         }.sortedBy { it.name.lowercase() }
     }

@@ -95,6 +95,46 @@ internal fun HeroStars(
 }
 
 @Composable
+internal fun HeroClassIcon(
+    role: String?,
+    modifier: Modifier = Modifier,
+    size: Dp = 32.dp,
+) {
+    role?.let(::heroClassIconRes)?.let { resId ->
+        Image(
+            painter = painterResource(resId),
+            contentDescription = role,
+            modifier = modifier.size(size),
+            contentScale = ContentScale.Fit,
+        )
+    }
+}
+
+@Composable
+internal fun VerticalHeroStars(
+    stars: Int?,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = 26.dp,
+) {
+    val count = stars?.coerceIn(1, 6) ?: return
+    androidx.compose.foundation.layout.Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        repeat(count) { index ->
+            Image(
+                painter = painterResource(R.drawable.e7_hero_star),
+                contentDescription = if (index == 0) "$count 星" else null,
+                modifier = Modifier
+                    .offset(y = if (index == 0) 0.dp else (-4).dp)
+                    .size(iconSize),
+                contentScale = ContentScale.Fit,
+            )
+        }
+    }
+}
+
+@Composable
 private fun HeroAssetIcon(
     @DrawableRes resId: Int,
     contentDescription: String?,

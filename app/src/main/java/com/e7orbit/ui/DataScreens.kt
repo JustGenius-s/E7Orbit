@@ -1,5 +1,7 @@
 package com.e7orbit.ui
 
+import android.content.res.Configuration
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -56,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -942,117 +947,240 @@ internal fun ArtifactDetailScreen(
     artifact: E7Artifact?,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        if (artifact == null) {
+    if (artifact == null) {
+        LazyColumn(
+            modifier = modifier,
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+        ) {
             item { DataMissingDetail("神器数据不可用") }
-            return@LazyColumn
         }
-        item {
-            SectionSurface(
-                color = MaterialTheme.colorScheme.tertiaryContainer,
-                contentPadding = PaddingValues(20.dp),
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+        return
+    }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    val artwork: @Composable (Modifier) -> Unit = { artModifier ->
+        Box(modifier = artModifier) {
+            if (artifact.imageUrl != null) {
+                RemoteImage(
+                    url = artifact.imageUrl,
+                    contentDescription = artifact.name,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(MaterialTheme.shapes.large),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                 ) {
-                    if (artifact.imageUrl != null) {
-                        RemoteImage(
-                            url = artifact.imageUrl,
-                            contentDescription = artifact.name,
-                            modifier = Modifier
-                                .width(72.dp)
-                                .height(96.dp)
-                                .clip(MaterialTheme.shapes.medium),
-                            contentScale = ContentScale.Crop,
-                        )
-                    } else {
-                        Surface(
-                            modifier = Modifier
-                                .width(72.dp)
-                                .height(96.dp),
-                            shape = MaterialTheme.shapes.medium,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            contentColor = MaterialTheme.colorScheme.onTertiary,
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    artifact.name.take(1),
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.ExtraBold,
-                                )
-                            }
-                        }
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
+                    Box(contentAlignment = Alignment.Center) {
                         Text(
-                            artifact.name,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        HeroIdentityIcons(
-                            attribute = null,
-                            role = artifact.role,
-                            rarity = artifact.rarity,
-                            iconSize = 24.dp,
+                            artifact.name.take(1),
+                            style = MaterialTheme.typography.displayMedium,
+                            fontWeight = FontWeight.ExtraBold,
                         )
                     }
                 }
             }
+            HeroClassIcon(
+                role = artifact.role,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(12.dp),
+                size = 34.dp,
+            )
+            VerticalHeroStars(
+                stars = artifact.rarity,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp),
+                iconSize = 28.dp,
+            )
         }
-        item {
-            SectionTitle("满级加成")
+    }
+
+    if (isLandscape) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(16.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                artwork(
+                    Modifier
+                        .width(220.dp)
+                        .height(320.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        artifact.name,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                    artifact.lore?.takeIf(String::isNotBlank)?.let { lore ->
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            lore,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                item {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ArtifactLevelSection(
+                        title = "Base Level",
+                        description = artifact.description,
+                        attack = artifact.baseAttack,
+                        health = artifact.baseHealth,
+                    )
+                }
+                item {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ArtifactLevelSection(
+                        title = "Max Level",
+                        description = artifact.maxDescription,
+                        attack = artifact.attack,
+                        health = artifact.health,
+                    )
+                }
+            }
+        }
+    } else {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                artwork(
+                    Modifier
+                        .width(180.dp)
+                        .height(260.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        artifact.name,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    artifact.lore?.takeIf(String::isNotBlank)?.let { lore ->
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            lore,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                item {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ArtifactLevelSection(
+                        title = "Base Level",
+                        description = artifact.description,
+                        attack = artifact.baseAttack,
+                        health = artifact.baseHealth,
+                    )
+                }
+                item {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ArtifactLevelSection(
+                        title = "Max Level",
+                        description = artifact.maxDescription,
+                        attack = artifact.attack,
+                        health = artifact.health,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArtifactLevelSection(
+    title: String,
+    description: String?,
+    attack: Int?,
+    health: Int?,
+) {
+    Column(modifier = Modifier.padding(vertical = 14.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
+        description?.takeIf(String::isNotBlank)?.let { desc ->
             Spacer(Modifier.height(8.dp))
-            SectionSurface {
-                MetricRow("攻击", artifact.attack.displayOrDash())
-                MetricRow("生命", artifact.health.displayOrDash())
-                MetricRow("防御", artifact.defense.displayOrDash())
-            }
+            Text(
+                desc,
+                style = MaterialTheme.typography.bodyLarge,
+            )
         }
-        artifact.description?.takeIf(String::isNotBlank)?.let { description ->
-            item {
-                SectionTitle("效果描述")
-                Spacer(Modifier.height(8.dp))
-                SectionSurface {
-                    Text(
-                        description,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
+        if (attack != null || health != null) {
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (attack != null) {
+                    ArtifactStatValue(R.drawable.e7_stat_attack, "攻击", attack)
+                }
+                if (attack != null && health != null) {
+                    Spacer(Modifier.width(40.dp))
+                }
+                if (health != null) {
+                    ArtifactStatValue(R.drawable.e7_stat_health, "生命", health)
                 }
             }
         }
-        artifact.maxDescription?.takeIf(String::isNotBlank)?.let { maxDescription ->
-            item {
-                SectionTitle("满级效果")
-                Spacer(Modifier.height(8.dp))
-                SectionSurface {
-                    Text(
-                        maxDescription,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                }
-            }
-        }
-        artifact.lore?.takeIf(String::isNotBlank)?.let { lore ->
-            item {
-                SectionTitle("背景故事")
-                Spacer(Modifier.height(8.dp))
-                SectionSurface {
-                    Text(
-                        lore,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-        }
+    }
+}
+
+@Composable
+private fun ArtifactStatValue(
+    iconRes: Int,
+    contentDescription: String,
+    value: Int,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Image(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(24.dp),
+            contentScale = ContentScale.Fit,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "$value",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

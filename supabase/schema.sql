@@ -16,6 +16,8 @@ create table if not exists public.hero_catalog (
     stats_attack integer,
     stats_health integer,
     stats_defense integer,
+    base_attack integer,
+    base_health integer,
     stats_speed integer,
     stats_critical_chance integer,
     stats_critical_damage integer,
@@ -82,6 +84,8 @@ create table if not exists public.artifact_catalog (
     stats_attack integer,
     stats_health integer,
     stats_defense integer,
+    base_attack integer,
+    base_health integer,
     source text not null default 'epic7db',
     source_updated_at timestamptz,
     updated_at timestamptz not null default now()

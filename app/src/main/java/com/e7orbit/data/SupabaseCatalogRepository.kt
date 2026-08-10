@@ -123,6 +123,8 @@ internal data class SupabaseArtifactRow(
     @SerialName("stats_attack") val attack: Int? = null,
     @SerialName("stats_health") val health: Int? = null,
     @SerialName("stats_defense") val defense: Int? = null,
+    @SerialName("base_attack") val baseAttack: Int? = null,
+    @SerialName("base_health") val baseHealth: Int? = null,
 )
 
 @Serializable
