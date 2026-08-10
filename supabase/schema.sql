@@ -29,7 +29,7 @@ create table if not exists public.hero_catalog (
 
 create table if not exists public.hero_skills (
     hero_code text not null references public.hero_catalog(code) on delete cascade,
-    slot integer not null check (slot between 1 and 3),
+    slot integer not null check (slot between 1 and 5), -- 1-3 base, 4-5 transformed/extra skills (e.g. Tamarinne)
     name text not null default '',
     icon_url text,
     description text,

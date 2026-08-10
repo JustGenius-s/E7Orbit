@@ -4,6 +4,8 @@ import process from "node:process";
 
 const supabaseUrl = (process.env.SUPABASE_URL || "https://biayslzufpixsyuitjus.supabase.co").replace(/\/$/, "");
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const storageBucket = (process.env.SUPABASE_STORAGE_BUCKET || "Epic7").replace(/^\/+|\/+$/g, "");
+const skipImageMirror = process.argv.includes("--skip-image-mirror");
 const fribbelsUrl = process.env.FRIBBELS_HERO_URL ||
   "https://e7-optimizer-game-data.s3-accelerate.amazonaws.com/herodata.json";
 const fribbelsArtifactUrl = process.env.FRIBBELS_ARTIFACT_URL ||
@@ -596,6 +598,144 @@ async function syncArtifacts(syncedAt) {
   return artifacts;
 }
 
+// ---------- Storage image mirror ----------
+
+const storagePublicUrl = (path) =>
+  `${supabaseUrl}/storage/v1/object/public/${storageBucket}/${path}`;
+
+function extensionFromUrl(url) {
+  const match = String(url).match(/\.(webp|png|jpg|jpeg|gif)(\?|$)/i);
+  return match ? `.${match[1].toLowerCase()}` : ".webp";
+}
+
+function contentTypeForExtension(ext) {
+  return {
+    ".webp": "image/webp",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+  }[ext] || "application/octet-stream";
+}
+
+async function storageObjectExists(path) {
+  try {
+    const response = await fetch(storagePublicUrl(path), { method: "HEAD" });
+    return response.ok;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function downloadImage(url) {
+  const response = await fetch(url, {
+    headers: { "User-Agent": "E7Orbit-hero-catalog-sync/1.0" },
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status} downloading image`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function uploadToStorage(path, body, contentType) {
+  const response = await fetch(`${supabaseUrl}/storage/v1/object/${storageBucket}/${path}`, {
+    method: "POST",
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": contentType,
+      "x-upsert": "true",
+    },
+    body,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Storage upload ${path} failed (${response.status}): ${text.slice(0, 160)}`);
+  }
+}
+
+const mirroredUrlCache = new Map();
+
+async function mirrorImage(sourceUrl, storagePath) {
+  if (!sourceUrl) return null;
+  if (sourceUrl.startsWith(`${supabaseUrl}/storage/v1/object/public/${storageBucket}/`)) {
+    return sourceUrl; // already mirrored
+  }
+  const cacheKey = `${sourceUrl} -> ${storagePath}`;
+  if (mirroredUrlCache.has(cacheKey)) return mirroredUrlCache.get(cacheKey);
+
+  let result = null;
+  try {
+    if (!(await storageObjectExists(storagePath))) {
+      const body = await downloadImage(sourceUrl);
+      await uploadToStorage(storagePath, body, contentTypeForExtension(extensionFromUrl(sourceUrl)));
+    }
+    result = storagePublicUrl(storagePath);
+  } catch (error) {
+    console.warn(`Image mirror failed for ${sourceUrl}: ${error.message}`);
+    result = sourceUrl; // keep third-party URL so app still has something
+  }
+  mirroredUrlCache.set(cacheKey, result);
+  return result;
+}
+
+async function mirrorHeroImages(heroes) {
+  if (skipImageMirror || !serviceRoleKey) return heroes;
+  console.log(`Mirroring images for ${heroes.length} heroes to bucket ${storageBucket}...`);
+  let done = 0;
+  for (const hero of heroes) {
+    const code = hero.code;
+    if (hero.icon_url) {
+      hero.icon_url = await mirrorImage(hero.icon_url, `heroes/${code}/icon${extensionFromUrl(hero.icon_url)}`);
+    }
+    if (hero.thumbnail_url) {
+      hero.thumbnail_url = await mirrorImage(hero.thumbnail_url, `heroes/${code}/thumbnail${extensionFromUrl(hero.thumbnail_url)}`);
+    }
+    if (hero.image_url) {
+      hero.image_url = await mirrorImage(hero.image_url, `heroes/${code}/image${extensionFromUrl(hero.image_url)}`);
+    }
+    done += 1;
+    if (done % 50 === 0 || done === heroes.length) {
+      console.log(`Mirrored hero images ${done}/${heroes.length}`);
+    }
+  }
+  return heroes;
+}
+
+async function mirrorSkillImages(skills) {
+  if (skipImageMirror || !serviceRoleKey) return skills;
+  console.log(`Mirroring images for ${skills.length} skills to bucket ${storageBucket}...`);
+  let done = 0;
+  for (const skill of skills) {
+    if (skill.icon_url) {
+      const ext = extensionFromUrl(skill.icon_url);
+      skill.icon_url = await mirrorImage(skill.icon_url, `skills/${skill.hero_code}/skill_${skill.slot}${ext}`);
+    }
+    done += 1;
+    if (done % 150 === 0 || done === skills.length) {
+      console.log(`Mirrored skill images ${done}/${skills.length}`);
+    }
+  }
+  return skills;
+}
+
+async function mirrorArtifactImages(artifacts) {
+  if (skipImageMirror || !serviceRoleKey) return artifacts;
+  console.log(`Mirroring images for ${artifacts.length} artifacts to bucket ${storageBucket}...`);
+  let done = 0;
+  for (const artifact of artifacts) {
+    if (artifact.image_url) {
+      const ext = extensionFromUrl(artifact.image_url);
+      const path = `artifacts/${artifact.code}${ext}`;
+      artifact.image_url = await mirrorImage(artifact.image_url, path);
+      artifact.icon_url = artifact.image_url;
+    }
+    done += 1;
+    if (done % 50 === 0 || done === artifacts.length) {
+      console.log(`Mirrored artifact images ${done}/${artifacts.length}`);
+    }
+  }
+  return artifacts;
+}
+
 async function upsert(table, rows, conflictColumns) {
   for (let start = 0; start < rows.length; start += batchSize) {
     const batch = rows.slice(start, start + batchSize);
@@ -624,7 +764,7 @@ const syncedAt = new Date().toISOString();
 
 if (artifactsOnly) {
   console.log("Starting artifact-only sync...");
-  const artifacts = await syncArtifacts(syncedAt);
+  const artifacts = await mirrorArtifactImages(await syncArtifacts(syncedAt));
 
   if (exportDir) {
     await writeExport(exportDir, [], [], artifacts);
@@ -657,10 +797,12 @@ if ([...details.values()].every((detail) => !detail?.skills?.length)) {
   const webDetails = await fetchWebSkills(fribbelsHeroes, syncedAt);
   webDetails.forEach((detail, code) => details.set(code, detail));
 }
-const heroes = fribbelsHeroes
-  .map(({ hero, code }) => toHeroRow({ ...hero, code }, syncedAt, details.get(code)))
-  .filter(Boolean);
-const skills = skillRows(fribbelsHeroes, details, syncedAt);
+const heroes = await mirrorHeroImages(
+  fribbelsHeroes
+    .map(({ hero, code }) => toHeroRow({ ...hero, code }, syncedAt, details.get(code)))
+    .filter(Boolean),
+);
+const skills = await mirrorSkillImages(skillRows(fribbelsHeroes, details, syncedAt));
 if (exportDir) {
   await writeExport(exportDir, heroes, skills, []);
 }
@@ -679,7 +821,7 @@ if (skills.length && !exportDir) {
 if (!skipArtifacts && !skillsOnly && !exportDir) {
   try {
     console.log("Starting artifact sync (inline)...");
-    const artifacts = await syncArtifacts(syncedAt);
+    const artifacts = await mirrorArtifactImages(await syncArtifacts(syncedAt));
 
     if (artifacts.length) {
       console.log(`Preparing ${artifacts.length} artifact rows`);

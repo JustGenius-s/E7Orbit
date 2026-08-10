@@ -718,11 +718,26 @@ private fun HeroRtaAnalysisContent(analysis: HeroRtaAnalysis) {
 
 @Composable
 private fun HeroSkills(skills: List<E7HeroSkill>) {
+    val sorted = skills.sortedBy(E7HeroSkill::slot)
+    val baseSkills = sorted.filter { it.slot in 1..3 }
+    val transformedSkills = sorted.filter { it.slot >= 4 }
+
     SectionTitle("技能")
     Spacer(Modifier.height(8.dp))
-    skills.sortedBy(E7HeroSkill::slot).forEach { skill ->
-        SectionSurface {
-            Row(
+    baseSkills.forEach { skill -> HeroSkillCard(skill) }
+
+    if (transformedSkills.isNotEmpty()) {
+        Spacer(Modifier.height(16.dp))
+        SectionTitle("变身后")
+        Spacer(Modifier.height(8.dp))
+        transformedSkills.forEach { skill -> HeroSkillCard(skill) }
+    }
+}
+
+@Composable
+private fun HeroSkillCard(skill: E7HeroSkill) {
+    SectionSurface {
+        Row(
                 verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -795,9 +810,8 @@ private fun HeroSkills(skills: List<E7HeroSkill>) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-        Spacer(Modifier.height(8.dp))
     }
+    Spacer(Modifier.height(8.dp))
 }
 
 private fun String.cleanSkillText(): String = replace("\\\\n", "\n")
