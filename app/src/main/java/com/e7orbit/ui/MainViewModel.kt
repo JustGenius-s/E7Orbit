@@ -38,12 +38,19 @@ import com.e7orbit.optimizer.GearOptimizationConfig
 import com.e7orbit.optimizer.GearInventoryFilter
 import com.e7orbit.optimizer.GearInventorySort
 import com.e7orbit.optimizer.GearOptimizer
+import com.e7orbit.optimizer.EquipmentPlan
+import com.e7orbit.optimizer.EquipmentPlanCollection
+import com.e7orbit.optimizer.EquipmentPlanStore
 import com.e7orbit.optimizer.HeroBuildSort
 import com.e7orbit.optimizer.HeroOptimizerPreference
 import com.e7orbit.optimizer.OptimizerContent
 import com.e7orbit.optimizer.OptimizerPreferenceStore
 import com.e7orbit.optimizer.OptimizerUiPreferenceStore
 import com.e7orbit.optimizer.matchScannedHero
+import com.e7orbit.optimizer.applyBuild
+import com.e7orbit.optimizer.applyTo
+import com.e7orbit.optimizer.copyAs
+import com.e7orbit.optimizer.createEquipmentPlan
 import com.e7orbit.optimizer.OptimizerConstraints
 import com.e7orbit.optimizer.OptimizedBuild
 import com.e7orbit.optimizer.OptimizerMetric
@@ -107,6 +114,8 @@ data class OptimizerUiState(
     val content: OptimizerContent = OptimizerContent.HEROES,
     val selectedHeroCode: String? = null,
     val selectedEquippedHeroId: Long? = null,
+    val plans: List<EquipmentPlan> = emptyList(),
+    val selectedPlanId: String? = null,
     val heroSort: HeroBuildSort = HeroBuildSort(),
     val gearFilter: GearInventoryFilter = GearInventoryFilter(),
     val gearSort: GearInventorySort = GearInventorySort(),
@@ -121,7 +130,10 @@ data class OptimizerUiState(
     val combinationsEvaluated: Long = 0L,
     val elapsedMs: Long = 0L,
     val errorMessage: String? = null,
-)
+) {
+    val selectedPlan: EquipmentPlan?
+        get() = plans.firstOrNull { it.id == selectedPlanId }
+}
 
 data class VpnCaptureUiState(
     val running: Boolean = false,
@@ -226,10 +238,14 @@ class MainViewModel(
     private val data = MutableStateFlow(DataUiState())
     private val optimizerPreferenceStore = OptimizerPreferenceStore(application)
     private val optimizerUiPreferenceStore = OptimizerUiPreferenceStore(application)
+    private val equipmentPlanStore = EquipmentPlanStore(application)
+    private val savedEquipmentPlans = equipmentPlanStore.load()
     private val optimizer = MutableStateFlow(
         OptimizerUiState(
             heroSort = optimizerUiPreferenceStore.loadHeroSort(),
             heroPreferences = optimizerPreferenceStore.load(),
+            plans = savedEquipmentPlans.plans,
+            selectedPlanId = savedEquipmentPlans.selectedPlanId,
         ),
     )
     private val gearOptimizer = GearOptimizer()
@@ -365,6 +381,81 @@ class MainViewModel(
         optimizer.value = optimizer.value.copy(content = content)
     }
 
+    fun createEquipmentPlan(name: String) {
+        val trimmed = name.trim().take(40)
+        if (trimmed.isEmpty()) return
+        val plan = createEquipmentPlan(
+            name = trimmed,
+            gears = AppGraph.gearImportRepository.state.value.gears,
+        )
+        optimizer.value = optimizer.value.copy(
+            plans = optimizer.value.plans + plan,
+            selectedPlanId = plan.id,
+        )
+        invalidateOptimizerResults()
+        persistEquipmentPlans()
+    }
+
+    fun copySelectedEquipmentPlan(name: String) {
+        val source = optimizer.value.selectedPlan ?: return
+        val trimmed = name.trim().take(40)
+        if (trimmed.isEmpty()) return
+        val copy = source.copyAs(trimmed)
+        optimizer.value = optimizer.value.copy(
+            plans = optimizer.value.plans + copy,
+            selectedPlanId = copy.id,
+        )
+        invalidateOptimizerResults()
+        persistEquipmentPlans()
+    }
+
+    fun selectEquipmentPlan(planId: String) {
+        if (planId.isNotEmpty() && optimizer.value.plans.none { it.id == planId }) return
+        optimizer.value = optimizer.value.copy(selectedPlanId = planId.ifEmpty { null })
+        invalidateOptimizerResults()
+        persistEquipmentPlans()
+    }
+
+    fun deleteSelectedEquipmentPlan() {
+        val selectedId = optimizer.value.selectedPlanId ?: return
+        val nextPlans = optimizer.value.plans.filterNot { it.id == selectedId }
+        optimizer.value = optimizer.value.copy(
+            plans = nextPlans,
+            selectedPlanId = nextPlans.firstOrNull()?.id,
+        )
+        invalidateOptimizerResults()
+        persistEquipmentPlans()
+    }
+
+    fun applyOptimizerResult(build: OptimizedBuild) {
+        val selected = optimizer.value.selectedPlan ?: return
+        val heroId = optimizer.value.selectedEquippedHeroId ?: return
+        val validGearIds = AppGraph.gearImportRepository.state.value.gears
+            .mapTo(hashSetOf(), E7Gear::id)
+        val updated = selected.applyBuild(
+            heroId = heroId,
+            gearIds = build.items.map(E7Gear::id),
+            validGearIds = validGearIds,
+        )
+        optimizer.value = optimizer.value.copy(
+            plans = optimizer.value.plans.map { plan ->
+                if (plan.id == updated.id) updated else plan
+            },
+        )
+        persistEquipmentPlans()
+    }
+
+    private fun persistEquipmentPlans() {
+        val collection = EquipmentPlanCollection(
+            plans = optimizer.value.plans,
+            selectedPlanId = optimizer.value.selectedPlanId,
+        )
+        viewModelScope.launch {
+            runCatching { equipmentPlanStore.save(collection) }
+                .onFailure { AppGraph.logger.error("optimizer.plan_save_failed", it) }
+        }
+    }
+
     fun selectEquippedHero(instanceId: Long) {
         val scanned = AppGraph.gearImportRepository.state.value.heroes
             .firstOrNull { it.id == instanceId }
@@ -458,7 +549,8 @@ class MainViewModel(
     fun startOptimizer() {
         val current = optimizer.value
         val hero = data.value.heroes.firstOrNull { it.code == current.selectedHeroCode }
-        val inventory = AppGraph.gearImportRepository.state.value.gears
+        val importedGears = AppGraph.gearImportRepository.state.value.gears
+        val inventory = current.selectedPlan?.applyTo(importedGears) ?: importedGears
         if (hero == null) {
             optimizer.value = current.copy(
                 phase = OptimizerPhase.ERROR,

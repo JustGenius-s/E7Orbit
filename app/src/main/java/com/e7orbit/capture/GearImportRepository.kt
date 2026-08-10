@@ -181,6 +181,12 @@ class GearImportRepository(
         return exportFile.readText(Charsets.UTF_8)
     }
 
+    fun readGearExport(assignments: Map<Long, Long>): String = GearExportSerializer.rewriteAssignments(
+        export = readGearExport(),
+        gears = _state.value.gears,
+        assignments = assignments,
+    )
+
     private fun persist(
         gears: List<E7Gear>,
         heroes: List<E7ScannedHero>,

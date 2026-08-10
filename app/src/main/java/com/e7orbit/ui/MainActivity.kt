@@ -26,16 +26,31 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -47,9 +62,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -57,6 +77,7 @@ import com.e7orbit.AppGraph
 import com.e7orbit.R
 import com.e7orbit.capture.MediaProjectionCaptureService
 import com.e7orbit.capture.VpnCaptureService
+import com.e7orbit.data.GearImportPhase
 import com.e7orbit.ui.theme.E7OrbitTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
@@ -128,22 +149,47 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var pendingPlanExport: com.e7orbit.optimizer.EquipmentPlan? = null
     private val gearExportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
-        if (uri == null) return@registerForActivityResult
-        runCatching {
-            val gears = AppGraph.gearImportRepository.state.value.gears
-            check(gears.isNotEmpty()) { "没有可导出的装备" }
-            val export = AppGraph.gearImportRepository.readGearExport()
-            val output = contentResolver.openOutputStream(uri, "wt")
-                ?: error("无法打开导出文件")
-            output.bufferedWriter(Charsets.UTF_8).use { it.write(export) }
-            AppGraph.logger.info("gear.export_succeeded", "items" to gears.size, "uri" to uri)
-            Toast.makeText(this, "已导出 ${gears.size} 件装备", Toast.LENGTH_LONG).show()
-        }.onFailure { error ->
-            AppGraph.logger.error("gear.export_failed", error)
-            Toast.makeText(this, error.message ?: "装备导出失败", Toast.LENGTH_LONG).show()
+        if (uri == null) {
+            pendingPlanExport = null
+            return@registerForActivityResult
+        }
+        val plan = pendingPlanExport.also { pendingPlanExport = null }
+        lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val gears = AppGraph.gearImportRepository.state.value.gears
+                    check(gears.isNotEmpty()) { "没有可导出的装备" }
+                    val export = if (plan == null) {
+                        AppGraph.gearImportRepository.readGearExport()
+                    } else {
+                        AppGraph.gearImportRepository.readGearExport(plan.assignments)
+                    }
+                    val output = contentResolver.openOutputStream(uri, "wt")
+                        ?: error("无法打开导出文件")
+                    output.bufferedWriter(Charsets.UTF_8).use { it.write(export) }
+                    gears.size
+                }
+            }.onSuccess { gearCount ->
+                AppGraph.logger.info(
+                    "gear.export_succeeded",
+                    "items" to gearCount,
+                    "plan" to plan?.id,
+                    "uri" to uri,
+                )
+                val message = plan?.let { "已导出方案「${it.name}」" } ?: "已导出 $gearCount 件装备"
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+            }.onFailure { error ->
+                AppGraph.logger.error("gear.export_failed", error)
+                Toast.makeText(
+                    this@MainActivity,
+                    error.message ?: "装备导出失败",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
         }
     }
 
@@ -192,6 +238,11 @@ class MainActivity : ComponentActivity() {
                     onGearMinimumScoreChanged = viewModel::setGearMinimumScore,
                     onGearSortChanged = viewModel::setGearSort,
                     onClearGearFilters = viewModel::clearGearFilters,
+                    onCreatePlan = viewModel::createEquipmentPlan,
+                    onCopyPlan = viewModel::copySelectedEquipmentPlan,
+                    onSelectPlan = viewModel::selectEquipmentPlan,
+                    onDeletePlan = viewModel::deleteSelectedEquipmentPlan,
+                    onExportPlan = ::startEquipmentPlanExport,
                     onEquippedHeroSelected = viewModel::selectEquippedHero,
                     onOptimizerMetricChanged = viewModel::setOptimizerMetric,
                     onOptimizerMinimumChanged = viewModel::setOptimizerMinimum,
@@ -201,6 +252,7 @@ class MainActivity : ComponentActivity() {
                     onOptimizerOnlyMaxedChanged = viewModel::setOptimizerOnlyMaxed,
                     onStartOptimizer = viewModel::startOptimizer,
                     onStopOptimizer = viewModel::stopOptimizer,
+                    onApplyOptimizerResult = viewModel::applyOptimizerResult,
                 )
             }
         }
@@ -218,16 +270,29 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startGearExport() {
-        if (!AppGraph.gearImportRepository.hasCompatibleExport()) {
-            Toast.makeText(
-                this,
-                "当前数据来自旧版本，请重新抓包并打开背包后再导出",
-                Toast.LENGTH_LONG,
-            ).show()
-            return
-        }
-        gearExportLauncher.launch("e7orbit-gear.json")
+        if (!ensureGearExportAvailable()) return
+        pendingPlanExport = null
+        gearExportLauncher.launch("gear.txt")
     }
+
+    private fun startEquipmentPlanExport(plan: com.e7orbit.optimizer.EquipmentPlan) {
+        if (!ensureGearExportAvailable()) return
+        pendingPlanExport = plan
+        gearExportLauncher.launch("${plan.name.sanitizedFileName()}-gear.txt")
+    }
+
+    private fun ensureGearExportAvailable(): Boolean {
+        if (AppGraph.gearImportRepository.hasCompatibleExport()) return true
+        Toast.makeText(
+            this,
+            "当前数据来自旧版本，请重新抓包并打开背包后再导出",
+            Toast.LENGTH_LONG,
+        ).show()
+        return false
+    }
+
+    private fun String.sanitizedFileName(): String =
+        replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "plan" }
 
     private fun requestProjection(automation: PendingAutomation) {
         pendingAutomation = automation
@@ -319,6 +384,11 @@ private fun OrbitApp(
     onGearMinimumScoreChanged: (Int) -> Unit,
     onGearSortChanged: (com.e7orbit.optimizer.GearInventorySort) -> Unit,
     onClearGearFilters: () -> Unit,
+    onCreatePlan: (String) -> Unit,
+    onCopyPlan: (String) -> Unit,
+    onSelectPlan: (String) -> Unit,
+    onDeletePlan: () -> Unit,
+    onExportPlan: (com.e7orbit.optimizer.EquipmentPlan) -> Unit,
     onEquippedHeroSelected: (Long) -> Unit,
     onOptimizerMetricChanged: (com.e7orbit.optimizer.OptimizerMetric) -> Unit,
     onOptimizerMinimumChanged: (com.e7orbit.optimizer.OptimizerStat, Int) -> Unit,
@@ -328,6 +398,7 @@ private fun OrbitApp(
     onOptimizerOnlyMaxedChanged: (Boolean) -> Unit,
     onStartOptimizer: () -> Unit,
     onStopOptimizer: () -> Unit,
+    onApplyOptimizerResult: (com.e7orbit.optimizer.OptimizedBuild) -> Unit,
 ) {
     var destinationName by rememberSaveable { mutableStateOf(OrbitDestination.HOME.name) }
     var detailName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -363,15 +434,32 @@ private fun OrbitApp(
             .nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            OrbitTopAppBar(
-                title = route.title,
-                showBack = detail != null,
-                showRefresh = detail == null && destination == OrbitDestination.DATA,
-                refreshing = state.data.loadState == DataLoadState.LOADING,
-                scrollBehavior = topAppBarScrollBehavior,
-                onBack = { detailName = null },
-                onRefresh = { onLoadData(true) },
-            )
+            if (destination == OrbitDestination.OPTIMIZER && detail == null) {
+                OptimizerPlanTopBar(
+                    plans = state.optimizer.plans,
+                    selectedPlan = state.optimizer.selectedPlan,
+                    importing = state.vpnCapture.importPhase == GearImportPhase.PARSING,
+                    canCreate = state.data.gears.isNotEmpty(),
+                    onCreate = onCreatePlan,
+                    onCopy = onCopyPlan,
+                    onSelect = onSelectPlan,
+                    onDelete = onDeletePlan,
+                    onExport = onExportPlan,
+                    onImportGear = onImportGear,
+                    onExportGear = onExportGear,
+                    scrollBehavior = topAppBarScrollBehavior,
+                )
+            } else {
+                OrbitTopAppBar(
+                    title = route.title,
+                    showBack = detail != null,
+                    showRefresh = detail == null && destination == OrbitDestination.DATA,
+                    refreshing = state.data.loadState == DataLoadState.LOADING,
+                    scrollBehavior = topAppBarScrollBehavior,
+                    onBack = { detailName = null },
+                    onRefresh = { onLoadData(true) },
+                )
+            }
         },
         bottomBar = {
             AnimatedVisibility(
@@ -475,6 +563,7 @@ private fun OrbitApp(
                         onOnlyMaxedChanged = onOptimizerOnlyMaxedChanged,
                         onStart = onStartOptimizer,
                         onStop = onStopOptimizer,
+                        onApplyResult = onApplyOptimizerResult,
                     )
 
                     null -> when (animatedRoute.destination) {
@@ -641,6 +730,225 @@ private fun OrbitTopAppBar(
         ),
         scrollBehavior = scrollBehavior,
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OptimizerPlanTopBar(
+    plans: List<com.e7orbit.optimizer.EquipmentPlan>,
+    selectedPlan: com.e7orbit.optimizer.EquipmentPlan?,
+    importing: Boolean,
+    canCreate: Boolean,
+    onCreate: (String) -> Unit,
+    onCopy: (String) -> Unit,
+    onSelect: (String) -> Unit,
+    onDelete: () -> Unit,
+    onExport: (com.e7orbit.optimizer.EquipmentPlan) -> Unit,
+    onImportGear: () -> Unit,
+    onExportGear: () -> Unit,
+    scrollBehavior: TopAppBarScrollBehavior,
+) {
+    var planMenuExpanded by rememberSaveable { mutableStateOf(false) }
+    var moreMenuExpanded by rememberSaveable { mutableStateOf(false) }
+    var nameDialogAction by rememberSaveable { mutableStateOf<String?>(null) }
+    var planName by rememberSaveable { mutableStateOf("") }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+
+    TopAppBar(
+        title = {
+            Box {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { planMenuExpanded = true }
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = selectedPlan?.name ?: "默认方案",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Icon(
+                        painter = painterResource(R.drawable.ic_chevron_right),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .padding(start = 2.dp)
+                            .rotate(90f),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(
+                    expanded = planMenuExpanded,
+                    onDismissRequest = { planMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("默认方案") },
+                        leadingIcon = {
+                            if (selectedPlan == null) {
+                                Text("✓", color = MaterialTheme.colorScheme.primary)
+                            }
+                        },
+                        onClick = {
+                            planMenuExpanded = false
+                            onSelect("")
+                        },
+                    )
+                    plans.forEach { plan ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    plan.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            leadingIcon = {
+                                if (plan.id == selectedPlan?.id) {
+                                    Text("✓", color = MaterialTheme.colorScheme.primary)
+                                }
+                            },
+                            onClick = {
+                                planMenuExpanded = false
+                                onSelect(plan.id)
+                            },
+                        )
+                    }
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("新建方案…") },
+                        enabled = canCreate,
+                        onClick = {
+                            planMenuExpanded = false
+                            planName = "方案 ${plans.size + 1}"
+                            nameDialogAction = "create"
+                        },
+                    )
+                }
+            }
+        },
+        actions = {
+            Box {
+                IconButton(onClick = { moreMenuExpanded = true }) {
+                    Text(
+                        "⋯",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(
+                    expanded = moreMenuExpanded,
+                    onDismissRequest = { moreMenuExpanded = false },
+                ) {
+                    if (selectedPlan != null) {
+                        DropdownMenuItem(
+                            text = { Text("复制方案…") },
+                            onClick = {
+                                moreMenuExpanded = false
+                                planName = "${selectedPlan.name} 副本"
+                                nameDialogAction = "copy"
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("导出方案 gear.txt") },
+                            onClick = {
+                                moreMenuExpanded = false
+                                onExport(selectedPlan)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text("删除方案…", color = MaterialTheme.colorScheme.error)
+                            },
+                            onClick = {
+                                moreMenuExpanded = false
+                                confirmDelete = true
+                            },
+                        )
+                        HorizontalDivider()
+                    }
+                    DropdownMenuItem(
+                        text = { Text(if (importing) "正在导入装备…" else "导入 gear.txt") },
+                        enabled = !importing,
+                        onClick = {
+                            moreMenuExpanded = false
+                            onImportGear()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导出原始 gear.txt") },
+                        enabled = canCreate && !importing,
+                        onClick = {
+                            moreMenuExpanded = false
+                            onExportGear()
+                        },
+                    )
+                }
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.background,
+            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ),
+        scrollBehavior = scrollBehavior,
+    )
+
+    if (nameDialogAction != null) {
+        val isCopy = nameDialogAction == "copy"
+        AlertDialog(
+            onDismissRequest = { nameDialogAction = null },
+            title = { Text(if (isCopy) "复制配装方案" else "新建配装方案") },
+            text = {
+                OutlinedTextField(
+                    value = planName,
+                    onValueChange = { planName = it.take(40) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("方案名称") },
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = planName.trim()
+                        if (isCopy) onCopy(name) else onCreate(name)
+                        nameDialogAction = null
+                    },
+                    enabled = planName.isNotBlank(),
+                ) {
+                    Text(if (isCopy) "复制" else "创建")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { nameDialogAction = null }) { Text("取消") }
+            },
+        )
+    }
+
+    if (confirmDelete && selectedPlan != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("删除配装方案？") },
+            text = { Text("将删除「${selectedPlan.name}」，不会影响游戏当前配装和其他方案。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmDelete = false
+                        onDelete()
+                    },
+                ) {
+                    Text("删除")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { confirmDelete = false }) { Text("取消") }
+            },
+        )
+    }
 }
 
 @Composable

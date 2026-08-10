@@ -85,6 +85,23 @@ class GearOptimizerTest {
     }
 
     @Test
+    fun includesUnequippedScannedHeroesForEditablePlans() {
+        val scanned = E7ScannedHero(id = 99L, name = "Test Hero", stars = 6, awaken = 6)
+
+        val builds = buildEquippedHeroes(
+            scannedHeroes = listOf(scanned),
+            catalog = listOf(hero),
+            gears = emptyList(),
+            includeEmptyScannedHeroes = true,
+        )
+
+        assertEquals(1, builds.size)
+        assertEquals(99L, builds.single().instanceId)
+        assertEquals(0, builds.single().items.size)
+        assertEquals(null, builds.single().stats)
+    }
+
+    @Test
     fun sortsEquippedHeroesByCombatPowerSpeedRarityAndRole() {
         val baseItems = listOf(
             gear(1, GearSlot.WEAPON, "set_speed", E7GearStat("Attack", 500.0)),

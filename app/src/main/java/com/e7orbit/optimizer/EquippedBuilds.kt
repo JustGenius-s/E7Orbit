@@ -180,16 +180,22 @@ fun buildEquippedHeroes(
     catalog: List<E7Hero>,
     gears: List<E7Gear>,
     calculator: GearOptimizer = GearOptimizer(),
+    includeEmptyScannedHeroes: Boolean = false,
 ): List<EquippedHeroBuild> {
     val scannedById = scannedHeroes.associateBy(E7ScannedHero::id)
     val catalogByName = catalog.associateBy { normalizeHeroName(it.name) }
-    return gears.asSequence()
+    val equippedByHero = gears.asSequence()
         .filter { it.equippedHeroId != null }
         .groupBy { requireNotNull(it.equippedHeroId) }
-        .map { (instanceId, equipped) ->
+    val instanceIds = LinkedHashSet<Long>().apply {
+        addAll(equippedByHero.keys)
+        if (includeEmptyScannedHeroes) addAll(scannedHeroes.map(E7ScannedHero::id))
+    }
+    return instanceIds
+        .map { instanceId ->
             val scanned = scannedById[instanceId]
             val hero = scanned?.name?.let { catalogByName[normalizeHeroName(it)] }
-            val items = equipped
+            val items = equippedByHero[instanceId].orEmpty()
                 .filter { it.slot in EQUIPMENT_SLOTS }
                 .distinctBy(E7Gear::slot)
                 .sortedBy { EQUIPMENT_SLOTS.indexOf(it.slot) }

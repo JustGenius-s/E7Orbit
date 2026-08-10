@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.contentOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,6 +53,89 @@ class GearExportSerializerTest {
         val hero = root.getValue("heroes").jsonArray.single().jsonObject
         assertEquals(6, hero.getValue("stars").jsonPrimitive.long)
         assertEquals(6, hero.getValue("awaken").jsonPrimitive.long)
+    }
+
+    @Test
+    fun rewritesEquipmentAssignmentsForPlanExport() {
+        val first = testGear()
+        val second = testGear().copy(
+            id = 2_345_678_901,
+            code = "test_ring",
+            slot = GearSlot.RING,
+            equippedHeroId = null,
+        )
+        val rawFirst = Json.parseToJsonElement(
+            """{"id":1234567890,"p":987654321,"gear":"Helmet","rank":"Epic","set":"SpeedSet","level":90,"enhance":15,"main":{"type":"Health","value":2835},"substats":[],"ingameId":1234567890,"ingameEquippedId":"987654321"}""",
+        ).jsonObject
+        val rawSecond = Json.parseToJsonElement(
+            """{"id":2345678901,"gear":"Ring","rank":"Epic","set":"SpeedSet","level":90,"enhance":15,"main":{"type":"Health","value":2835},"substats":[],"ingameId":2345678901,"ingameEquippedId":"undefined"}""",
+        ).jsonObject
+        val source = Json.parseToJsonElement(
+            GearExportSerializer.serializeScannerExport(
+                gears = listOf(first, second),
+                rawItems = listOf(rawFirst, rawSecond),
+                rawHeroes = emptyList(),
+            ),
+        ).toString()
+
+        val root = Json.parseToJsonElement(
+            GearExportSerializer.rewriteAssignments(
+                export = source,
+                gears = listOf(first, second),
+                assignments = mapOf(second.id to 123L),
+            ),
+        ).jsonObject
+        val items = root.getValue("items").jsonArray.map { it.jsonObject }
+        val rewrittenFirst = items.first { it.getValue("id").jsonPrimitive.long == first.id }
+        val rewrittenSecond = items.first { it.getValue("id").jsonPrimitive.long == second.id }
+        assertEquals(
+            "undefined",
+            rewrittenFirst.getValue("ingameEquippedId").jsonPrimitive.content,
+        )
+        assertEquals(null, rewrittenFirst["p"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("123", rewrittenSecond.getValue("ingameEquippedId").jsonPrimitive.content)
+        assertEquals(123L, rewrittenSecond.getValue("p").jsonPrimitive.long)
+    }
+
+    @Test
+    fun normalizesNestedHeroEquipmentWithoutDuplicatingOldAssignments() {
+        val gear = testGear().copy(
+            id = 42L,
+            equippedHeroId = 7L,
+        )
+        val export = """
+            {
+              "items": [],
+              "heroes": [{
+                "id": 7,
+                "name": "Test Hero",
+                "equipment": {
+                  "Helmet": {
+                    "id": 42,
+                    "gear": "Helmet",
+                    "rank": "Epic",
+                    "set": "SpeedSet",
+                    "level": 90,
+                    "enhance": 15,
+                    "main": {"type": "Health", "value": 2835},
+                    "substats": []
+                  }
+                }
+              }]
+            }
+        """.trimIndent()
+
+        val root = Json.parseToJsonElement(
+            GearExportSerializer.rewriteAssignments(
+                export = export,
+                gears = listOf(gear),
+                assignments = emptyMap(),
+            ),
+        ).jsonObject
+        val item = root.getValue("items").jsonArray.single().jsonObject
+        val hero = root.getValue("heroes").jsonArray.single().jsonObject
+        assertEquals(null, item["ingameEquippedId"])
+        assertEquals(null, hero["equipment"])
     }
 
     @Test

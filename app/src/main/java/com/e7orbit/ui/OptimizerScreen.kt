@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -30,7 +31,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -56,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.e7orbit.R
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7GearStat
 import com.e7orbit.data.E7Hero
@@ -63,6 +68,7 @@ import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.GearSlot
 import com.e7orbit.optimizer.EquippedHeroBuild
 import com.e7orbit.optimizer.EquippedSetSummary
+import com.e7orbit.optimizer.EquipmentPlan
 import com.e7orbit.optimizer.GearInventoryFilter
 import com.e7orbit.optimizer.GearInventorySort
 import com.e7orbit.optimizer.GearOptimizer
@@ -75,7 +81,9 @@ import com.e7orbit.optimizer.OptimizedHeroStats
 import com.e7orbit.optimizer.OptimizerContent
 import com.e7orbit.optimizer.OptimizerMetric
 import com.e7orbit.optimizer.OptimizerStat
+import com.e7orbit.optimizer.applyTo
 import com.e7orbit.optimizer.buildEquippedHeroes
+import com.e7orbit.optimizer.containsBuild
 import com.e7orbit.optimizer.filterAndSortGears
 import com.e7orbit.optimizer.sortEquippedHeroes
 import java.text.NumberFormat
@@ -98,19 +106,23 @@ internal fun OptimizerScreen(
     onHeroSelected: (Long) -> Unit,
 ) {
     val optimizer = state.optimizer
-    val builds = remember(state.data.scannedHeroes, state.data.heroes, state.data.gears) {
+    val displayedGears = remember(state.data.gears, optimizer.selectedPlan) {
+        optimizer.selectedPlan?.applyTo(state.data.gears) ?: state.data.gears
+    }
+    val builds = remember(state.data.scannedHeroes, state.data.heroes, displayedGears) {
         buildEquippedHeroes(
             scannedHeroes = state.data.scannedHeroes,
             catalog = state.data.heroes,
-            gears = state.data.gears,
+            gears = displayedGears,
+            includeEmptyScannedHeroes = optimizer.selectedPlan != null,
         )
     }
     val sortedBuilds = remember(builds, optimizer.heroSort) {
         sortEquippedHeroes(builds, optimizer.heroSort)
     }
-    val filteredGears = remember(state.data.gears, optimizer.gearFilter, optimizer.gearSort) {
+    val filteredGears = remember(displayedGears, optimizer.gearFilter, optimizer.gearSort) {
         filterAndSortGears(
-            gears = state.data.gears,
+            gears = displayedGears,
             filter = optimizer.gearFilter,
             sort = optimizer.gearSort,
         )
@@ -153,34 +165,15 @@ internal fun OptimizerScreen(
                         label = {
                             Text(
                                 when (content) {
-                                    OptimizerContent.HEROES -> "英雄配装"
-                                    OptimizerContent.EQUIPMENT -> "全部装备"
-                                    OptimizerContent.POWER -> "百里战力"
+                                    OptimizerContent.HEROES -> "英雄"
+                                    OptimizerContent.EQUIPMENT -> "装备"
+                                    OptimizerContent.POWER -> "战力"
                                 },
                             )
                         },
                     )
                 }
             }
-        }
-
-        item(key = "summary") {
-            OptimizerOverviewSummary(
-                heroCount = builds.size,
-                completeBuilds = builds.count(EquippedHeroBuild::isComplete),
-                gearCount = state.data.gears.size,
-                equippedCount = state.data.gears.count { it.equippedHeroId != null },
-                content = optimizer.content,
-            )
-        }
-
-        item(key = "file-actions") {
-            GearFileActions(
-                importing = state.vpnCapture.importPhase == GearImportPhase.PARSING,
-                canExport = state.data.gears.isNotEmpty(),
-                onImport = onImportGear,
-                onExport = onExportGear,
-            )
         }
 
         when (optimizer.content) {
@@ -202,8 +195,8 @@ internal fun OptimizerScreen(
                     }
                     builds.isEmpty() -> item(key = "empty-builds") {
                         OptimizerEmptyState(
-                            title = "没有已配装英雄",
-                            detail = "当前库存中没有关联英雄实例的装备。重新抓包可同步英雄名称。",
+                            title = "没有可配装英雄",
+                            detail = "当前数据中没有英雄实例。重新抓包或导入包含英雄数据的 gear.txt。",
                         )
                     }
                     else -> items(sortedBuilds, key = EquippedHeroBuild::instanceId) { build ->
@@ -269,7 +262,7 @@ internal fun OptimizerScreen(
                 } else {
                     val heroNames = builds.associate { it.instanceId to it.displayName }
                     powerScreenItems(
-                        gears = state.data.gears,
+                        gears = displayedGears,
                         heroNames = heroNames,
                         importedAtEpochMs = state.vpnCapture.importedAtEpochMs,
                     )
@@ -293,18 +286,23 @@ internal fun OptimizerHeroDetailScreen(
     onOnlyMaxedChanged: (Boolean) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onApplyResult: (OptimizedBuild) -> Unit,
 ) {
     val optimizer = state.optimizer
+    val displayedGears = remember(state.data.gears, optimizer.selectedPlan) {
+        optimizer.selectedPlan?.applyTo(state.data.gears) ?: state.data.gears
+    }
     val build = remember(
         optimizer.selectedEquippedHeroId,
         state.data.scannedHeroes,
         state.data.heroes,
-        state.data.gears,
+        displayedGears,
     ) {
         buildEquippedHeroes(
             scannedHeroes = state.data.scannedHeroes,
             catalog = state.data.heroes,
-            gears = state.data.gears,
+            gears = displayedGears,
+            includeEmptyScannedHeroes = optimizer.selectedPlan != null,
         ).firstOrNull { it.instanceId == optimizer.selectedEquippedHeroId }
     }
     val setOptions = remember(state.data.gears) {
@@ -358,7 +356,7 @@ internal fun OptimizerHeroDetailScreen(
         item(key = "equipment") {
             SectionSurface(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
                 SectionTitle(
-                    title = "当前装备",
+                    title = optimizer.selectedPlan?.let { "方案装备 · ${it.name}" } ?: "游戏当前装备",
                     detail = "${build.items.size} / 6 个部位",
                 )
                 Spacer(Modifier.height(8.dp))
@@ -530,6 +528,9 @@ internal fun OptimizerHeroDetailScreen(
                         build = result,
                         rank = optimizer.results.indexOf(result) + 1,
                         metric = optimizer.metric,
+                        selectedPlan = optimizer.selectedPlan,
+                        heroId = build.instanceId,
+                        onApply = { onApplyResult(result) },
                     )
                 }
             }
@@ -544,92 +545,65 @@ private fun HeroBuildSortControls(
     sort: HeroBuildSort,
     onSortChanged: (HeroBuildSort) -> Unit,
 ) {
-    var fieldExpanded by rememberSaveable { mutableStateOf(false) }
-    var directionExpanded by rememberSaveable { mutableStateOf(false) }
-    SectionSurface(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "英雄排序",
-                modifier = Modifier.weight(1f),
-                fontWeight = FontWeight.SemiBold,
-            )
-            Box {
-                OutlinedButton(onClick = { fieldExpanded = true }) {
-                    Text(sort.field.label)
-                }
-                DropdownMenu(
-                    expanded = fieldExpanded,
-                    onDismissRequest = { fieldExpanded = false },
-                ) {
-                    HeroBuildSortField.entries.forEach { field ->
-                        DropdownMenuItem(
-                            text = { Text(field.label) },
-                            onClick = {
-                                fieldExpanded = false
-                                onSortChanged(sort.copy(field = field))
-                            },
-                        )
-                    }
-                }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "排序",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(10.dp))
+        CompactDropdown(
+            label = sort.field.label,
+            modifier = Modifier.widthIn(max = 180.dp),
+        ) { dismiss ->
+            HeroBuildSortField.entries.forEach { field ->
+                DropdownMenuItem(
+                    text = { Text(field.label) },
+                    onClick = {
+                        dismiss()
+                        onSortChanged(sort.copy(field = field))
+                    },
+                )
             }
-            Spacer(Modifier.width(8.dp))
-            Box {
-                OutlinedButton(onClick = { directionExpanded = true }) {
-                    Text(sort.direction.label)
-                }
-                DropdownMenu(
-                    expanded = directionExpanded,
-                    onDismissRequest = { directionExpanded = false },
-                ) {
-                    GearSortDirection.entries.forEach { direction ->
-                        DropdownMenuItem(
-                            text = { Text(direction.label) },
-                            onClick = {
-                                directionExpanded = false
-                                onSortChanged(sort.copy(direction = direction))
-                            },
-                        )
-                    }
-                }
+        }
+        Spacer(Modifier.width(8.dp))
+        CompactDropdown(label = sort.direction.label) { dismiss ->
+            GearSortDirection.entries.forEach { direction ->
+                DropdownMenuItem(
+                    text = { Text(direction.label) },
+                    onClick = {
+                        dismiss()
+                        onSortChanged(sort.copy(direction = direction))
+                    },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun GearFileActions(
-    importing: Boolean,
-    canExport: Boolean,
-    onImport: () -> Unit,
-    onExport: () -> Unit,
+private fun CompactDropdown(
+    label: String,
+    modifier: Modifier = Modifier,
+    content: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        OutlinedButton(
-            onClick = onImport,
-            modifier = Modifier.weight(1f),
-            enabled = !importing,
-        ) {
-            if (importing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            Text(if (importing) "正在导入" else "导入文件")
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text(
+                label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Button(
-            onClick = onExport,
-            modifier = Modifier.weight(1f),
-            enabled = canExport && !importing,
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
         ) {
-            Text("导出文件")
+            content { expanded = false }
         }
     }
 }
@@ -650,147 +624,146 @@ private fun GearFilterPanel(
     onSortChanged: (GearInventorySort) -> Unit,
     onClear: () -> Unit,
 ) {
-    var sortFieldExpanded by rememberSaveable { mutableStateOf(false) }
-    var sortStatExpanded by rememberSaveable { mutableStateOf(false) }
-    var sortDirectionExpanded by rememberSaveable { mutableStateOf(false) }
-    SectionSurface {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    SectionSurface(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("装备过滤器", fontWeight = FontWeight.Bold)
+                Text(
+                    "筛选 · 排序",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
                 Text(
                     text = if (filter.hasFilters) {
-                        "匹配 $resultCount / $totalCount 件 · ${filter.activeFilterCount()} 项条件"
+                        "$resultCount / $totalCount 件 · ${filter.activeFilterCount()} 项条件"
                     } else {
-                        "共 $totalCount 件装备"
+                        "$resultCount 件 · ${sort.field.label}${sort.direction.label}"
                     },
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             if (filter.hasFilters) {
                 OutlinedButton(onClick = onClear) { Text("清除") }
+                Spacer(Modifier.width(6.dp))
             }
+            Icon(
+                painter = painterResource(R.drawable.ic_chevron_right),
+                contentDescription = if (expanded) "收起" else "展开",
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        Spacer(Modifier.height(12.dp))
-        GearFilterGroup(
-            title = "套装",
-            options = setOptions,
-            selected = filter.setCodes,
-            iconRes = ::gearSetIconRes,
-            onToggle = onSetToggled,
-        )
-        Spacer(Modifier.height(10.dp))
-        GearFilterGroup(
-            title = "主属性",
-            options = mainStatOptions.map { it to statFilterLabel(it) },
-            selected = filter.mainStatTypes,
-            iconRes = ::gearStatIconRes,
-            onToggle = onMainStatToggled,
-        )
-        Spacer(Modifier.height(10.dp))
-        GearFilterGroup(
-            title = "副属性",
-            options = substatOptions.map { it to statFilterLabel(it) },
-            selected = filter.substatTypes,
-            iconRes = ::gearStatIconRes,
-            onToggle = onSubstatToggled,
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = filter.minimumScore.takeIf { it > 0 }?.toString().orEmpty(),
-            onValueChange = { input ->
-                onMinimumScoreChanged(
-                    input.filter(Char::isDigit).take(MAX_STAT_DIGITS).toIntOrNull() ?: 0,
+        AnimatedVisibility(visible = expanded) {
+            Column {
+                Spacer(Modifier.height(12.dp))
+                GearFilterGroup(
+                    title = "套装",
+                    options = setOptions,
+                    selected = filter.setCodes,
+                    iconRes = ::gearSetIconRes,
+                    onToggle = onSetToggled,
                 )
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("最低装备分") },
-            placeholder = { Text("不限") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "排序",
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(5.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box {
-                OutlinedButton(onClick = { sortFieldExpanded = true }) {
-                    Text(sort.field.label)
-                }
-                DropdownMenu(
-                    expanded = sortFieldExpanded,
-                    onDismissRequest = { sortFieldExpanded = false },
+                Spacer(Modifier.height(10.dp))
+                GearFilterGroup(
+                    title = "主属性",
+                    options = mainStatOptions.map { it to statFilterLabel(it) },
+                    selected = filter.mainStatTypes,
+                    iconRes = ::gearStatIconRes,
+                    onToggle = onMainStatToggled,
+                )
+                Spacer(Modifier.height(10.dp))
+                GearFilterGroup(
+                    title = "副属性",
+                    options = substatOptions.map { it to statFilterLabel(it) },
+                    selected = filter.substatTypes,
+                    iconRes = ::gearStatIconRes,
+                    onToggle = onSubstatToggled,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = filter.minimumScore.takeIf { it > 0 }?.toString().orEmpty(),
+                    onValueChange = { input ->
+                        onMinimumScoreChanged(
+                            input.filter(Char::isDigit).take(MAX_STAT_DIGITS).toIntOrNull() ?: 0,
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("最低装备分") },
+                    placeholder = { Text("不限") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    GearSortField.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option.label) },
-                            onClick = {
-                                sortFieldExpanded = false
-                                onSortChanged(
-                                    sort.copy(
-                                        field = option,
-                                        statType = when (option) {
-                                            GearSortField.MAIN_STAT -> mainStatOptions.firstOrNull()
-                                            GearSortField.SUBSTAT -> substatOptions.firstOrNull()
-                                            else -> null
-                                        },
-                                    ),
+                    Text(
+                        "排序",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    CompactDropdown(label = sort.field.label) { dismiss ->
+                        GearSortField.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = {
+                                    dismiss()
+                                    onSortChanged(
+                                        sort.copy(
+                                            field = option,
+                                            statType = when (option) {
+                                                GearSortField.MAIN_STAT -> mainStatOptions.firstOrNull()
+                                                GearSortField.SUBSTAT -> substatOptions.firstOrNull()
+                                                else -> null
+                                            },
+                                        ),
+                                    )
+                                },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    CompactDropdown(label = sort.direction.label) { dismiss ->
+                        GearSortDirection.entries.forEach { direction ->
+                            DropdownMenuItem(
+                                text = { Text(direction.label) },
+                                onClick = {
+                                    dismiss()
+                                    onSortChanged(sort.copy(direction = direction))
+                                },
+                            )
+                        }
+                    }
+                    if (sort.field == GearSortField.MAIN_STAT || sort.field == GearSortField.SUBSTAT) {
+                        Spacer(Modifier.width(8.dp))
+                        CompactDropdown(
+                            label = statFilterLabel(sort.statType ?: "属性"),
+                        ) { dismiss ->
+                            val options = if (sort.field == GearSortField.MAIN_STAT) {
+                                mainStatOptions
+                            } else {
+                                substatOptions
+                            }
+                            options.forEach { type ->
+                                DropdownMenuItem(
+                                    text = { Text(statFilterLabel(type)) },
+                                    onClick = {
+                                        dismiss()
+                                        onSortChanged(sort.copy(statType = type))
+                                    },
                                 )
-                            },
-                        )
-                    }
-                }
-            }
-            Box {
-                OutlinedButton(onClick = { sortDirectionExpanded = true }) {
-                    Text(sort.direction.label)
-                }
-                DropdownMenu(
-                    expanded = sortDirectionExpanded,
-                    onDismissRequest = { sortDirectionExpanded = false },
-                ) {
-                    GearSortDirection.entries.forEach { direction ->
-                        DropdownMenuItem(
-                            text = { Text(direction.label) },
-                            onClick = {
-                                sortDirectionExpanded = false
-                                onSortChanged(sort.copy(direction = direction))
-                            },
-                        )
-                    }
-                }
-            }
-        }
-        if (sort.field == GearSortField.MAIN_STAT || sort.field == GearSortField.SUBSTAT) {
-            Spacer(Modifier.height(8.dp))
-            Box {
-                OutlinedButton(onClick = { sortStatExpanded = true }) {
-                    Text(statFilterLabel(sort.statType ?: "选择属性"))
-                }
-                DropdownMenu(
-                    expanded = sortStatExpanded,
-                    onDismissRequest = { sortStatExpanded = false },
-                ) {
-                    val options = if (sort.field == GearSortField.MAIN_STAT) {
-                        mainStatOptions
-                    } else {
-                        substatOptions
-                    }
-                    options.forEach { type ->
-                        DropdownMenuItem(
-                            text = { Text(statFilterLabel(type)) },
-                            onClick = {
-                                sortStatExpanded = false
-                                onSortChanged(sort.copy(statType = type))
-                            },
-                        )
+                            }
+                        }
                     }
                 }
             }
@@ -1476,7 +1449,14 @@ private fun OptimizerMessageCard(title: String, detail: String, error: Boolean) 
 }
 
 @Composable
-private fun OptimizedBuildCard(build: OptimizedBuild, rank: Int, metric: OptimizerMetric) {
+private fun OptimizedBuildCard(
+    build: OptimizedBuild,
+    rank: Int,
+    metric: OptimizerMetric,
+    selectedPlan: EquipmentPlan?,
+    heroId: Long,
+    onApply: () -> Unit,
+) {
     var expanded by rememberSaveable(
         build.items.joinToString("-") { it.id.toString() },
     ) { mutableStateOf(rank == 1) }
@@ -1527,6 +1507,24 @@ private fun OptimizedBuildCard(build: OptimizedBuild, rank: Int, metric: Optimiz
                         if (index != build.items.lastIndex) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    val alreadyApplied = selectedPlan?.containsBuild(
+                        heroId = heroId,
+                        gearIds = build.items.map(E7Gear::id),
+                    ) == true
+                    Button(
+                        onClick = onApply,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = selectedPlan != null && !alreadyApplied,
+                    ) {
+                        Text(
+                            when {
+                                selectedPlan == null -> "请先创建配装方案"
+                                alreadyApplied -> "已应用到 ${selectedPlan.name}"
+                                else -> "应用到 ${selectedPlan.name}"
+                            },
+                        )
                     }
                 }
             }
