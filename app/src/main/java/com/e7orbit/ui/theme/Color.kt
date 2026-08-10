@@ -41,3 +41,4 @@ internal val WhiteSurfaceContainerHighest = Color(0xFFEBEBEB)
 
 val OrbitSuccess = Color(0xFF247A52)
 val OrbitWarning = Color(0xFF8A5A00)
+val OrbitArtifactHighlight = Color(0xFFC2410C)

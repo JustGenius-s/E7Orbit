@@ -62,6 +62,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,6 +75,7 @@ import com.e7orbit.data.E7HeroStats
 import com.e7orbit.data.E7HeroSkill
 import com.e7orbit.data.HeroRtaAnalysis
 import com.e7orbit.data.RtaTier
+import com.e7orbit.ui.theme.OrbitArtifactHighlight
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -1047,6 +1050,7 @@ internal fun ArtifactDetailScreen(
                     ArtifactLevelSection(
                         title = "Base Level",
                         description = artifact.description,
+                        comparisonDescription = artifact.maxDescription,
                         attack = artifact.baseAttack,
                         health = artifact.baseHealth,
                     )
@@ -1056,6 +1060,7 @@ internal fun ArtifactDetailScreen(
                     ArtifactLevelSection(
                         title = "Max Level",
                         description = artifact.maxDescription,
+                        comparisonDescription = artifact.description,
                         attack = artifact.attack,
                         health = artifact.health,
                     )
@@ -1107,6 +1112,7 @@ internal fun ArtifactDetailScreen(
                     ArtifactLevelSection(
                         title = "Base Level",
                         description = artifact.description,
+                        comparisonDescription = artifact.maxDescription,
                         attack = artifact.baseAttack,
                         health = artifact.baseHealth,
                     )
@@ -1116,6 +1122,7 @@ internal fun ArtifactDetailScreen(
                     ArtifactLevelSection(
                         title = "Max Level",
                         description = artifact.maxDescription,
+                        comparisonDescription = artifact.description,
                         attack = artifact.attack,
                         health = artifact.health,
                     )
@@ -1129,6 +1136,7 @@ internal fun ArtifactDetailScreen(
 private fun ArtifactLevelSection(
     title: String,
     description: String?,
+    comparisonDescription: String? = null,
     attack: Int?,
     health: Int?,
 ) {
@@ -1140,8 +1148,24 @@ private fun ArtifactLevelSection(
         )
         description?.takeIf(String::isNotBlank)?.let { desc ->
             Spacer(Modifier.height(8.dp))
+            val highlightedDescription = remember(desc, comparisonDescription) {
+                buildAnnotatedString {
+                    append(desc)
+                    comparisonDescription
+                        ?.takeIf(String::isNotBlank)
+                        ?.let { otherDescription ->
+                            changedDescriptionRanges(otherDescription, desc).forEach { range ->
+                                addStyle(
+                                    style = SpanStyle(color = OrbitArtifactHighlight),
+                                    start = range.start,
+                                    end = range.endExclusive,
+                                )
+                            }
+                        }
+                }
+            }
             Text(
-                desc,
+                highlightedDescription,
                 style = MaterialTheme.typography.bodyLarge,
             )
         }
