@@ -13,12 +13,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 private const val SUPABASE_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1_000L
-private const val SUPABASE_CACHE_VERSION = 4 // 4: add skill buffs/debuffs
+private const val SUPABASE_CACHE_VERSION = 5 // 5: resolve skill effect slug arrays from shared catalog
 private const val SUPABASE_PAGE_SIZE = 500
 
 /**
@@ -59,10 +56,14 @@ class SupabaseCatalogRepository(
         }
 
         try {
+            val effects = runCatching {
+                loadAllRows<SupabaseStatusEffectRow>("status_effect_catalog", listOf("slug"))
+            }.getOrDefault(emptyList())
             val payload = SupabaseCatalogPayload(
                 cacheVersion = SUPABASE_CACHE_VERSION,
                 heroes = loadAllRows("hero_catalog", listOf("code")),
                 skills = loadAllRows("hero_skills", listOf("hero_code", "slot")),
+                effects = effects,
                 artifacts = loadAllRows("artifact_catalog", listOf("code")),
             )
             cacheFile.writeText(json.encodeToString(payload))
@@ -106,7 +107,16 @@ internal data class SupabaseCatalogPayload(
     val cacheVersion: Int = 0,
     val heroes: List<SupabaseHeroRow> = emptyList(),
     val skills: List<SupabaseSkillRow> = emptyList(),
+    val effects: List<SupabaseStatusEffectRow> = emptyList(),
     val artifacts: List<SupabaseArtifactRow> = emptyList(),
+)
+
+@Serializable
+internal data class SupabaseStatusEffectRow(
+    val slug: String = "",
+    val label: String = "",
+    val description: String? = null,
+    @SerialName("icon_url") val iconUrl: String? = null,
 )
 
 @Serializable
@@ -168,8 +178,8 @@ internal data class SupabaseSkillRow(
     @SerialName("can_enhance") val canEnhance: Boolean = false,
     val values: List<JsonElement> = emptyList(),
     val enhancements: List<String> = emptyList(),
-    val buffs: List<JsonElement> = emptyList(),
-    val debuffs: List<JsonElement> = emptyList(),
+    @SerialName("buff_slugs") val buffSlugs: List<String> = emptyList(),
+    @SerialName("debuff_slugs") val debuffSlugs: List<String> = emptyList(),
 )
 
 internal fun SupabaseHeroRow.toStats(fallback: E7HeroStats? = null): E7HeroStats? {
@@ -198,35 +208,44 @@ internal fun SupabaseHeroRow.toStats(fallback: E7HeroStats? = null): E7HeroStats
     )
 }
 
-internal fun SupabaseSkillRow.toDomain(): E7HeroSkill = E7HeroSkill(
-    slot = slot,
-    name = name,
-    iconUrl = iconUrl,
-    description = description,
-    enhancedDescription = enhancedDescription,
-    cooldown = cooldown,
-    soulGain = soulGain,
-    soulRequirement = soulRequirement,
-    soulDescription = soulDescription,
-    attackRate = attackRate,
-    pow = pow,
-    isPassive = isPassive,
-    canEnhance = canEnhance,
-    values = values,
-    enhancements = enhancements,
-    buffs = buffs.mapNotNull(::parseStatusEffect),
-    debuffs = debuffs.mapNotNull(::parseStatusEffect),
-)
-
-private fun parseStatusEffect(element: JsonElement): E7StatusEffect? {
-    val obj = element as? JsonObject ?: return null
-    val slug = obj["slug"]?.jsonPrimitive?.contentOrNull ?: return null
-    val label = obj["label"]?.jsonPrimitive?.contentOrNull ?: slug
-    return E7StatusEffect(
-        slug = slug,
-        label = label,
-        description = obj["description"]?.jsonPrimitive?.contentOrNull,
-        iconUrl = obj["icon_url"]?.jsonPrimitive?.contentOrNull
-            ?: obj["iconUrl"]?.jsonPrimitive?.contentOrNull,
+internal fun SupabaseSkillRow.toDomain(
+    effectsBySlug: Map<String, SupabaseStatusEffectRow> = emptyMap(),
+): E7HeroSkill {
+    val normalizedBuffs = buffSlugs.map { slug ->
+        effectsBySlug[slug]?.toDomain() ?: slug.toFallbackEffect()
+    }
+    val normalizedDebuffs = debuffSlugs.map { slug ->
+        effectsBySlug[slug]?.toDomain() ?: slug.toFallbackEffect()
+    }
+    return E7HeroSkill(
+        slot = slot,
+        name = name,
+        iconUrl = iconUrl,
+        description = description,
+        enhancedDescription = enhancedDescription,
+        cooldown = cooldown,
+        soulGain = soulGain,
+        soulRequirement = soulRequirement,
+        soulDescription = soulDescription,
+        attackRate = attackRate,
+        pow = pow,
+        isPassive = isPassive,
+        canEnhance = canEnhance,
+        values = values,
+        enhancements = enhancements,
+        buffs = normalizedBuffs,
+        debuffs = normalizedDebuffs,
     )
 }
+
+private fun SupabaseStatusEffectRow.toDomain(): E7StatusEffect = E7StatusEffect(
+    slug = slug,
+    label = label.ifBlank { slug },
+    description = description,
+    iconUrl = iconUrl,
+)
+
+private fun String.toFallbackEffect(): E7StatusEffect = E7StatusEffect(
+    slug = this,
+    label = this,
+)

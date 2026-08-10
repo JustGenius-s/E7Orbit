@@ -227,9 +227,14 @@ class E7DataRepository(
         val officialHeroes = officialPayload?.let(::parseOfficialHeroes).orEmpty()
         val fribbelsHeroes = fribbelsPayload?.let(::parseFribbelsHeroes).orEmpty()
         val maintainedHeroes = maintainedCatalog?.heroes.orEmpty()
+        val effectsBySlug = maintainedCatalog?.effects.orEmpty().associateBy(SupabaseStatusEffectRow::slug)
         val maintainedSkills = maintainedCatalog?.skills.orEmpty()
             .groupBy { it.heroCode }
-            .mapValues { (_, skills) -> skills.sortedBy(SupabaseSkillRow::slot).map(SupabaseSkillRow::toDomain) }
+            .mapValues { (_, skills) ->
+                skills.sortedBy(SupabaseSkillRow::slot).map { skill ->
+                    skill.toDomain(effectsBySlug)
+                }
+            }
         val allCodes = linkedSetOf<String>().apply {
             officialHeroes.forEach { add(it.code) }
             fribbelsHeroes.mapNotNull { it.code }.forEach(::add)

@@ -46,8 +46,8 @@ create table if not exists public.hero_skills (
     can_enhance boolean not null default false,
     values jsonb not null default '[]'::jsonb,
     enhancements jsonb not null default '[]'::jsonb,
-    buffs jsonb not null default '[]'::jsonb,
-    debuffs jsonb not null default '[]'::jsonb,
+    buff_slugs text[] not null default '{}',
+    debuff_slugs text[] not null default '{}',
     source text not null default 'epic7db',
     source_updated_at timestamptz,
     updated_at timestamptz not null default now(),
@@ -56,8 +56,24 @@ create table if not exists public.hero_skills (
 
 create index if not exists hero_skills_hero_code_idx on public.hero_skills(hero_code);
 
+create table if not exists public.status_effect_catalog (
+    slug text primary key,
+    label text not null,
+    description text,
+    icon_url text,
+    source text not null default 'gamedatabase',
+    source_updated_at timestamptz,
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists hero_skills_buff_slugs_idx
+    on public.hero_skills using gin (buff_slugs);
+create index if not exists hero_skills_debuff_slugs_idx
+    on public.hero_skills using gin (debuff_slugs);
+
 alter table public.hero_catalog enable row level security;
 alter table public.hero_skills enable row level security;
+alter table public.status_effect_catalog enable row level security;
 
 drop policy if exists "Public can read hero catalog" on public.hero_catalog;
 create policy "Public can read hero catalog"
@@ -68,6 +84,12 @@ create policy "Public can read hero catalog"
 drop policy if exists "Public can read hero skills" on public.hero_skills;
 create policy "Public can read hero skills"
     on public.hero_skills for select
+    to anon, authenticated
+    using (true);
+
+drop policy if exists "Public can read status effect catalog" on public.status_effect_catalog;
+create policy "Public can read status effect catalog"
+    on public.status_effect_catalog for select
     to anon, authenticated
     using (true);
 

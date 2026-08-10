@@ -58,14 +58,15 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 英雄图鉴支持可选的 Supabase 维护源。应用通过 HTTPS PostgREST 只读以下公开表：
 
 - `hero_catalog`：英雄身份、图片、六星满觉基础属性和简介
-- `hero_skills`：技能图标、名称、描述、冷却、灵魂效果、倍率和强化列表
+- `hero_skills`：技能图标、名称、描述、冷却、倍率，以及按展示顺序保存的 `buff_slugs`/`debuff_slugs`
+- `status_effect_catalog`：全局唯一的增益/减益名称、说明和图标
 - `artifact_catalog`：神器立绘、满级属性、基础/满级效果描述和背景故事
 
 没有配置 Supabase，或云端请求失败时，应用仍使用本地缓存以及官方 Stove/Fribbels 公开数据。云端数据成功读取后会缓存 7 天，适合社区源短暂失效时继续使用。
 
 初始化数据库：
 
-1. 在 Supabase SQL Editor 执行 [`supabase/schema.sql`](supabase/schema.sql)。
+1. 在 Supabase SQL Editor 执行 [`supabase/schema.sql`](supabase/schema.sql)。已有包含 `hero_skills.buffs/debuffs` JSONB 列的数据库，应改为执行 [`supabase/migrate-skill-effects.sql`](supabase/migrate-skill-effects.sql)：该脚本会创建效果目录，直接从现有 JSONB 秒级回填技能的 slug 数组，然后删除旧 JSONB 列，无需重新抓取全部英雄技能。
 2. 在本机 `local.properties` 添加 `supabase.url` 和 `supabase.anonKey`。这两个值会进入本地构建的 `BuildConfig`，不会提交到 Git。
 3. 使用 service-role key 执行同步脚本。service-role key 只放在当前终端环境变量中，不要写入工程文件：
 

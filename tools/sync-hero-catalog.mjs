@@ -590,13 +590,46 @@ function skillRows(heroes, details, syncedAt) {
   return rows;
 }
 
-async function writeExport(directory, heroes, skills, artifacts = []) {
+function normalizeSkillEffects(rows, syncedAt) {
+  const effectBySlug = new Map();
+  const skills = rows.map((row) => {
+    const { buffs = [], debuffs = [], ...skill } = row;
+    for (const effect of [...buffs, ...debuffs]) {
+      if (!effect?.slug) continue;
+      const existing = effectBySlug.get(effect.slug);
+      effectBySlug.set(effect.slug, {
+        slug: effect.slug,
+        label: effect.label || existing?.label || effect.slug,
+        description: effect.description || existing?.description || null,
+        icon_url: effect.icon_url || existing?.icon_url || null,
+        source: "gamedatabase",
+        source_updated_at: syncedAt,
+        updated_at: syncedAt,
+      });
+    }
+    return {
+      ...skill,
+      buff_slugs: [...new Set(buffs.map((effect) => effect?.slug).filter(Boolean))],
+      debuff_slugs: [...new Set(debuffs.map((effect) => effect?.slug).filter(Boolean))],
+    };
+  });
+  return {
+    skills,
+    effects: [...effectBySlug.values()].sort((left, right) => left.slug.localeCompare(right.slug)),
+  };
+}
+
+async function writeExport(directory, heroes, skills, artifacts = [], effects = []) {
   const { mkdir, writeFile } = await import("node:fs/promises");
   await mkdir(directory, { recursive: true });
   await writeFile(`${directory}/hero_catalog.json`, JSON.stringify(heroes, null, 2));
   await writeFile(`${directory}/hero_skills.json`, JSON.stringify(skills, null, 2));
   await writeFile(`${directory}/artifact_catalog.json`, JSON.stringify(artifacts, null, 2));
-  console.log(`Exported ${heroes.length} heroes, ${skills.length} skills and ${artifacts.length} artifacts to ${directory}`);
+  await writeFile(`${directory}/status_effect_catalog.json`, JSON.stringify(effects, null, 2));
+  console.log(
+    `Exported ${heroes.length} heroes, ${skills.length} skills, ` +
+    `${effects.length} effects and ${artifacts.length} artifacts to ${directory}`,
+  );
 }
 
 let epicSevenDbArtifactSlugsPromise = null;
@@ -1003,14 +1036,14 @@ if ([...details.values()].every((detail) => !detail?.skills?.length)) {
   const webDetails = await fetchWebSkills(fribbelsHeroes, syncedAt);
   webDetails.forEach((detail, code) => details.set(code, detail));
 }
-const heroes = await mirrorHeroImages(
-  fribbelsHeroes
-    .map(({ hero, code }) => toHeroRow({ ...hero, code }, syncedAt, details.get(code)))
-    .filter(Boolean),
-);
-const skills = await mirrorSkillImages(skillRows(fribbelsHeroes, details, syncedAt));
+const heroRows = fribbelsHeroes
+  .map(({ hero, code }) => toHeroRow({ ...hero, code }, syncedAt, details.get(code)))
+  .filter(Boolean);
+const heroes = skillsOnly ? heroRows : await mirrorHeroImages(heroRows);
+const rawSkills = await mirrorSkillImages(skillRows(fribbelsHeroes, details, syncedAt));
+const { skills, effects } = normalizeSkillEffects(rawSkills, syncedAt);
 if (exportDir) {
-  await writeExport(exportDir, heroes, skills, []);
+  await writeExport(exportDir, heroes, skills, [], effects);
 }
 if (!exportDir && !skillsOnly) {
   console.log(`Preparing ${heroes.length} hero rows`);
@@ -1018,7 +1051,11 @@ if (!exportDir && !skillsOnly) {
 }
 
 if (skills.length && !exportDir) {
-  console.log(`Preparing ${skills.length} skill rows for ${new Set(skills.map((skill) => skill.hero_code)).size} heroes`);
+  const syncedHeroCodes = [...new Set(skills.map((skill) => skill.hero_code))];
+  console.log(`Preparing ${skills.length} skill rows for ${syncedHeroCodes.length} heroes`);
+  if (effects.length) {
+    await upsert("status_effect_catalog", effects, "slug");
+  }
   await upsert("hero_skills", skills, "hero_code,slot");
 } else if (!skills.length) {
   console.warn("No skill rows were returned; hero_catalog was not changed in skills-only mode.");
