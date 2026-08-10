@@ -155,6 +155,7 @@ internal fun OptimizerScreen(
                                 when (content) {
                                     OptimizerContent.HEROES -> "英雄配装"
                                     OptimizerContent.EQUIPMENT -> "全部装备"
+                                    OptimizerContent.POWER -> "百里战力"
                                 },
                             )
                         },
@@ -254,6 +255,24 @@ internal fun OptimizerScreen(
                             }?.displayName,
                         )
                     }
+                }
+            }
+
+            OptimizerContent.POWER -> {
+                if (state.data.gears.isEmpty()) {
+                    item(key = "empty-power") {
+                        OptimizerEmptyState(
+                            title = "尚未导入装备",
+                            detail = "请先在首页开启抓包并进入游戏背包。导入后即可查看百里战力。",
+                        )
+                    }
+                } else {
+                    val heroNames = builds.associate { it.instanceId to it.displayName }
+                    powerScreenItems(
+                        gears = state.data.gears,
+                        heroNames = heroNames,
+                        importedAtEpochMs = state.vpnCapture.importedAtEpochMs,
+                    )
                 }
             }
         }
@@ -1208,7 +1227,7 @@ private fun GearSlotLabel(
 }
 
 @Composable
-private fun GearSlotAsset(
+internal fun GearSlotAsset(
     slot: GearSlot,
     rank: String?,
     modifier: Modifier = Modifier,
@@ -1231,12 +1250,12 @@ private fun GearSlotAsset(
     }
 }
 
-private data class GearRankIconStyle(
+internal data class GearRankIconStyle(
     val border: Color,
     val background: Color,
 )
 
-private fun gearRankIconStyle(rank: String?): GearRankIconStyle = when (rank?.lowercase()) {
+internal fun gearRankIconStyle(rank: String?): GearRankIconStyle = when (rank?.lowercase()) {
     "epic", "传说" -> GearRankIconStyle(Color(0xFFA20707), Color(0xFFE53935))
     "heroic", "英雄" -> GearRankIconStyle(Color(0xFF8E24AA), Color(0xFFD05CE3))
     "rare", "稀有" -> GearRankIconStyle(Color(0xFF1722F9), Color(0xFF4D8DFF))
@@ -1249,7 +1268,7 @@ private fun gearRankIconStyle(rank: String?): GearRankIconStyle = when (rank?.lo
 }
 
 @Composable
-private fun GearAssetIcon(
+internal fun GearAssetIcon(
     resId: Int,
     contentDescription: String?,
     modifier: Modifier = Modifier,

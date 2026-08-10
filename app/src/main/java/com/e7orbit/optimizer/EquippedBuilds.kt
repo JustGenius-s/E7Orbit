@@ -17,6 +17,7 @@ import kotlinx.serialization.json.Json
 enum class OptimizerContent {
     HEROES,
     EQUIPMENT,
+    POWER,
 }
 
 enum class HeroBuildSortField(val label: String) {
