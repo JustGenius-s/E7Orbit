@@ -1,7 +1,7 @@
 package com.e7orbit.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -37,7 +37,7 @@ internal fun PowerRadarChart(
     gridColor: Color = Color(0xFFD8D8D8),      // 浅灰网格
 ) {
     require(values.size == 6) { "PowerRadarChart requires exactly 6 axes" }
-    BoxWithConstraints(modifier = modifier) {
+    Box(modifier = modifier) {
         val density = androidx.compose.ui.platform.LocalDensity.current
         val labelTextSize = with(density) { 14.sp.toPx() }
         val valueTextSize = with(density) { 12.sp.toPx() }

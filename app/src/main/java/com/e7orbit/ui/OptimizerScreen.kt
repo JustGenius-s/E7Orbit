@@ -1,6 +1,18 @@
 package com.e7orbit.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.BoundsTransform
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,17 +29,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -35,16 +47,19 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,19 +67,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.e7orbit.R
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7GearStat
 import com.e7orbit.data.E7Hero
-import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.GearSlot
 import com.e7orbit.optimizer.EquippedHeroBuild
 import com.e7orbit.optimizer.EquippedSetSummary
@@ -89,6 +107,7 @@ import com.e7orbit.optimizer.sortEquippedHeroes
 import java.text.NumberFormat
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun OptimizerScreen(
     state: MainUiState,
@@ -101,9 +120,9 @@ internal fun OptimizerScreen(
     onGearMinimumScoreChanged: (Int) -> Unit,
     onGearSortChanged: (GearInventorySort) -> Unit,
     onClearGearFilters: () -> Unit,
-    onImportGear: () -> Unit,
-    onExportGear: () -> Unit,
     onHeroSelected: (Long) -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
 ) {
     val optimizer = state.optimizer
     val displayedGears = remember(state.data.gears, optimizer.selectedPlan) {
@@ -146,138 +165,286 @@ internal fun OptimizerScreen(
             .distinct()
             .sortedBy(::statFilterLabel)
     }
+    val spatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
+    val effectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    Column(modifier = modifier.fillMaxSize()) {
+        OptimizerContentTabs(
+            content = optimizer.content,
+            onContentChanged = onContentChanged,
+        )
+        AnimatedContent(
+            targetState = optimizer.content,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            transitionSpec = {
+                val direction = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+                val enter = slideInHorizontally(
+                    animationSpec = spatialSpec,
+                    initialOffsetX = { width -> direction * width / 4 },
+                ) + fadeIn(animationSpec = effectsSpec)
+                val exit = slideOutHorizontally(
+                    animationSpec = spatialSpec,
+                    targetOffsetX = { width -> -direction * width / 4 },
+                ) + fadeOut(animationSpec = effectsSpec)
+                (enter togetherWith exit).apply { targetContentZIndex = 1f }
+            },
+            contentKey = OptimizerContent::name,
+            label = "optimizer content",
+        ) { content ->
+            when (content) {
+                OptimizerContent.HEROES -> OptimizerHeroesContent(
+                    state = state,
+                    builds = builds,
+                    sortedBuilds = sortedBuilds,
+                    onHeroSortChanged = onHeroSortChanged,
+                    onHeroSelected = onHeroSelected,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                )
+
+                OptimizerContent.EQUIPMENT -> OptimizerEquipmentContent(
+                    state = state,
+                    builds = builds,
+                    displayedGears = displayedGears,
+                    filteredGears = filteredGears,
+                    gearSetOptions = gearSetOptions,
+                    gearMainStatOptions = gearMainStatOptions,
+                    gearSubstatOptions = gearSubstatOptions,
+                    onGearSetToggled = onGearSetToggled,
+                    onGearMainStatToggled = onGearMainStatToggled,
+                    onGearSubstatToggled = onGearSubstatToggled,
+                    onGearMinimumScoreChanged = onGearMinimumScoreChanged,
+                    onGearSortChanged = onGearSortChanged,
+                    onClearGearFilters = onClearGearFilters,
+                )
+
+                OptimizerContent.POWER -> OptimizerPowerContent(
+                    state = state,
+                    builds = builds,
+                    displayedGears = displayedGears,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OptimizerContentTabs(
+    content: OptimizerContent,
+    onContentChanged: (OptimizerContent) -> Unit,
+) {
+    PrimaryTabRow(
+        selectedTabIndex = content.ordinal,
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.background,
     ) {
-        item(key = "mode") {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                OptimizerContent.entries.forEachIndexed { index, content ->
-                    SegmentedButton(
-                        selected = optimizer.content == content,
-                        onClick = { onContentChanged(content) },
-                        shape = SegmentedButtonDefaults.itemShape(
-                            index = index,
-                            count = OptimizerContent.entries.size,
-                        ),
-                        label = {
-                            Text(
-                                when (content) {
-                                    OptimizerContent.HEROES -> "英雄"
-                                    OptimizerContent.EQUIPMENT -> "装备"
-                                    OptimizerContent.POWER -> "战力"
-                                },
-                            )
+        OptimizerContent.entries.forEach { entry ->
+            Tab(
+                selected = content == entry,
+                onClick = { onContentChanged(entry) },
+                text = {
+                    Text(
+                        when (entry) {
+                            OptimizerContent.HEROES -> "英雄"
+                            OptimizerContent.EQUIPMENT -> "装备"
+                            OptimizerContent.POWER -> "战力"
                         },
                     )
-                }
+                },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun OptimizerHeroesContent(
+    state: MainUiState,
+    builds: List<EquippedHeroBuild>,
+    sortedBuilds: List<EquippedHeroBuild>,
+    onHeroSortChanged: (HeroBuildSort) -> Unit,
+    onHeroSelected: (Long) -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+) {
+    val itemSpatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
+    val itemEffectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (builds.isNotEmpty()) {
+            item(key = "hero-summary") {
+                OptimizerOverviewSummary(
+                    heroCount = builds.size,
+                    completeBuilds = builds.count(EquippedHeroBuild::isComplete),
+                    gearCount = state.data.gears.size,
+                    equippedCount = state.data.gears.count { it.equippedHeroId != null },
+                    content = OptimizerContent.HEROES,
+                )
+            }
+            item(key = "hero-sort") {
+                HeroBuildSortControls(
+                    sort = state.optimizer.heroSort,
+                    onSortChanged = onHeroSortChanged,
+                )
             }
         }
-
-        when (optimizer.content) {
-            OptimizerContent.HEROES -> {
-                if (builds.isNotEmpty()) {
-                    item(key = "hero-sort") {
-                        HeroBuildSortControls(
-                            sort = optimizer.heroSort,
-                            onSortChanged = onHeroSortChanged,
-                        )
-                    }
-                }
-                when {
-                    state.data.gears.isEmpty() -> item(key = "empty-gears") {
-                        OptimizerEmptyState(
-                            title = "尚未导入装备",
-                            detail = "请在首页开启抓包并进入游戏背包。",
-                        )
-                    }
-                    builds.isEmpty() -> item(key = "empty-builds") {
-                        OptimizerEmptyState(
-                            title = "没有可配装英雄",
-                            detail = "当前数据中没有英雄实例。重新抓包或导入包含英雄数据的 gear.txt。",
-                        )
-                    }
-                    else -> items(sortedBuilds, key = EquippedHeroBuild::instanceId) { build ->
-                        EquippedHeroCard(
-                            build = build,
-                            preferenceConfigured = optimizer.heroPreferences[build.instanceId]
-                                ?.isConfigured == true,
-                            onClick = { onHeroSelected(build.instanceId) },
-                        )
-                    }
-                }
+        when {
+            state.data.gears.isEmpty() -> item(key = "empty-gears") {
+                OptimizerEmptyState(
+                    title = "尚未导入装备",
+                    detail = "请在首页开启抓包并进入游戏背包。",
+                )
             }
-
-            OptimizerContent.EQUIPMENT -> {
-                item(key = "gear-filters") {
-                    GearFilterPanel(
-                        filter = optimizer.gearFilter,
-                        sort = optimizer.gearSort,
-                        resultCount = filteredGears.size,
-                        totalCount = state.data.gears.size,
-                        setOptions = gearSetOptions,
-                        mainStatOptions = gearMainStatOptions,
-                        substatOptions = gearSubstatOptions,
-                        onSetToggled = onGearSetToggled,
-                        onMainStatToggled = onGearMainStatToggled,
-                        onSubstatToggled = onGearSubstatToggled,
-                        onMinimumScoreChanged = onGearMinimumScoreChanged,
-                        onSortChanged = onGearSortChanged,
-                        onClear = onClearGearFilters,
-                    )
-                }
-                if (filteredGears.isEmpty()) {
-                    item(key = "empty-equipment") {
-                        OptimizerEmptyState(
-                            title = if (state.data.gears.isEmpty()) "尚未导入装备" else "没有匹配的装备",
-                            detail = if (state.data.gears.isEmpty()) {
-                                "请在首页开启抓包并进入游戏背包。"
-                            } else {
-                                "请更换搜索条件。"
-                            },
-                        )
-                    }
-                } else {
-                    items(filteredGears, key = E7Gear::id) { gear ->
-                        InventoryGearCard(
-                            gear = gear,
-                            equippedName = builds.firstOrNull {
-                                it.instanceId == gear.equippedHeroId
-                            }?.displayName,
-                        )
-                    }
-                }
+            builds.isEmpty() -> item(key = "empty-builds") {
+                OptimizerEmptyState(
+                    title = "没有可配装英雄",
+                    detail = "当前数据中没有英雄实例。重新抓包或导入包含英雄数据的 gear.txt。",
+                )
             }
-
-            OptimizerContent.POWER -> {
-                if (state.data.gears.isEmpty()) {
-                    item(key = "empty-power") {
-                        OptimizerEmptyState(
-                            title = "尚未导入装备",
-                            detail = "请先在首页开启抓包并进入游戏背包。导入后即可查看百里战力。",
-                        )
-                    }
-                } else {
-                    val heroNames = builds.associate { it.instanceId to it.displayName }
-                    powerScreenItems(
-                        gears = displayedGears,
-                        heroNames = heroNames,
-                        importedAtEpochMs = state.vpnCapture.importedAtEpochMs,
-                    )
-                }
+            else -> items(sortedBuilds, key = EquippedHeroBuild::instanceId) { build ->
+                EquippedHeroCard(
+                    build = build,
+                    preferenceConfigured = state.optimizer.heroPreferences[build.instanceId]
+                        ?.isConfigured == true,
+                    onClick = { onHeroSelected(build.instanceId) },
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = itemEffectsSpec,
+                        placementSpec = itemSpatialSpec,
+                        fadeOutSpec = itemEffectsSpec,
+                    ),
+                )
             }
         }
+        item(key = "footer") { Spacer(Modifier.height(12.dp)) }
+    }
+}
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun OptimizerEquipmentContent(
+    state: MainUiState,
+    builds: List<EquippedHeroBuild>,
+    displayedGears: List<E7Gear>,
+    filteredGears: List<E7Gear>,
+    gearSetOptions: List<Pair<String, String>>,
+    gearMainStatOptions: List<String>,
+    gearSubstatOptions: List<String>,
+    onGearSetToggled: (String) -> Unit,
+    onGearMainStatToggled: (String) -> Unit,
+    onGearSubstatToggled: (String) -> Unit,
+    onGearMinimumScoreChanged: (Int) -> Unit,
+    onGearSortChanged: (GearInventorySort) -> Unit,
+    onClearGearFilters: () -> Unit,
+) {
+    val itemSpatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
+    val itemEffectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (displayedGears.isNotEmpty()) {
+            item(key = "gear-summary") {
+                OptimizerOverviewSummary(
+                    heroCount = builds.size,
+                    completeBuilds = builds.count(EquippedHeroBuild::isComplete),
+                    gearCount = displayedGears.size,
+                    equippedCount = displayedGears.count { it.equippedHeroId != null },
+                    content = OptimizerContent.EQUIPMENT,
+                )
+            }
+        }
+        item(key = "gear-filters") {
+            GearFilterPanel(
+                filter = state.optimizer.gearFilter,
+                sort = state.optimizer.gearSort,
+                resultCount = filteredGears.size,
+                totalCount = displayedGears.size,
+                setOptions = gearSetOptions,
+                mainStatOptions = gearMainStatOptions,
+                substatOptions = gearSubstatOptions,
+                onSetToggled = onGearSetToggled,
+                onMainStatToggled = onGearMainStatToggled,
+                onSubstatToggled = onGearSubstatToggled,
+                onMinimumScoreChanged = onGearMinimumScoreChanged,
+                onSortChanged = onGearSortChanged,
+                onClear = onClearGearFilters,
+            )
+        }
+        if (filteredGears.isEmpty()) {
+            item(key = "empty-equipment") {
+                OptimizerEmptyState(
+                    title = if (state.data.gears.isEmpty()) "尚未导入装备" else "没有匹配的装备",
+                    detail = if (state.data.gears.isEmpty()) {
+                        "请在首页开启抓包并进入游戏背包。"
+                    } else {
+                        "请更换筛选条件。"
+                    },
+                )
+            }
+        } else {
+            items(filteredGears, key = E7Gear::id) { gear ->
+                InventoryGearCard(
+                    gear = gear,
+                    equippedName = builds.firstOrNull {
+                        it.instanceId == gear.equippedHeroId
+                    }?.displayName,
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = itemEffectsSpec,
+                        placementSpec = itemSpatialSpec,
+                        fadeOutSpec = itemEffectsSpec,
+                    ),
+                )
+            }
+        }
         item(key = "footer") { Spacer(Modifier.height(12.dp)) }
     }
 }
 
 @Composable
+private fun OptimizerPowerContent(
+    state: MainUiState,
+    builds: List<EquippedHeroBuild>,
+    displayedGears: List<E7Gear>,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (state.data.gears.isEmpty()) {
+            item(key = "empty-power") {
+                OptimizerEmptyState(
+                    title = "尚未导入装备",
+                    detail = "请先在首页开启抓包并进入游戏背包。导入后即可查看百里战力。",
+                )
+            }
+        } else {
+            powerScreenItems(
+                gears = displayedGears,
+                heroNames = builds.associate { it.instanceId to it.displayName },
+                importedAtEpochMs = state.vpnCapture.importedAtEpochMs,
+            )
+        }
+        item(key = "footer") { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
 internal fun OptimizerHeroDetailScreen(
     state: MainUiState,
     modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
     onMetricChanged: (OptimizerMetric) -> Unit,
     onMinimumChanged: (OptimizerStat, Int) -> Unit,
     onRequiredSetToggled: (String) -> Unit,
@@ -327,13 +494,60 @@ internal fun OptimizerHeroDetailScreen(
         return
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item(key = "hero") { EquippedHeroHeader(build) }
+    var selectedTab by rememberSaveable(build.instanceId) {
+        mutableIntStateOf(if (optimizer.phase == OptimizerPhase.IDLE) 0 else 2)
+    }
+    LaunchedEffect(optimizer.phase) {
+        if (optimizer.phase != OptimizerPhase.IDLE) selectedTab = 2
+    }
+    val spatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
+    val effectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
 
+    Column(modifier = modifier.fillMaxSize()) {
+        EquippedHeroHeader(
+            build = build,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+            modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp),
+        )
+        PrimaryTabRow(
+            selectedTabIndex = selectedTab,
+            modifier = Modifier.fillMaxWidth(),
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            listOf("概览", "偏好", "结果").forEachIndexed { index, label ->
+                Tab(
+                    selected = selectedTab == index,
+                    onClick = { selectedTab = index },
+                    text = { Text(label) },
+                )
+            }
+        }
+        AnimatedContent(
+            targetState = selectedTab,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            transitionSpec = {
+                val direction = if (targetState >= initialState) 1 else -1
+                val enter = slideInHorizontally(
+                    animationSpec = spatialSpec,
+                    initialOffsetX = { width -> direction * width / 4 },
+                ) + fadeIn(animationSpec = effectsSpec)
+                val exit = slideOutHorizontally(
+                    animationSpec = spatialSpec,
+                    targetOffsetX = { width -> -direction * width / 4 },
+                ) + fadeOut(animationSpec = effectsSpec)
+                (enter togetherWith exit).apply { targetContentZIndex = 1f }
+            },
+            label = "optimizer hero tab",
+        ) { tab ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+        if (tab == 0) {
         item(key = "stats") {
             SectionSurface {
                 SectionTitle(
@@ -369,7 +583,9 @@ internal fun OptimizerHeroDetailScreen(
                 }
             }
         }
+        }
 
+        if (tab == 1) {
         item(key = "preference") {
             SectionSurface {
                 SectionTitle(
@@ -486,18 +702,16 @@ internal fun OptimizerHeroDetailScreen(
                 )
             }
         }
-
-        item(key = "action") {
-            OptimizerAction(
-                state = state,
-                selectedHero = build.hero,
-                onStart = onStart,
-                onStop = onStop,
-            )
         }
 
+        if (tab == 2) {
         when (optimizer.phase) {
-            OptimizerPhase.IDLE -> Unit
+            OptimizerPhase.IDLE -> item(key = "idle") {
+                OptimizerEmptyState(
+                    title = "尚未开始计算",
+                    detail = "在偏好页设置目标后，使用下方按钮开始配装。",
+                )
+            }
             OptimizerPhase.RUNNING -> item(key = "running") { OptimizerRunningState() }
             OptimizerPhase.ERROR -> item(key = "error") {
                 OptimizerMessageCard(
@@ -535,8 +749,17 @@ internal fun OptimizerHeroDetailScreen(
                 }
             }
         }
+        }
 
         item(key = "footer") { Spacer(Modifier.height(12.dp)) }
+            }
+        }
+        OptimizerActionBar(
+            state = state,
+            selectedHero = build.hero,
+            onStart = onStart,
+            onStop = onStop,
+        )
     }
 }
 
@@ -545,41 +768,48 @@ private fun HeroBuildSortControls(
     sort: HeroBuildSort,
     onSortChanged: (HeroBuildSort) -> Unit,
 ) {
-    Row(
+    LazyRow(
         modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "排序",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(10.dp))
-        CompactDropdown(
-            label = sort.field.label,
-            modifier = Modifier.widthIn(max = 180.dp),
-        ) { dismiss ->
-            HeroBuildSortField.entries.forEach { field ->
-                DropdownMenuItem(
-                    text = { Text(field.label) },
-                    onClick = {
-                        dismiss()
-                        onSortChanged(sort.copy(field = field))
-                    },
-                )
+        item {
+            Text(
+                "排序",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item {
+            CompactDropdown(label = sort.field.label) { dismiss ->
+                HeroBuildSortField.entries.forEach { field ->
+                    DropdownMenuItem(
+                        text = { Text(field.label) },
+                        leadingIcon = {
+                            if (sort.field == field) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_check),
+                                    contentDescription = null,
+                                )
+                            }
+                        },
+                        onClick = {
+                            dismiss()
+                            onSortChanged(sort.copy(field = field))
+                        },
+                    )
+                }
             }
         }
-        Spacer(Modifier.width(8.dp))
-        CompactDropdown(label = sort.direction.label) { dismiss ->
-            GearSortDirection.entries.forEach { direction ->
-                DropdownMenuItem(
-                    text = { Text(direction.label) },
-                    onClick = {
-                        dismiss()
-                        onSortChanged(sort.copy(direction = direction))
-                    },
-                )
-            }
+        item {
+            SortDirectionChip(
+                direction = sort.direction,
+                onClick = {
+                    onSortChanged(
+                        sort.copy(direction = sort.direction.toggled()),
+                    )
+                },
+            )
         }
     }
 }
@@ -592,13 +822,24 @@ private fun CompactDropdown(
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Box(modifier = modifier) {
-        OutlinedButton(onClick = { expanded = true }) {
-            Text(
-                label,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        FilterChip(
+            selected = false,
+            onClick = { expanded = true },
+            label = {
+                Text(
+                    label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            trailingIcon = {
+                Icon(
+                    painter = painterResource(R.drawable.ic_arrow_drop_down),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+            },
+        )
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -608,6 +849,7 @@ private fun CompactDropdown(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun GearFilterPanel(
     filter: GearInventoryFilter,
@@ -625,7 +867,15 @@ private fun GearFilterPanel(
     onClear: () -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    SectionSurface(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
+    val cornerSize by animateDpAsState(
+        targetValue = if (expanded) 28.dp else 12.dp,
+        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec<Dp>(),
+        label = "gear filter shape",
+    )
+    SectionSurface(
+        shape = RoundedCornerShape(cornerSize),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -651,17 +901,27 @@ private fun GearFilterPanel(
                 )
             }
             if (filter.hasFilters) {
-                OutlinedButton(onClick = onClear) { Text("清除") }
-                Spacer(Modifier.width(6.dp))
+                IconButton(onClick = onClear) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_close),
+                        contentDescription = "清除筛选",
+                    )
+                }
             }
             Icon(
                 painter = painterResource(R.drawable.ic_chevron_right),
                 contentDescription = if (expanded) "收起" else "展开",
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier
+                    .size(20.dp)
+                    .rotate(if (expanded) 90f else 0f),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        AnimatedVisibility(visible = expanded) {
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
             Column {
                 Spacer(Modifier.height(12.dp))
                 GearFilterGroup(
@@ -702,66 +962,75 @@ private fun GearFilterPanel(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
                 Spacer(Modifier.height(10.dp))
-                Row(
+                Text(
+                    "排序",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LazyRow(
                     modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        "排序",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    CompactDropdown(label = sort.field.label) { dismiss ->
-                        GearSortField.entries.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(option.label) },
-                                onClick = {
-                                    dismiss()
-                                    onSortChanged(
-                                        sort.copy(
-                                            field = option,
-                                            statType = when (option) {
-                                                GearSortField.MAIN_STAT -> mainStatOptions.firstOrNull()
-                                                GearSortField.SUBSTAT -> substatOptions.firstOrNull()
-                                                else -> null
-                                            },
-                                        ),
-                                    )
-                                },
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    CompactDropdown(label = sort.direction.label) { dismiss ->
-                        GearSortDirection.entries.forEach { direction ->
-                            DropdownMenuItem(
-                                text = { Text(direction.label) },
-                                onClick = {
-                                    dismiss()
-                                    onSortChanged(sort.copy(direction = direction))
-                                },
-                            )
-                        }
-                    }
-                    if (sort.field == GearSortField.MAIN_STAT || sort.field == GearSortField.SUBSTAT) {
-                        Spacer(Modifier.width(8.dp))
-                        CompactDropdown(
-                            label = statFilterLabel(sort.statType ?: "属性"),
-                        ) { dismiss ->
-                            val options = if (sort.field == GearSortField.MAIN_STAT) {
-                                mainStatOptions
-                            } else {
-                                substatOptions
-                            }
-                            options.forEach { type ->
+                    item {
+                        CompactDropdown(label = sort.field.label) { dismiss ->
+                            GearSortField.entries.forEach { option ->
                                 DropdownMenuItem(
-                                    text = { Text(statFilterLabel(type)) },
+                                    text = { Text(option.label) },
+                                    leadingIcon = {
+                                        if (sort.field == option) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_check),
+                                                contentDescription = null,
+                                            )
+                                        }
+                                    },
                                     onClick = {
                                         dismiss()
-                                        onSortChanged(sort.copy(statType = type))
+                                        onSortChanged(
+                                            sort.copy(
+                                                field = option,
+                                                statType = when (option) {
+                                                    GearSortField.MAIN_STAT -> mainStatOptions.firstOrNull()
+                                                    GearSortField.SUBSTAT -> substatOptions.firstOrNull()
+                                                    else -> null
+                                                },
+                                            ),
+                                        )
                                     },
                                 )
+                            }
+                        }
+                    }
+                    item {
+                        SortDirectionChip(
+                            direction = sort.direction,
+                            onClick = {
+                                onSortChanged(
+                                    sort.copy(direction = sort.direction.toggled()),
+                                )
+                            },
+                        )
+                    }
+                    if (sort.field == GearSortField.MAIN_STAT || sort.field == GearSortField.SUBSTAT) {
+                        item {
+                            CompactDropdown(
+                                label = statFilterLabel(sort.statType ?: "属性"),
+                            ) { dismiss ->
+                                val options = if (sort.field == GearSortField.MAIN_STAT) {
+                                    mainStatOptions
+                                } else {
+                                    substatOptions
+                                }
+                                options.forEach { type ->
+                                    DropdownMenuItem(
+                                        text = { Text(statFilterLabel(type)) },
+                                        onClick = {
+                                            dismiss()
+                                            onSortChanged(sort.copy(statType = type))
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -770,6 +1039,34 @@ private fun GearFilterPanel(
         }
     }
 }
+
+@Composable
+private fun SortDirectionChip(
+    direction: GearSortDirection,
+    onClick: () -> Unit,
+) {
+    FilterChip(
+        selected = false,
+        onClick = onClick,
+        label = { Text(direction.label) },
+        leadingIcon = {
+            Icon(
+                painter = painterResource(R.drawable.ic_arrow_drop_down),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(18.dp)
+                    .rotate(if (direction == GearSortDirection.ASCENDING) 180f else 0f),
+            )
+        },
+    )
+}
+
+private fun GearSortDirection.toggled(): GearSortDirection =
+    if (this == GearSortDirection.DESCENDING) {
+        GearSortDirection.ASCENDING
+    } else {
+        GearSortDirection.DESCENDING
+    }
 
 @Composable
 private fun GearFilterGroup(
@@ -817,20 +1114,24 @@ private fun OptimizerOverviewSummary(
     equippedCount: Int,
     content: OptimizerContent,
 ) {
-    SectionSurface {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            if (content == OptimizerContent.HEROES) {
-                SummaryMetric("已配装英雄", heroCount.toString())
-                SummaryMetric("完整六件", completeBuilds.toString())
-                SummaryMetric("已穿装备", "$equippedCount 件")
-            } else {
-                SummaryMetric("装备总数", "$gearCount 件")
-                SummaryMetric("已装备", "$equippedCount 件")
-                SummaryMetric("库存", "${gearCount - equippedCount} 件")
-            }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (content == OptimizerContent.HEROES) {
+            SummaryMetric("已配装英雄", heroCount.toString(), Modifier.weight(1f))
+            SummaryDivider()
+            SummaryMetric("完整六件", completeBuilds.toString(), Modifier.weight(1f))
+            SummaryDivider()
+            SummaryMetric("已穿装备", "$equippedCount 件", Modifier.weight(1f))
+        } else {
+            SummaryMetric("装备总数", "$gearCount 件", Modifier.weight(1f))
+            SummaryDivider()
+            SummaryMetric("已装备", "$equippedCount 件", Modifier.weight(1f))
+            SummaryDivider()
+            SummaryMetric("库存", "${gearCount - equippedCount} 件", Modifier.weight(1f))
         }
     }
 }
@@ -840,10 +1141,19 @@ private fun EquippedHeroCard(
     build: EquippedHeroBuild,
     preferenceConfigured: Boolean,
     onClick: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+    modifier: Modifier = Modifier,
 ) {
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .optimizerSharedBounds(
+                key = "optimizer-hero-${build.instanceId}",
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+            ),
         shape = MaterialTheme.shapes.small,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -911,9 +1221,24 @@ private fun EquippedHeroCard(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun EquippedHeroHeader(build: EquippedHeroBuild) {
-    SectionSurface {
+private fun EquippedHeroHeader(
+    build: EquippedHeroBuild,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+    modifier: Modifier = Modifier,
+) {
+    SectionSurface(
+        modifier = modifier.optimizerSharedBounds(
+            key = "optimizer-hero-${build.instanceId}",
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+        ),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = MaterialTheme.shapes.extraLargeIncreased,
+        contentPadding = PaddingValues(20.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             RemoteImage(
                 url = build.hero?.assets?.iconUrl ?: build.hero?.assets?.thumbnailUrl,
@@ -1113,9 +1438,13 @@ private fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
 }
 
 @Composable
-private fun InventoryGearCard(gear: E7Gear, equippedName: String?) {
+private fun InventoryGearCard(
+    gear: E7Gear,
+    equippedName: String?,
+    modifier: Modifier = Modifier,
+) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.small,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -1365,8 +1694,9 @@ private fun MinimumStatField(
     )
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun OptimizerAction(
+private fun OptimizerActionBar(
     state: MainUiState,
     selectedHero: E7Hero?,
     onStart: () -> Unit,
@@ -1374,46 +1704,83 @@ private fun OptimizerAction(
 ) {
     val optimizer = state.optimizer
     val requiredPieces = optimizer.requiredSets.sumOf(GearOptimizer::setPieces)
-    if (optimizer.phase == OptimizerPhase.RUNNING) {
-        OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) {
-            Text("停止计算")
-        }
-    } else {
-        Button(
-            onClick = onStart,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = selectedHero?.stats != null && state.data.gears.isNotEmpty() && requiredPieces <= 6,
-        ) {
-            Text("按偏好开始配装")
-        }
-        if (selectedHero?.stats == null) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "当前英雄未匹配到基础属性，无法运行配装计算。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    val canStart = selectedHero?.stats != null &&
+        state.data.gears.isNotEmpty() &&
+        requiredPieces <= 6
+    val startLabel = when {
+        selectedHero?.stats == null -> "英雄基础属性不可用"
+        state.data.gears.isEmpty() -> "尚未导入装备"
+        requiredPieces > 6 -> "必选套装超过 6 件"
+        else -> "按偏好开始配装"
+    }
+    BottomAppBar(
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        if (optimizer.phase == OptimizerPhase.RUNNING) {
+            OutlinedButton(
+                onClick = onStop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shapes = ButtonDefaults.shapes(
+                    shape = MaterialTheme.shapes.extraLarge,
+                    pressedShape = MaterialTheme.shapes.medium,
+                ),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_stop),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("停止计算")
+            }
+        } else {
+            Button(
+                onClick = onStart,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                enabled = canStart,
+                shapes = ButtonDefaults.shapes(
+                    shape = MaterialTheme.shapes.extraLarge,
+                    pressedShape = MaterialTheme.shapes.medium,
+                ),
+            ) {
+                Icon(
+                    painter = painterResource(
+                        if (canStart) R.drawable.ic_play else R.drawable.ic_priority_high,
+                    ),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(startLabel, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun OptimizerRunningState() {
-    SectionSurface {
+    SectionSurface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+            LoadingIndicator(modifier = Modifier.size(40.dp))
             Spacer(Modifier.width(12.dp))
             Column {
                 Text("正在组合六个部位", fontWeight = FontWeight.SemiBold)
                 Text(
                     "计算在后台执行，可随时停止。",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
             }
         }
-        Spacer(Modifier.height(12.dp))
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -1448,6 +1815,7 @@ private fun OptimizerMessageCard(title: String, detail: String, error: Boolean) 
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun OptimizedBuildCard(
     build: OptimizedBuild,
@@ -1461,11 +1829,16 @@ private fun OptimizedBuildCard(
         build.items.joinToString("-") { it.id.toString() },
     ) { mutableStateOf(rank == 1) }
     val formatter = remember { NumberFormat.getIntegerInstance(Locale.CHINA) }
+    val cornerSize by animateDpAsState(
+        targetValue = if (expanded) 12.dp else 24.dp,
+        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec<Dp>(),
+        label = "optimizer result shape",
+    )
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { expanded = !expanded },
-        shape = MaterialTheme.shapes.small,
+        shape = RoundedCornerShape(cornerSize),
         colors = CardDefaults.cardColors(
             containerColor = if (rank == 1) {
                 MaterialTheme.colorScheme.primaryContainer
@@ -1490,15 +1863,22 @@ private fun OptimizedBuildCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    if (expanded) "收起" else "详情",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                Icon(
+                    painter = painterResource(R.drawable.ic_chevron_right),
+                    contentDescription = if (expanded) "收起" else "展开",
+                    modifier = Modifier
+                        .size(22.dp)
+                        .rotate(if (expanded) 90f else 0f),
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
             Spacer(Modifier.height(12.dp))
             CompactStatsGrid(build.stats)
-            AnimatedVisibility(visible = expanded) {
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
                 Column {
                     Spacer(Modifier.height(12.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -1517,6 +1897,10 @@ private fun OptimizedBuildCard(
                         onClick = onApply,
                         modifier = Modifier.fillMaxWidth(),
                         enabled = selectedPlan != null && !alreadyApplied,
+                        shapes = ButtonDefaults.shapes(
+                            shape = MaterialTheme.shapes.extraLarge,
+                            pressedShape = MaterialTheme.shapes.medium,
+                        ),
                     ) {
                         Text(
                             when {
@@ -1546,8 +1930,15 @@ private fun OptimizerEmptyState(title: String, detail: String) {
 }
 
 @Composable
-private fun SummaryMetric(label: String, value: String) {
-    Column {
+private fun SummaryMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         Text(
             label,
@@ -1555,6 +1946,16 @@ private fun SummaryMetric(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+@Composable
+private fun SummaryDivider() {
+    Box(
+        modifier = Modifier
+            .width(1.dp)
+            .height(32.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant),
+    )
 }
 
 @Composable
@@ -1599,17 +2000,6 @@ private fun EquippedHeroBuild.combatSummaryText(): String = listOfNotNull(
     stats?.speed?.let { "速度 $it" },
 ).joinToString(" · ").ifBlank { "暂无最终面板" }
 
-private fun EquippedHeroBuild.setsText(): String {
-    val completed = sets.filter { it.completedCount > 0 }
-        .joinToString(" + ") { set ->
-            set.name + if (set.completedCount > 1) " x${set.completedCount}" else ""
-        }
-    return completed.ifBlank {
-        sets.joinToString(" + ") { "${it.name} ${it.pieceCount}/${it.requiredPieces}" }
-            .ifBlank { "暂无套装" }
-    }
-}
-
 private fun formatNumber(value: Int): String =
     NumberFormat.getIntegerInstance(Locale.CHINA).format(value)
 
@@ -1632,6 +2022,27 @@ private fun statFilterLabel(type: String): String = when (type) {
     "EffectResistancePercent" -> "效果抗性"
     "DualAttackChancePercent" -> "夹攻率"
     else -> type
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun Modifier.optimizerSharedBounds(
+    key: String,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+): Modifier {
+    val spatialSpec = MaterialTheme.motionScheme.slowSpatialSpec<Rect>()
+    val effectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
+    return with(sharedTransitionScope) {
+        this@optimizerSharedBounds.sharedBounds(
+            sharedContentState = rememberSharedContentState(key),
+            animatedVisibilityScope = animatedVisibilityScope,
+            enter = fadeIn(animationSpec = effectsSpec),
+            exit = fadeOut(animationSpec = effectsSpec),
+            boundsTransform = BoundsTransform { _, _ -> spatialSpec },
+            resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds,
+        )
+    }
 }
 
 private const val MAX_STAT_DIGITS = 7

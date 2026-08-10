@@ -37,7 +37,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -573,6 +572,8 @@ private fun OrbitApp(
                     DetailRoute.OPTIMIZER_HERO -> OptimizerHeroDetailScreen(
                         state = state,
                         modifier = screenModifier,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                         onMetricChanged = onOptimizerMetricChanged,
                         onMinimumChanged = onOptimizerMinimumChanged,
                         onRequiredSetToggled = onOptimizerRequiredSetToggled,
@@ -636,12 +637,12 @@ private fun OrbitApp(
                             onGearMinimumScoreChanged = onGearMinimumScoreChanged,
                             onGearSortChanged = onGearSortChanged,
                             onClearGearFilters = onClearGearFilters,
-                            onImportGear = onImportGear,
-                            onExportGear = onExportGear,
                             onHeroSelected = { instanceId ->
                                 onEquippedHeroSelected(instanceId)
                                 detailName = DetailRoute.OPTIMIZER_HERO.name
                             },
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
                         )
 
                         OrbitDestination.SETTINGS -> SettingsScreen(
@@ -675,12 +676,17 @@ private fun orbitContentTransform(
                 ((initial.detail == null && target.detail.isCatalogDetail()) ||
                     (target.detail == null && initial.detail.isCatalogDetail()))
 
+        OrbitDestination.OPTIMIZER ->
+            target.destination == OrbitDestination.OPTIMIZER &&
+                ((initial.detail == null && target.detail == DetailRoute.OPTIMIZER_HERO) ||
+                    (target.detail == null && initial.detail == DetailRoute.OPTIMIZER_HERO))
+
         else -> false
     }
     if (usesContainerTransform) {
-        val isCatalogTransition = initial.destination == OrbitDestination.DATA
-        val enter = if (isCatalogTransition) fadeIn(animationSpec = effectsSpec) else EnterTransition.None
-        val exit = if (isCatalogTransition) fadeOut(animationSpec = effectsSpec) else ExitTransition.None
+        val usesFade = initial.destination != OrbitDestination.TASKS
+        val enter = if (usesFade) fadeIn(animationSpec = effectsSpec) else EnterTransition.None
+        val exit = if (usesFade) fadeOut(animationSpec = effectsSpec) else ExitTransition.None
         return (enter togetherWith exit).apply { targetContentZIndex = 1f }
     }
 
@@ -767,25 +773,30 @@ private fun OptimizerPlanTopBar(
             Box {
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(MaterialTheme.shapes.large)
                         .clickable { planMenuExpanded = true }
-                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = selectedPlan?.name ?: "默认方案",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                        Text(
+                            text = "配装",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = selectedPlan?.name ?: "默认方案",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
                     Icon(
-                        painter = painterResource(R.drawable.ic_chevron_right),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(14.dp)
-                            .padding(start = 2.dp)
-                            .rotate(90f),
+                        painter = painterResource(R.drawable.ic_arrow_drop_down),
+                        contentDescription = "选择方案",
+                        modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -797,7 +808,11 @@ private fun OptimizerPlanTopBar(
                         text = { Text("默认方案") },
                         leadingIcon = {
                             if (selectedPlan == null) {
-                                Text("✓", color = MaterialTheme.colorScheme.primary)
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_check),
+                                    contentDescription = "已选择",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
                             }
                         },
                         onClick = {
@@ -816,7 +831,11 @@ private fun OptimizerPlanTopBar(
                             },
                             leadingIcon = {
                                 if (plan.id == selectedPlan?.id) {
-                                    Text("✓", color = MaterialTheme.colorScheme.primary)
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_check),
+                                        contentDescription = "已选择",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
                                 }
                             },
                             onClick = {
@@ -841,11 +860,10 @@ private fun OptimizerPlanTopBar(
         actions = {
             Box {
                 IconButton(onClick = { moreMenuExpanded = true }) {
-                    Text(
-                        "⋯",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Icon(
+                        painter = painterResource(R.drawable.ic_more_vert),
+                        contentDescription = "方案与装备操作",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 DropdownMenu(
