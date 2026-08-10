@@ -18,8 +18,9 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -39,10 +40,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +71,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -343,7 +345,7 @@ private data class OrbitRoute(
         get() = detail?.title ?: destination.label
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun OrbitApp(
     state: MainUiState,
@@ -405,6 +407,9 @@ private fun OrbitApp(
     val destination = OrbitDestination.valueOf(destinationName)
     val detail = detailName?.let(DetailRoute::valueOf)
     val route = OrbitRoute(destination, detail)
+    val spatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
+    val fastSpatialSpec = MaterialTheme.motionScheme.fastSpatialSpec<IntOffset>()
+    val effectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
     val topAppBarScrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     BackHandler(enabled = detail != null) { detailName = null }
     LaunchedEffect(destination) {
@@ -434,8 +439,10 @@ private fun OrbitApp(
             .nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            if (detail == DetailRoute.HERO) {
-                // Full-screen hero detail renders its own floating back affordance.
+            if (detail == DetailRoute.HERO ||
+                (detail == null && destination == OrbitDestination.DATA)
+            ) {
+                // Hero detail and the catalog search surface provide their own top affordances.
             } else if (destination == OrbitDestination.OPTIMIZER && detail == null) {
                 OptimizerPlanTopBar(
                     plans = state.optimizer.plans,
@@ -455,11 +462,8 @@ private fun OrbitApp(
                 OrbitTopAppBar(
                     title = route.title,
                     showBack = detail != null,
-                    showRefresh = detail == null && destination == OrbitDestination.DATA,
-                    refreshing = state.data.loadState == DataLoadState.LOADING,
                     scrollBehavior = topAppBarScrollBehavior,
                     onBack = { detailName = null },
-                    onRefresh = { onLoadData(true) },
                 )
             }
         },
@@ -467,17 +471,11 @@ private fun OrbitApp(
             AnimatedVisibility(
                 visible = detail == null,
                 enter = slideInVertically(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness = Spring.StiffnessMediumLow,
-                    ),
+                    animationSpec = spatialSpec,
                     initialOffsetY = { it },
                 ),
                 exit = slideOutVertically(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness = Spring.StiffnessMedium,
-                    ),
+                    animationSpec = fastSpatialSpec,
                     targetOffsetY = { it },
                 ),
                 label = "primary navigation visibility",
@@ -499,7 +497,14 @@ private fun OrbitApp(
             AnimatedContent(
                 targetState = route,
                 modifier = Modifier.fillMaxSize(),
-                transitionSpec = { orbitContentTransform(initialState, targetState) },
+                transitionSpec = {
+                    orbitContentTransform(
+                        initial = initialState,
+                        target = targetState,
+                        spatialSpec = spatialSpec,
+                        effectsSpec = effectsSpec,
+                    )
+                },
                 contentKey = { it },
                 label = "page transition",
             ) { animatedRoute ->
@@ -552,6 +557,8 @@ private fun OrbitApp(
                         onSeasonChanged = onRtaSeasonChanged,
                         onTierChanged = onRtaTierChanged,
                         onRetryRta = onRetryHeroRta,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                     )
 
                     DetailRoute.ARTIFACT -> ArtifactDetailScreen(
@@ -559,6 +566,8 @@ private fun OrbitApp(
                             it.code == state.data.selectedArtifactCode
                         },
                         modifier = screenModifier,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                     )
 
                     DetailRoute.OPTIMIZER_HERO -> OptimizerHeroDetailScreen(
@@ -612,6 +621,8 @@ private fun OrbitApp(
                                 detailName = DetailRoute.ARTIFACT.name
                             },
                             onLoad = { onLoadData(true) },
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
                         )
 
                         OrbitDestination.OPTIMIZER -> OptimizerScreen(
@@ -650,16 +661,27 @@ private fun OrbitApp(
 private fun orbitContentTransform(
     initial: OrbitRoute,
     target: OrbitRoute,
+    spatialSpec: FiniteAnimationSpec<IntOffset>,
+    effectsSpec: FiniteAnimationSpec<Float>,
 ): ContentTransform {
-    val usesTaskContainerTransform =
-        initial.destination == OrbitDestination.TASKS &&
+    val usesContainerTransform = when (initial.destination) {
+        OrbitDestination.TASKS ->
             target.destination == OrbitDestination.TASKS &&
-            ((initial.detail == null && target.detail.isTaskDetail()) ||
-                (target.detail == null && initial.detail.isTaskDetail()))
-    if (usesTaskContainerTransform) {
-        return (EnterTransition.None togetherWith ExitTransition.None).apply {
-            targetContentZIndex = 1f
-        }
+                ((initial.detail == null && target.detail.isTaskDetail()) ||
+                    (target.detail == null && initial.detail.isTaskDetail()))
+
+        OrbitDestination.DATA ->
+            target.destination == OrbitDestination.DATA &&
+                ((initial.detail == null && target.detail.isCatalogDetail()) ||
+                    (target.detail == null && initial.detail.isCatalogDetail()))
+
+        else -> false
+    }
+    if (usesContainerTransform) {
+        val isCatalogTransition = initial.destination == OrbitDestination.DATA
+        val enter = if (isCatalogTransition) fadeIn(animationSpec = effectsSpec) else EnterTransition.None
+        val exit = if (isCatalogTransition) fadeOut(animationSpec = effectsSpec) else ExitTransition.None
+        return (enter togetherWith exit).apply { targetContentZIndex = 1f }
     }
 
     val movesForward = when {
@@ -669,35 +691,29 @@ private fun orbitContentTransform(
     }
     val direction = if (movesForward) 1 else -1
     val enter = slideInHorizontally(
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
+        animationSpec = spatialSpec,
         initialOffsetX = { width -> direction * width },
-    )
+    ) + fadeIn(animationSpec = effectsSpec)
     val exit = slideOutHorizontally(
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
+        animationSpec = spatialSpec,
         targetOffsetX = { width -> -direction * width },
-    )
+    ) + fadeOut(animationSpec = effectsSpec)
     return (enter togetherWith exit).apply { targetContentZIndex = 1f }
 }
 
 private fun DetailRoute?.isTaskDetail(): Boolean =
     this == DetailRoute.SHOP || this == DetailRoute.HUNT
 
+private fun DetailRoute?.isCatalogDetail(): Boolean =
+    this == DetailRoute.HERO || this == DetailRoute.ARTIFACT
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun OrbitTopAppBar(
     title: String,
     showBack: Boolean,
-    showRefresh: Boolean,
-    refreshing: Boolean,
     scrollBehavior: TopAppBarScrollBehavior,
     onBack: () -> Unit,
-    onRefresh: () -> Unit,
 ) {
     TopAppBar(
         title = {
@@ -713,23 +729,6 @@ private fun OrbitTopAppBar(
                         painter = painterResource(R.drawable.ic_arrow_back),
                         contentDescription = "返回",
                     )
-                }
-            }
-        },
-        actions = {
-            if (showRefresh) {
-                IconButton(onClick = onRefresh, enabled = !refreshing) {
-                    if (refreshing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_refresh),
-                            contentDescription = "刷新数据",
-                        )
-                    }
                 }
             }
         },

@@ -1,6 +1,8 @@
 package com.e7orbit.ui.theme
 
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
@@ -43,12 +45,14 @@ private val OrbitWhiteColorScheme = lightColorScheme(
     surfaceContainerHighest = WhiteSurfaceContainerHighest,
 )
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun E7OrbitTheme(
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(
+    MaterialExpressiveTheme(
         colorScheme = OrbitWhiteColorScheme,
+        motionScheme = MotionScheme.expressive(),
         typography = OrbitTypography,
         shapes = OrbitShapes,
         content = content,

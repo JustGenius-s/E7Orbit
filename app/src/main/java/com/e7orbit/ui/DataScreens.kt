@@ -3,6 +3,11 @@ package com.e7orbit.ui
 import android.content.res.Configuration
 
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.BoundsTransform
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,6 +19,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,11 +36,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.material3.AppBarWithSearch
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExpandedDockedSearchBar
+import androidx.compose.material3.ExpandedFullScreenSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.FilterChip
@@ -43,11 +52,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PrimaryTabRow
-import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SearchBarValue
 import androidx.compose.material3.SecondaryTabRow
@@ -56,7 +65,6 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.carousel.HorizontalCenteredHeroCarousel
 import androidx.compose.material3.carousel.rememberCarouselState
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSearchBarState
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.PlainTooltip
@@ -76,6 +84,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -114,131 +123,140 @@ internal fun DataBrowserScreen(
     onSelectHero: (String) -> Unit,
     onSelectArtifact: (String) -> Unit,
     onLoad: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
 ) {
     var selectedAttribute by rememberSaveable(data.section) { mutableStateOf("全部") }
     var selectedRole by rememberSaveable(data.section) { mutableStateOf("全部") }
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-    ) {
+    Column(modifier = modifier.fillMaxSize()) {
         DataSearchBar(
-            section = data.section,
-            query = data.query,
+            data = data,
             onQueryChanged = onQueryChanged,
+            onSelectHero = onSelectHero,
+            onSelectArtifact = onSelectArtifact,
         )
-        Spacer(Modifier.height(8.dp))
-        SectionTabs(
-            section = data.section,
-            onSectionChanged = onSectionChanged,
-        )
-        Spacer(Modifier.height(4.dp))
-        // M3E filter chips that open a dropdown menu for more filtering options, laid out in a
-        // single compact row (attribute + class for heroes, class only for artifacts).
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (data.section == DataSection.HEROES) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 16.dp),
+        ) {
+            SectionTabs(
+                section = data.section,
+                onSectionChanged = onSectionChanged,
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (data.section == DataSection.HEROES) {
+                    FilterDropdownChip(
+                        label = "属性",
+                        options = HeroAttributeFilters,
+                        selected = selectedAttribute,
+                        onSelected = { selectedAttribute = it },
+                        iconRes = ::attributeFilterIconRes,
+                    )
+                }
                 FilterDropdownChip(
-                    label = "属性",
-                    options = HeroAttributeFilters,
-                    selected = selectedAttribute,
-                    onSelected = { selectedAttribute = it },
-                    iconRes = ::attributeFilterIconRes,
+                    label = "职业",
+                    options = RoleFilters,
+                    selected = selectedRole,
+                    onSelected = { selectedRole = it },
+                    iconRes = ::roleFilterIconRes,
                 )
             }
-            FilterDropdownChip(
-                label = "职业",
-                options = RoleFilters,
-                selected = selectedRole,
-                onSelected = { selectedRole = it },
-                iconRes = ::roleFilterIconRes,
-            )
-        }
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
 
-        when (data.loadState) {
-            DataLoadState.IDLE -> DataEmptyState(
-                title = "图鉴尚未加载",
-                detail = "从官方 Stove 和 Fribbels 读取英雄与神器资料。",
-                action = "加载图鉴",
-                onAction = onLoad,
-            )
-
-            DataLoadState.LOADING -> DataLoadingState()
-            DataLoadState.ERROR -> DataEmptyState(
-                title = "图鉴读取失败",
-                detail = data.errorMessage ?: "公开图鉴暂时不可用",
-                action = "重新尝试",
-                onAction = onLoad,
-                error = true,
-            )
-
-            DataLoadState.READY -> when (data.section) {
-                DataSection.HEROES -> HeroList(
-                    data = data,
-                    attributeFilter = selectedAttribute,
-                    roleFilter = selectedRole,
-                    onSelect = onSelectHero,
+            when (data.loadState) {
+                DataLoadState.IDLE -> DataEmptyState(
+                    title = "图鉴尚未加载",
+                    detail = "从官方 Stove 和 Fribbels 读取英雄与神器资料。",
+                    action = "加载图鉴",
+                    onAction = onLoad,
                 )
 
-                DataSection.ARTIFACTS -> ArtifactList(
-                    data = data,
-                    roleFilter = selectedRole,
-                    onSelect = onSelectArtifact,
+                DataLoadState.LOADING -> DataLoadingState()
+                DataLoadState.ERROR -> DataEmptyState(
+                    title = "图鉴读取失败",
+                    detail = data.errorMessage ?: "公开图鉴暂时不可用",
+                    action = "重新尝试",
+                    onAction = onLoad,
+                    error = true,
                 )
+
+                DataLoadState.READY -> when (data.section) {
+                    DataSection.HEROES -> HeroList(
+                        data = data,
+                        attributeFilter = selectedAttribute,
+                        roleFilter = selectedRole,
+                        onSelect = onSelectHero,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
+                    )
+
+                    DataSection.ARTIFACTS -> ArtifactList(
+                        data = data,
+                        roleFilter = selectedRole,
+                        onSelect = onSelectArtifact,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
+                    )
+                }
             }
         }
     }
 }
 
-/**
- * M3 Expressive [Search](https://m3.material.io/components/search/overview): a collapsed
- * [SearchBar] that expands into a docked search view for live filtering.
- */
+/** M3E top search that expands into a full-screen result surface on compact devices. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DataSearchBar(
-    section: DataSection,
-    query: String,
+    data: DataUiState,
     onQueryChanged: (String) -> Unit,
+    onSelectHero: (String) -> Unit,
+    onSelectArtifact: (String) -> Unit,
 ) {
     val searchBarState = rememberSearchBarState()
-    val textFieldState = rememberSaveable(section, saver = TextFieldState.Saver) { TextFieldState() }
+    val textFieldState = rememberSaveable(saver = TextFieldState.Saver) {
+        TextFieldState(data.query)
+    }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(textFieldState) {
-        snapshotFlow { textFieldState.text.toString() }.collect { text ->
-            if (text != query) onQueryChanged(text)
-        }
+        snapshotFlow { textFieldState.text.toString() }.collect(onQueryChanged)
     }
-    LaunchedEffect(query) {
-        if (query != textFieldState.text.toString()) {
-            textFieldState.edit { replace(0, length, query) }
+    LaunchedEffect(data.query) {
+        if (data.query != textFieldState.text.toString()) {
+            textFieldState.edit { replace(0, length, data.query) }
         }
     }
 
-    val placeholder = when (section) {
+    val expanded = searchBarState.currentValue == SearchBarValue.Expanded
+    val placeholder = when (data.section) {
         DataSection.HEROES -> "搜索英雄"
         DataSection.ARTIFACTS -> "搜索神器"
     }
     val inputField: @Composable () -> Unit = {
         SearchBarDefaults.InputField(
-            state = textFieldState,
+            textFieldState = textFieldState,
+            searchBarState = searchBarState,
             onSearch = { scope.launch { searchBarState.animateToCollapsed() } },
-            expanded = searchBarState.currentValue == SearchBarValue.Expanded,
-            onExpandedChange = { expanded ->
-                scope.launch {
-                    if (expanded) searchBarState.animateToExpanded()
-                    else searchBarState.animateToCollapsed()
-                }
-            },
             placeholder = { Text(placeholder) },
             leadingIcon = {
-                Icon(
-                    painter = painterResource(R.drawable.ic_search),
-                    contentDescription = null,
-                )
+                if (expanded) {
+                    IconButton(onClick = { scope.launch { searchBarState.animateToCollapsed() } }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_arrow_back),
+                            contentDescription = "返回",
+                        )
+                    }
+                } else {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_search),
+                        contentDescription = null,
+                    )
+                }
             },
-            trailingIcon = if (query.isNotEmpty()) {
+            trailingIcon = if (data.query.isNotEmpty()) {
                 {
                     IconButton(onClick = { textFieldState.edit { replace(0, length, "") } }) {
                         Icon(
@@ -250,18 +268,123 @@ private fun DataSearchBar(
             } else null,
         )
     }
+    val selectHero: (String) -> Unit = { code ->
+        scope.launch {
+            searchBarState.animateToCollapsed()
+            onSelectHero(code)
+        }
+    }
+    val selectArtifact: (String) -> Unit = { code ->
+        scope.launch {
+            searchBarState.animateToCollapsed()
+            onSelectArtifact(code)
+        }
+    }
 
-    SearchBar(
+    AppBarWithSearch(
         state = searchBarState,
         inputField = inputField,
-        modifier = Modifier.fillMaxWidth(),
+        windowInsets = WindowInsets(0, 0, 0, 0),
     )
-    // The expanded view only provides a full-screen input surface; results update live in the
-    // list behind it. Kept short so the popup does not trap the back gesture.
-    ExpandedDockedSearchBar(
+    ExpandedFullScreenSearchBar(
         state = searchBarState,
         inputField = inputField,
-    ) {}
+    ) {
+        CatalogSearchResults(
+            data = data,
+            onSelectHero = selectHero,
+            onSelectArtifact = selectArtifact,
+        )
+    }
+}
+
+@Composable
+private fun ColumnScope.CatalogSearchResults(
+    data: DataUiState,
+    onSelectHero: (String) -> Unit,
+    onSelectArtifact: (String) -> Unit,
+) {
+    when {
+        data.loadState == DataLoadState.LOADING -> DataLoadingState()
+        data.loadState != DataLoadState.READY -> NoResultsState("图鉴尚未加载")
+        data.section == DataSection.HEROES -> {
+            val results = remember(data.heroes, data.query) {
+                data.heroes.filter { hero ->
+                    hero.name.contains(data.query, ignoreCase = true) ||
+                        hero.code.contains(data.query, ignoreCase = true)
+                }
+            }
+            if (results.isEmpty()) {
+                NoResultsState("没有匹配的英雄")
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    items(results, key = E7Hero::code) { hero ->
+                        ListItem(
+                            headlineContent = { Text(hero.name, fontWeight = FontWeight.SemiBold) },
+                            supportingContent = {
+                                Text("${hero.attributeLabel()} · ${hero.roleLabel()}")
+                            },
+                            leadingContent = {
+                                RemoteImage(
+                                    url = hero.assets.iconUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(MaterialTheme.shapes.medium),
+                                )
+                            },
+                            modifier = Modifier.clickable { onSelectHero(hero.code) },
+                        )
+                    }
+                }
+            }
+        }
+
+        else -> {
+            val results = remember(data.artifacts, data.query) {
+                data.artifacts.filter { artifact ->
+                    artifact.name.contains(data.query, ignoreCase = true) ||
+                        artifact.code.contains(data.query, ignoreCase = true)
+                }
+            }
+            if (results.isEmpty()) {
+                NoResultsState("没有匹配的神器")
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    items(results, key = E7Artifact::code) { artifact ->
+                        ListItem(
+                            headlineContent = {
+                                Text(artifact.name, fontWeight = FontWeight.SemiBold)
+                            },
+                            supportingContent = {
+                                Text(artifact.role?.roleLabel().orEmpty())
+                            },
+                            leadingContent = {
+                                RemoteImage(
+                                    url = artifact.iconUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(MaterialTheme.shapes.medium),
+                                )
+                            },
+                            modifier = Modifier.clickable { onSelectArtifact(artifact.code) },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** M3 [Tabs](https://m3.material.io/components/tabs/overview) switching the catalog section. */
@@ -414,12 +537,14 @@ private fun roleFilterIconRes(label: String): Int? = when (label) {
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 private fun ColumnScope.HeroList(
     data: DataUiState,
     attributeFilter: String,
     roleFilter: String,
     onSelect: (String) -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
 ) {
     val filtered = remember(data.heroes, data.query, attributeFilter, roleFilter) {
         data.heroes.filter { hero ->
@@ -431,8 +556,6 @@ private fun ColumnScope.HeroList(
             matchesQuery && matchesAttribute && matchesRole
         }
     }
-    DataResultHeader(filtered.size, data.heroes.size)
-    Spacer(Modifier.height(8.dp))
     if (filtered.isEmpty()) {
         NoResultsState("没有匹配的英雄")
         return
@@ -459,10 +582,12 @@ private fun ColumnScope.HeroList(
             HeroCard(
                 hero = hero,
                 onClick = { onSelect(hero.code) },
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
                 modifier = Modifier
                     .fillMaxHeight()
                     .aspectRatio(HERO_CARD_ASPECT_RATIO)
-                    .maskClip(MaterialTheme.shapes.large)
+                    .maskClip(MaterialTheme.shapes.extraLargeIncreased)
                     .graphicsLayer {
                         // Depth/parallax: focused card (focus -> 1) is full size and opaque;
                         // off-center cards recede, dim and sink like cards behind the front one.
@@ -490,16 +615,23 @@ private fun ColumnScope.HeroList(
  */
 private const val HERO_CARD_ASPECT_RATIO = 0.72f
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun HeroCard(
     hero: E7Hero,
     onClick: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
     modifier: Modifier = Modifier,
 ) {
     Card(
         onClick = onClick,
-        modifier = modifier,
-        shape = MaterialTheme.shapes.large,
+        modifier = modifier.catalogSharedBounds(
+            key = "catalog-hero-${hero.code}",
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+        ),
+        shape = MaterialTheme.shapes.extraLargeIncreased,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
         ),
@@ -595,6 +727,8 @@ private fun ColumnScope.ArtifactList(
     data: DataUiState,
     roleFilter: String,
     onSelect: (String) -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
 ) {
     val filtered = remember(data.artifacts, data.query, roleFilter) {
         data.artifacts.filter { artifact ->
@@ -605,8 +739,6 @@ private fun ColumnScope.ArtifactList(
             matchesQuery && matchesRole
         }
     }
-    DataResultHeader(filtered.size, data.artifacts.size)
-    Spacer(Modifier.height(8.dp))
     if (filtered.isEmpty()) {
         NoResultsState("没有匹配的神器")
         return
@@ -638,27 +770,36 @@ private fun ColumnScope.ArtifactList(
                     }
                 },
                 leadingContent = {
-                    if (artifact.iconUrl != null) {
-                        RemoteImage(
-                            url = artifact.iconUrl,
-                            contentDescription = artifact.name,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(MaterialTheme.shapes.medium),
-                        )
-                    } else {
-                        Surface(
-                            modifier = Modifier.size(48.dp),
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.tertiaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    artifact.name.take(1),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                )
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .catalogSharedBounds(
+                                key = "catalog-artifact-${artifact.code}",
+                                sharedTransitionScope = sharedTransitionScope,
+                                animatedVisibilityScope = animatedVisibilityScope,
+                            )
+                            .clip(MaterialTheme.shapes.medium),
+                    ) {
+                        if (artifact.iconUrl != null) {
+                            RemoteImage(
+                                url = artifact.iconUrl,
+                                contentDescription = artifact.name,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Surface(
+                                modifier = Modifier.fillMaxSize(),
+                                shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        artifact.name.take(1),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
                             }
                         }
                     }
@@ -679,97 +820,52 @@ private fun ColumnScope.ArtifactList(
     Spacer(Modifier.height(12.dp))
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun DataResultHeader(count: Int, total: Int) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "$count 个结果",
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = "共 $total 项",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun Modifier.catalogSharedBounds(
+    key: String,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+): Modifier {
+    val spatialSpec = MaterialTheme.motionScheme.slowSpatialSpec<Rect>()
+    val effectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
+    return with(sharedTransitionScope) {
+        this@catalogSharedBounds.sharedBounds(
+            sharedContentState = rememberSharedContentState(key),
+            animatedVisibilityScope = animatedVisibilityScope,
+            enter = fadeIn(animationSpec = effectsSpec),
+            exit = fadeOut(animationSpec = effectsSpec),
+            boundsTransform = BoundsTransform { _, _ -> spatialSpec },
+            resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds,
         )
     }
 }
 
-/**
- * M3 Expressive [progress indicator](https://m3.material.io/components/progress-indicators/overview)
- * combined with a list-shaped skeleton, wrapped in the M3 pull-to-refresh pattern so manual
- * refreshes show the refresh indicator over the content.
- */
-@OptIn(ExperimentalMaterial3Api::class)
+/** M3E indeterminate loading indicator with the component's built-in shape morph. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ColumnScope.DataLoadingState() {
-    PullToRefreshBox(
-        isRefreshing = true,
-        onRefresh = {},
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .weight(1f),
+        contentAlignment = Alignment.Center,
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = false,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item {
-                Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                    Text(
-                        "正在读取数据",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-            }
-            items(8, key = { it }) {
-                SkeletonListItem()
-            }
-        }
-    }
-}
-
-@Composable
-private fun SkeletonListItem() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(MaterialTheme.shapes.medium)
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(
-                modifier = Modifier
-                    .width(160.dp)
-                    .height(16.dp)
-                    .clip(MaterialTheme.shapes.extraSmall)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            )
-            Box(
-                modifier = Modifier
-                    .width(96.dp)
-                    .height(12.dp)
-                    .clip(MaterialTheme.shapes.extraSmall)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            LoadingIndicator(modifier = Modifier.size(64.dp))
+            Text(
+                "正在读取图鉴",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ColumnScope.DataEmptyState(
     title: String,
@@ -805,10 +901,20 @@ private fun ColumnScope.DataEmptyState(
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(16.dp))
+                val buttonShapes = ButtonDefaults.shapes(
+                    shape = MaterialTheme.shapes.extraLarge,
+                    pressedShape = MaterialTheme.shapes.medium,
+                )
                 if (error) {
-                    OutlinedButton(onClick = onAction) { Text(action) }
+                    OutlinedButton(
+                        onClick = onAction,
+                        shapes = buttonShapes,
+                    ) { Text(action) }
                 } else {
-                    Button(onClick = onAction) { Text(action) }
+                    Button(
+                        onClick = onAction,
+                        shapes = buttonShapes,
+                    ) { Text(action) }
                 }
             }
         }
@@ -836,6 +942,8 @@ internal fun HeroDetailScreen(
     onSeasonChanged: (String) -> Unit,
     onTierChanged: (RtaTier) -> Unit,
     onRetryRta: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
 ) {
     var selectedTab by rememberSaveable(hero?.code) { mutableIntStateOf(0) }
     Box(modifier = modifier.fillMaxSize()) {
@@ -848,7 +956,13 @@ internal fun HeroDetailScreen(
                 item { DataMissingDetail("英雄数据不可用") }
                 return@LazyColumn
             }
-            item { HeroHeader(hero) }
+            item {
+                HeroHeader(
+                    hero = hero,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                )
+            }
             item {
                 PrimaryTabRow(
                     selectedTabIndex = selectedTab,
@@ -918,13 +1032,23 @@ internal fun HeroDetailScreen(
 }
 
 /** Full-bleed artwork header: name, stars, class and zodiac float over the hero portrait. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun HeroHeader(hero: E7Hero) {
+private fun HeroHeader(
+    hero: E7Hero,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(420.dp)
-            .clip(MaterialTheme.shapes.large)
+            .catalogSharedBounds(
+                key = "catalog-hero-${hero.code}",
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+            )
+            .clip(MaterialTheme.shapes.extraLargeIncreased)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
         RemoteImage(
@@ -1565,10 +1689,13 @@ private fun HeroStatMetricRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun ArtifactDetailScreen(
     artifact: E7Artifact?,
     modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
 ) {
     if (artifact == null) {
         LazyColumn(
@@ -1582,20 +1709,26 @@ internal fun ArtifactDetailScreen(
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     val artwork: @Composable (Modifier) -> Unit = { artModifier ->
-        Box(modifier = artModifier) {
+        Box(
+            modifier = artModifier
+                .catalogSharedBounds(
+                    key = "catalog-artifact-${artifact.code}",
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                )
+                .clip(MaterialTheme.shapes.extraLargeIncreased),
+        ) {
             if (artifact.imageUrl != null) {
                 RemoteImage(
                     url = artifact.imageUrl,
                     contentDescription = artifact.name,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(MaterialTheme.shapes.large),
+                    modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                 )
             } else {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    shape = MaterialTheme.shapes.large,
+                    shape = MaterialTheme.shapes.extraLargeIncreased,
                     color = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                 ) {
