@@ -23,6 +23,12 @@ android {
     namespace = "com.e7orbit"
     compileSdk = 37
 
+    sourceSets {
+        getByName("main") {
+            res.directories.add("src/main/res-gear-icons")
+        }
+    }
+
     signingConfigs {
         create("release") {
             if (keystorePath.isNotEmpty()) {

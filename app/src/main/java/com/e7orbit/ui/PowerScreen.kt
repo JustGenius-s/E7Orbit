@@ -497,7 +497,13 @@ private fun PowerGearRow(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            GearSlotAsset(slot = gear.slot, rank = gear.rank, modifier = Modifier.size(36.dp))
+            GearSlotAsset(
+                slot = gear.slot,
+                rank = gear.rank,
+                gearCode = gear.code,
+                enhancement = gear.enhance,
+                modifier = Modifier.size(56.dp),
+            )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -509,7 +515,7 @@ private fun PowerGearRow(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "+${gear.enhance} ${gear.rank}",
+                        text = gear.rank,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
                     )

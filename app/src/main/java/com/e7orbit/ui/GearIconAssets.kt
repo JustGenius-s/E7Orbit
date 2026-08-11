@@ -6,13 +6,45 @@ import com.e7orbit.data.GearSlot
 
 @DrawableRes
 internal fun gearSlotIconRes(slot: GearSlot): Int? = when (slot) {
-    GearSlot.WEAPON -> R.drawable.e7_gear_weapon
-    GearSlot.HELMET -> R.drawable.e7_gear_helmet
-    GearSlot.ARMOR -> R.drawable.e7_gear_armor
-    GearSlot.NECKLACE -> R.drawable.e7_gear_necklace
-    GearSlot.RING -> R.drawable.e7_gear_ring
-    GearSlot.BOOTS -> R.drawable.e7_gear_boots
+    GearSlot.WEAPON -> R.drawable.e7_fallback_gear_weapon
+    GearSlot.HELMET -> R.drawable.e7_fallback_gear_helmet
+    GearSlot.ARMOR -> R.drawable.e7_fallback_gear_armor
+    GearSlot.NECKLACE -> R.drawable.e7_fallback_gear_necklace
+    GearSlot.RING -> R.drawable.e7_fallback_gear_ring
+    GearSlot.BOOTS -> R.drawable.e7_fallback_gear_boots
     GearSlot.UNKNOWN -> null
+}
+
+@DrawableRes
+internal fun gearItemBackgroundRes(rank: String?, hasGear: Boolean): Int = if (!hasGear) {
+    R.drawable.e7_item_slot
+} else {
+    when (rank?.lowercase()) {
+        "normal", "普通" -> R.drawable.e7_item_bg01
+        "good", "优秀" -> R.drawable.e7_item_bg02
+        "rare", "稀有" -> R.drawable.e7_item_bg03
+        "heroic", "英雄" -> R.drawable.e7_item_bg04
+        "epic", "传说" -> R.drawable.e7_item_bg05
+        else -> R.drawable.e7_item_bg01
+    }
+}
+
+@DrawableRes
+internal fun gearEnhancePlusRes(): Int = R.drawable.e7_enhance_plus
+
+@DrawableRes
+internal fun gearEnhanceDigitRes(digit: Char): Int? = when (digit) {
+    '0' -> R.drawable.e7_enhance_e0
+    '1' -> R.drawable.e7_enhance_e1
+    '2' -> R.drawable.e7_enhance_e2
+    '3' -> R.drawable.e7_enhance_e3
+    '4' -> R.drawable.e7_enhance_e4
+    '5' -> R.drawable.e7_enhance_e5
+    '6' -> R.drawable.e7_enhance_e6
+    '7' -> R.drawable.e7_enhance_e7
+    '8' -> R.drawable.e7_enhance_e8
+    '9' -> R.drawable.e7_enhance_e9
+    else -> null
 }
 
 @DrawableRes

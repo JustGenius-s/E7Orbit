@@ -1,9 +1,8 @@
 package com.e7orbit.ui
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,12 +10,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -24,8 +24,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -69,11 +67,11 @@ internal fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.width(62.dp)) {
-                GearSlotLabel(slot = slot, rank = gear.rank)
-                Text(
-                    "+${gear.enhance}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
+                GearSlotLabel(
+                    slot = slot,
+                    rank = gear.rank,
+                    gearCode = gear.code,
+                    enhancement = gear.enhance,
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -134,11 +132,11 @@ internal fun InventoryGearCard(
         Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.width(64.dp)) {
-                    GearSlotLabel(slot = gear.slot, rank = gear.rank)
-                    Text(
-                        "+${gear.enhance}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                    GearSlotLabel(
+                        slot = gear.slot,
+                        rank = gear.rank,
+                        gearCode = gear.code,
+                        enhancement = gear.enhance,
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {
@@ -190,6 +188,8 @@ internal fun InventoryGearCard(
 internal fun GearSlotLabel(
     slot: GearSlot,
     rank: String?,
+    gearCode: String? = null,
+    enhancement: Int? = null,
     modifier: Modifier = Modifier,
 ) {
     if (slot == GearSlot.UNKNOWN) {
@@ -205,7 +205,9 @@ internal fun GearSlotLabel(
     GearSlotAsset(
         slot = slot,
         rank = rank,
-        modifier = modifier.size(33.dp),
+        gearCode = gearCode,
+        enhancement = enhancement,
+        modifier = modifier.size(52.dp),
     )
 }
 
@@ -213,41 +215,76 @@ internal fun GearSlotLabel(
 internal fun GearSlotAsset(
     slot: GearSlot,
     rank: String?,
+    gearCode: String? = null,
+    enhancement: Int? = null,
     modifier: Modifier = Modifier,
 ) {
-    val iconRes = gearSlotIconRes(slot) ?: return
-    val style = gearRankIconStyle(rank)
+    val foregroundRes = gearCode?.let { gearItemIconRes(it, slot) }
+        ?: gearCode?.let { gearSlotIconRes(slot) }
     Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(3.dp))
-            .background(style.background)
-            .border(1.5.dp, style.border, RoundedCornerShape(3.dp))
-            .padding(2.dp),
+        modifier = modifier.clipToBounds(),
         contentAlignment = Alignment.Center,
     ) {
         GearAssetIcon(
-            resId = iconRes,
-            contentDescription = slot.label,
-            modifier = Modifier.fillMaxSize(),
+            resId = gearItemBackgroundRes(rank, hasGear = gearCode != null),
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .offset(y = 2.dp),
         )
+        foregroundRes?.let { resId ->
+            GearAssetIcon(
+                resId = resId,
+                contentDescription = slot.label,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(4.dp)
+                    .offset(y = 2.dp),
+            )
+        }
+        enhancement?.let { value ->
+            GearEnhancementBadge(
+                enhance = value,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 6.dp, end = 2.dp),
+            )
+        }
     }
 }
 
-internal data class GearRankIconStyle(
-    val border: Color,
-    val background: Color,
+private data class GearEnhanceGlyph(
+    val resId: Int,
+    val width: Int,
 )
 
-internal fun gearRankIconStyle(rank: String?): GearRankIconStyle = when (rank?.lowercase()) {
-    "epic", "传说" -> GearRankIconStyle(Color(0xFFA20707), Color(0xFFE53935))
-    "heroic", "英雄" -> GearRankIconStyle(Color(0xFF8E24AA), Color(0xFFD05CE3))
-    "rare", "稀有" -> GearRankIconStyle(Color(0xFF1722F9), Color(0xFF4D8DFF))
-    "good", "优秀" -> GearRankIconStyle(Color(0xFF009208), Color(0xFF50C85A))
-    "normal", "普通" -> GearRankIconStyle(Color(0xFF616161), Color(0xFFB5B8B7))
-    else -> GearRankIconStyle(
-        border = Color(0xFF8A9099),
-        background = Color(0x263A414B),
-    )
+@Composable
+private fun GearEnhancementBadge(
+    enhance: Int,
+    modifier: Modifier = Modifier,
+) {
+    val glyphs = buildList {
+        add(GearEnhanceGlyph(gearEnhancePlusRes(), width = 38))
+        enhance.coerceAtLeast(0).toString().forEach { digit ->
+            gearEnhanceDigitRes(digit)?.let { resId ->
+                add(GearEnhanceGlyph(resId, width = if (digit == '1') 22 else 38))
+            }
+        }
+    }
+    Row(
+        modifier = modifier.height(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        glyphs.forEach { glyph ->
+            GearAssetIcon(
+                resId = glyph.resId,
+                contentDescription = null,
+                modifier = Modifier
+                    .height(10.dp)
+                    .aspectRatio(glyph.width / 46f),
+            )
+        }
+    }
 }
 
 @Composable
