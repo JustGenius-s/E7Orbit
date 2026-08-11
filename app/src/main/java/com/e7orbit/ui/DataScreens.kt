@@ -57,6 +57,7 @@ import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.carousel.CarouselDefaults
 import androidx.compose.material3.carousel.HorizontalCenteredHeroCarousel
 import androidx.compose.material3.carousel.rememberCarouselState
 import androidx.compose.material3.rememberSearchBarState
@@ -581,15 +582,19 @@ private fun ColumnScope.HeroList(
             .weight(1f),
         contentAlignment = Alignment.Center,
     ) {
-        // Centered-hero carousel: the focused card stays centered at full size with a small
-        // card peeking on each side, and each swipe snaps one card into the middle, like
-        // dealing through a hand. Neighbors shrink along the keyline path.
-        val carouselState = rememberCarouselState(itemCount = { filtered.size })
+        val selectedIndex = remember(filtered, data.selectedHeroCode) {
+            filtered.indexOfFirst { it.code == data.selectedHeroCode }.coerceAtLeast(0)
+        }
+        val carouselState = rememberCarouselState(
+            initialItem = selectedIndex,
+            itemCount = { filtered.size },
+        )
         HorizontalCenteredHeroCarousel(
             state = carouselState,
             maxItemWidth = 260.dp,
             modifier = Modifier.fillMaxWidth(),
             itemSpacing = 8.dp,
+            flingBehavior = CarouselDefaults.multiBrowseFlingBehavior(carouselState),
             minSmallItemWidth = 56.dp,
             maxSmallItemWidth = 96.dp,
         ) { index ->
