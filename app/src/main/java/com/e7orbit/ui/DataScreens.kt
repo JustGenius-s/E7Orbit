@@ -613,7 +613,7 @@ private fun ColumnScope.HeroList(
  * Full-bleed hero card: the character artwork is the cover, with name, stars, class and zodiac
  * overlaid on a scrim gradient, following the M3 filled-card + media pattern.
  */
-private const val HERO_CARD_ASPECT_RATIO = 0.72f
+private const val HERO_CARD_ASPECT_RATIO = 3f / 4f
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable

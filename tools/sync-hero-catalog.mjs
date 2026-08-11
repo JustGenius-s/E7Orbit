@@ -216,7 +216,7 @@ async function heroArtSources(heroCodes) {
   const recordsById = new Map(records.map((record) => [record.id, record]));
   const unitsByBaseId = new Map();
   for (const record of records) {
-    if (record.kind !== "unit" || !record.base_id || !record.pose) continue;
+    if (record.kind !== "unit" || !record.base_id || (!record.thumb && !record.pose)) continue;
     const entries = unitsByBaseId.get(record.base_id) || [];
     entries.push(record);
     unitsByBaseId.set(record.base_id, entries);
@@ -226,20 +226,28 @@ async function heroArtSources(heroCodes) {
   for (const code of heroCodes) {
     const alias = HERO_ART_ALIASES[code];
     let record = recordsById.get(alias || code);
-    if (!record?.pose && !alias) {
+    if (!record?.thumb && !record?.pose && !alias) {
       const entries = unitsByBaseId.get(code) || [];
       record = entries.find((entry) => !entry.variant) || entries[0];
     }
-    if (record?.pose) {
-      const sourceUrl = record.pose.startsWith("http") ? record.pose : `${e7CodexUrl}/${record.pose}`;
+    const sourcePath = record?.thumb || record?.pose || record?.artworks?.[0];
+    if (sourcePath) {
+      const sourceUrl = sourcePath.startsWith("http") ? sourcePath : `${e7CodexUrl}/${sourcePath}`;
       if (!isPlaceholderImageUrl(sourceUrl)) {
-        sources.set(code, { sourceUrl, unitId: record.id });
+        sources.set(code, {
+          sourceUrl,
+          unitId: record.id,
+          kind: record.thumb ? "thumb" : record.pose ? "pose" : "face",
+        });
       }
     }
   }
 
   const missing = heroCodes.filter((code) => !sources.has(code));
-  console.log(`Resolved E7 Codex artwork for ${sources.size}/${heroCodes.length} heroes`);
+  const thumbCount = [...sources.values()].filter((source) => source.kind === "thumb").length;
+  const poseCount = [...sources.values()].filter((source) => source.kind === "pose").length;
+  const faceCount = [...sources.values()].filter((source) => source.kind === "face").length;
+  console.log(`Resolved E7 Codex artwork for ${sources.size}/${heroCodes.length} heroes (${thumbCount} thumb, ${poseCount} pose fallback, ${faceCount} face fallback)`);
   if (missing.length) console.warn(`No full artwork for: ${missing.join(", ")}`);
   return sources;
 }
