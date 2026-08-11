@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.BottomAppBar
@@ -104,6 +103,8 @@ import com.e7orbit.optimizer.buildEquippedHeroes
 import com.e7orbit.optimizer.containsBuild
 import com.e7orbit.optimizer.filterAndSortGears
 import com.e7orbit.optimizer.sortEquippedHeroes
+import com.e7orbit.ui.theme.OrbitPolygonShapes
+import com.e7orbit.ui.theme.asShape
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -1166,7 +1167,7 @@ private fun EquippedHeroCard(
                     contentDescription = build.displayName,
                     modifier = Modifier
                         .size(52.dp)
-                        .clip(CircleShape),
+                        .clip(OrbitPolygonShapes.HeroAvatar.asShape),
                     contentScale = ContentScale.Crop,
                 )
                 Spacer(Modifier.width(12.dp))
@@ -1245,7 +1246,7 @@ private fun EquippedHeroHeader(
                 contentDescription = build.displayName,
                 modifier = Modifier
                     .size(64.dp)
-                    .clip(CircleShape),
+                    .clip(OrbitPolygonShapes.HeroAvatar.asShape),
                 contentScale = ContentScale.Crop,
             )
             Spacer(Modifier.width(14.dp))

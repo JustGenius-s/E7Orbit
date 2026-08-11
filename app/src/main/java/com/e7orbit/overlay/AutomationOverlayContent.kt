@@ -3,6 +3,7 @@ package com.e7orbit.overlay
 import android.graphics.BitmapFactory
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -58,8 +59,11 @@ import com.e7orbit.model.AutomationPhase
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.HuntStatus
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.MaterialShapes
 import com.e7orbit.ui.theme.OrbitSuccess
 import com.e7orbit.ui.theme.OrbitWarning
+import com.e7orbit.ui.theme.rememberMorphingShape
 import java.text.NumberFormat
 
 @Composable
@@ -305,6 +309,7 @@ private fun MorphingEdgeBubble(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun StatusBubble(
     state: AutomationOverlayUiState,
@@ -322,6 +327,19 @@ private fun StatusBubble(
         },
         dockSide = null,
     )
+    // M3 Expressive 形变：运行/暂停时悬浮球从静态宝石渐变为旋转的 Sunny 齿轮。
+    val running = !state.isActivePaused && !state.isActiveTerminal &&
+        !state.isActiveCompleted && !state.isActiveError
+    val morphProgress by animateFloatAsState(
+        targetValue = if (running) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 260f),
+        label = "statusOrbMorph",
+    )
+    val orbShape = rememberMorphingShape(
+        start = MaterialShapes.Gem,
+        end = MaterialShapes.Sunny,
+        progress = morphProgress,
+    )
     Box(
         modifier = modifier.size(OverlayUiTokens.COMPACT_SIZE_DP.dp),
         contentAlignment = Alignment.Center,
@@ -335,7 +353,7 @@ private fun StatusBubble(
                     contentDescription = description
                     stateDescription = state.phaseLabel
                 },
-            shape = CircleShape,
+            shape = orbShape,
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             shadowElevation = 6.dp,

@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -58,6 +57,8 @@ import com.e7orbit.model.HuntDungeon
 import com.e7orbit.model.HuntEnergyRefill
 import com.e7orbit.model.HuntPhase
 import com.e7orbit.model.RunSummary
+import com.e7orbit.ui.theme.OrbitPolygonShapes
+import com.e7orbit.ui.theme.asShape
 
 @Composable
 internal fun HomeScreen(
@@ -446,7 +447,7 @@ private fun TaskBlockedReason(reason: String) {
                 .size(8.dp)
                 .background(
                     color = MaterialTheme.colorScheme.tertiary,
-                    shape = CircleShape,
+                    shape = OrbitPolygonShapes.StatusDot.asShape,
                 ),
         )
         Text(
