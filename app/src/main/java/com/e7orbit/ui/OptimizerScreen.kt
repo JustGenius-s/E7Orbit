@@ -551,17 +551,6 @@ internal fun OptimizerHeroDetailScreen(
         if (tab == 1) {
         item(key = "preference") {
             SectionSurface {
-                SectionTitle(
-                    title = "属性偏好",
-                    detail = "设置只属于 ${build.displayName}，计算结果先满足最低属性，再按目标排序。",
-                )
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "自身刻印档位",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(8.dp))
                 ImprintRankSelector(
                     build = build,
                     selectedRank = optimizer.imprintRank,
