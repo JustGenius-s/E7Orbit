@@ -3,9 +3,13 @@
 import process from "node:process";
 
 const supabaseUrl = (process.env.SUPABASE_URL || "https://biayslzufpixsyuitjus.supabase.co").replace(/\/$/, "");
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const serviceRoleKey = (
+  process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || ""
+).trim();
 const storageBucket = (process.env.SUPABASE_STORAGE_BUCKET || "Epic7").replace(/^\/+|\/+$/g, "");
 const skipImageMirror = process.argv.includes("--skip-image-mirror");
+const officialHeroUrl = process.env.OFFICIAL_HERO_URL ||
+  "https://static-pubcomm.onstove.com/gameRecord/epic7/epic7_hero.json";
 const fribbelsUrl = process.env.FRIBBELS_HERO_URL ||
   "https://e7-optimizer-game-data.s3-accelerate.amazonaws.com/herodata.json";
 const fribbelsArtifactUrl = process.env.FRIBBELS_ARTIFACT_URL ||
@@ -18,6 +22,13 @@ const epicSevenDbGitHubRaw = (process.env.EPICSEVENDB_GITHUB_RAW ||
 const epicSevenDbWeb = (process.env.EPICSEVENDB_WEB || "https://epic7db.com/heroes").replace(/\/$/, "");
 const e7CodexUrl = (process.env.E7_CODEX_URL || "https://e7codex.com").replace(/\/$/, "");
 const e7CodexUnitsUrl = process.env.E7_CODEX_UNITS_URL || `${e7CodexUrl}/data/units.json`;
+const gameKeeUrl = (process.env.GAMEKEE_URL || "https://www.gamekee.com").replace(/\/$/, "");
+const gameKeeHeroPids = (process.env.GAMEKEE_HERO_PIDS || "243,244,246,68344,68345,68346")
+  .split(",")
+  .map((pid) => Number(pid.trim()))
+  .filter(Number.isInteger);
+const gameKeeLanguage = process.env.GAMEKEE_LANGUAGE || "zh-cn";
+const gameKeeAlias = process.env.GAMEKEE_ALIAS || "epic7";
 const heroArtMaxSize = Number(process.env.HERO_ART_MAX_SIZE || 1024);
 const heroArtQuality = Number(process.env.HERO_ART_QUALITY || 84);
 const language = process.env.EPICSEVENDB_LANGUAGE || "cn";
@@ -29,7 +40,9 @@ const growthOnly = process.argv.includes("--growth-only");
 const heroArtOnly = process.argv.includes("--hero-art-only");
 const forceHeroArt = process.argv.includes("--force-hero-art");
 const artifactsOnly = process.argv.includes("--artifacts-only");
+const exclusiveOnly = process.argv.includes("--exclusive-only");
 const skipArtifacts = process.argv.includes("--skip-artifacts");
+const skipExclusive = process.argv.includes("--skip-exclusive");
 const exportDirArgument = process.argv.find((argument) => argument.startsWith("--export-dir="));
 const exportDir = exportDirArgument?.slice("--export-dir=".length) || null;
 const heroCodesArgument = process.argv.find((argument) => argument.startsWith("--hero-codes="));
@@ -44,10 +57,53 @@ let apiFailureLogged = false;
 let epicSevenDbWebSlugsPromise = null;
 
 if (!serviceRoleKey && !exportDir) {
-  console.error("Missing SUPABASE_SERVICE_ROLE_KEY.");
+  console.error("Missing SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY.");
   console.error("Set it in the shell; never place it in local.properties or source control.");
   console.error("Use --export-dir=path to generate JSON without uploading.");
   process.exit(1);
+}
+
+function legacyServiceRolePayload(key) {
+  try {
+    const payload = key.split(".")[1];
+    return payload ? JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function supabaseAdminKeyType(key) {
+  if (key.startsWith("sb_secret_")) return "secret";
+  if (legacyServiceRolePayload(key)?.role === "service_role") return "service_role";
+  return null;
+}
+
+function supabaseAdminHeaders(extra = {}) {
+  const headers = { apikey: serviceRoleKey, ...extra };
+  if (supabaseAdminKeyType(serviceRoleKey) === "service_role") {
+    headers.Authorization = `Bearer ${serviceRoleKey}`;
+  }
+  return headers;
+}
+
+async function validateSupabaseAdminAccess() {
+  const keyType = supabaseAdminKeyType(serviceRoleKey);
+  if (!keyType) {
+    throw new Error(
+      "SUPABASE_SECRET_KEY/SUPABASE_SERVICE_ROLE_KEY must be an sb_secret_ key " +
+      "or a legacy JWT whose role is service_role",
+    );
+  }
+  const response = await fetch(`${supabaseUrl}/rest/v1/hero_catalog?select=code&limit=1`, {
+    headers: supabaseAdminHeaders(),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `Supabase admin key preflight failed (${response.status}): ${text.slice(0, 240)}`,
+    );
+  }
+  console.log(`Supabase admin authentication ready (${keyType})`);
 }
 
 async function fetchJson(url, headers = {}) {
@@ -63,6 +119,21 @@ async function fetchJson(url, headers = {}) {
     throw new Error(`HTTP ${response.status} from ${url}: ${text.slice(0, 240)}`);
   }
   return JSON.parse(text);
+}
+
+async function fetchGameKeeJson(url) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await fetchJson(url, { "game-alias": gameKeeAlias, Lang: gameKeeLanguage });
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+      }
+    }
+  }
+  throw lastError;
 }
 
 function numberOrNull(value) {
@@ -180,6 +251,342 @@ function normalizedHeroName(value) {
     .toLowerCase()
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, "");
+}
+
+// GameKee uses a handful of nicknames and older Chinese translations. These are
+// explicit aliases for the canonical Stove hero codes, not a fuzzy matcher.
+const GAMEKEE_HERO_NAME_ALIASES = {
+  c1015: ["巴尔&塞尚"],
+  c1040: ["赛利拉", "南瓜妹（赛丽拉）"],
+  c1044: ["谬伊"],
+  c1054: ["玲儿"],
+  c1062: ["安杰莉卡"],
+  c1091: ["艾雷娜"],
+  c1119: ["扎哈克"],
+  c1122: ["蜜莉姆"],
+  c2018: ["求道者"],
+  c2019: ["末日罗菲"],
+  c2022: ["戴斯蒂娜"],
+  c2028: ["暗喵"],
+  c2035: ["光狗（大将法济斯）"],
+  c2038: ["实验体赛泽"],
+  c2062: ["暴戾的安洁莉卡"],
+  c2072: ["操作员赛柯兰特"],
+  c2082: ["最强模特儿璐璐卡"],
+  c3026: ["永恒不变的黛莉娅"],
+  c3084: ["奇奇拉特v.2", "暗熊"],
+  c5024: ["南国的伊赛莉亚"],
+  c6008: ["坏猫猫亚敏"],
+};
+
+async function gameKeeHeroIndex() {
+  const official = await fetchJson(officialHeroUrl);
+  const officialHeroes = official["zh-CN"] || [];
+  const codeByName = new Map(officialHeroes.map((hero) => [hero.name, hero.code]));
+  for (const [code, aliases] of Object.entries(GAMEKEE_HERO_NAME_ALIASES)) {
+    aliases.forEach((name) => codeByName.set(name, code));
+  }
+
+  const entriesByCode = new Map();
+  for (const pid of gameKeeHeroPids) {
+    const response = await fetchGameKeeJson(
+      `${gameKeeUrl}/v1/entry/treesByPid?pid=${encodeURIComponent(pid)}`,
+    );
+    for (const entry of response.data || []) {
+      const code = codeByName.get(entry.name);
+      if (code && entry.content_id) entriesByCode.set(code, entry);
+    }
+  }
+  return { codeByName, entriesByCode };
+}
+
+function gameKeeImageUrl(value) {
+  const url = textOrNull(value);
+  if (!url) return null;
+  return url.startsWith("//") ? `https:${url}` : url;
+}
+
+function gameKeeCellText(value) {
+  return htmlText(String(value || "")
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/<img\b[^>]*>/gi, ""));
+}
+
+function gameKeeCellImage(value) {
+  const match = String(value || "").match(/(?:data-real|src)=["']([^"']+)["']/i);
+  return gameKeeImageUrl(match?.[1]);
+}
+
+function gameKeeTableCells(table) {
+  return [...table.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((match) => ({
+    text: gameKeeCellText(match[1]),
+    imageUrl: gameKeeCellImage(match[1]),
+  }));
+}
+
+function gameKeeTableImages(table) {
+  return [...new Set(
+    [...table.matchAll(/(?:data-real|src)=["']([^"']+)["']/gi)]
+      .map((match) => gameKeeImageUrl(match[1]))
+      .filter(Boolean),
+  )];
+}
+
+function gameKeeHeroSkillIcons(html) {
+  const tables = html.match(/<table\b[\s\S]*?<\/table>/gi) || [];
+  for (const table of tables) {
+    const cells = gameKeeTableCells(table);
+    if (!cells.some((cell) => cell.text === "技能详情")) continue;
+    return gameKeeTableImages(table).map((url, index) => ({ slot: index + 1, url }));
+  }
+  for (const table of tables) {
+    const cells = gameKeeTableCells(table);
+    const images = gameKeeTableImages(table);
+    const isLegacyHeroInfo = images.length >= 4 && cells.some((cell) => /[345]星/.test(cell.text));
+    if (isLegacyHeroInfo) {
+      return images.slice(1, 4).map((url, index) => ({ slot: index + 1, url }));
+    }
+  }
+  for (const table of tables) {
+    const cells = gameKeeTableCells(table);
+    const images = gameKeeTableImages(table);
+    const isLegacySkillTable = images.length >= 3 && cells.some((cell) =>
+      cell.text === "技能一" || cell.text === "技能效果"
+    );
+    if (isLegacySkillTable) {
+      return images.slice(0, 3).map((url, index) => ({ slot: index + 1, url }));
+    }
+  }
+  return [];
+}
+
+function gameKeeStat(value) {
+  const normalized = gameKeeCellText(value)
+    .replace(/：/g, ":")
+    .replace(/％/g, "%")
+    .replace(/\s+/g, "");
+  const match = normalized.match(/^(.+?):?(\d+(?:\.\d+)?)(%?)(?:~|-|－|–|—|～)(\d+(?:\.\d+)?)(%?)$/);
+  if (!match) return null;
+  const label = match[1];
+  const statType = {
+    "攻击力": "attack",
+    "生命力": "health",
+    "生命值": "health",
+    "防御力": "defense",
+    "速度": "speed",
+    "暴击率": "critical_chance",
+    "暴击": "critical_chance",
+    "暴击伤害": "critical_damage",
+    "效果命中": "effectiveness",
+    "效果抗性": "effect_resistance",
+    "效果抵抗": "effect_resistance",
+  }[label] || label;
+  const statPercent = Boolean(match[3] || match[5]);
+  return {
+    stat_type: statType,
+    stat_min: Number(match[2]),
+    stat_max: Number(match[4]),
+    stat_percent: statPercent,
+  };
+}
+
+function parseGameKeeExclusiveTable(table, heroCode, syncedAt) {
+  const cells = gameKeeTableCells(table);
+  const name = cells[0]?.text;
+  const stat = gameKeeStat(cells[1]?.text);
+  const enhancements = [];
+  for (let index = 0; index < cells.length; index += 1) {
+    const label = cells[index].text.match(/^强化([123])$/);
+    if (!label) continue;
+    const iconUrl = cells[index + 1]?.imageUrl;
+    const description = cells[index + 2]?.text;
+    if (iconUrl && description) {
+      enhancements.push({
+        option: Number(label[1]),
+        skill_slot: null,
+        _source_icon_url: iconUrl,
+        description,
+      });
+    }
+  }
+  enhancements.sort((left, right) => left.option - right.option);
+  if (!name || !cells[0].imageUrl || !stat || enhancements.length !== 3) return null;
+  return {
+    code: `ee-${heroCode}`,
+    hero_code: heroCode,
+    name,
+    description: null,
+    icon_url: cells[0].imageUrl,
+    ...stat,
+    enhancements,
+    source: "gamekee",
+    source_updated_at: syncedAt,
+    updated_at: syncedAt,
+  };
+}
+
+function parseGameKeeHeroExclusive(html, heroCode, syncedAt) {
+  const heading = html.match(/<input\b[^>]*value=["']专属装备["'][^>]*>/i);
+  if (!heading) return null;
+  const headingEnd = heading.index + heading[0].length;
+  const tableStart = html.indexOf("<table", headingEnd);
+  if (tableStart < 0 || /暂无/.test(html.slice(headingEnd, tableStart))) return null;
+  const tableEnd = html.indexOf("</table>", tableStart);
+  if (tableEnd < 0) return null;
+  return parseGameKeeExclusiveTable(html.slice(tableStart, tableEnd + 8), heroCode, syncedAt);
+}
+
+function parseGameKeeExclusiveIndex(html, codeByName, syncedAt) {
+  const rows = [];
+  for (const table of html.match(/<table\b[\s\S]*?<\/table>/gi) || []) {
+    const cells = gameKeeTableCells(table);
+    const heroName = cells[2]?.text;
+    const heroCode = codeByName.get(heroName);
+    if (!heroCode) continue;
+    const stat = gameKeeStat(cells[4]?.text);
+    const enhancements = [];
+    for (let index = 0; index < cells.length; index += 1) {
+      const label = cells[index].text.match(/^ex效果([123])$/);
+      if (!label) continue;
+      const iconUrl = cells[index + 1]?.imageUrl;
+      const description = cells[index + 2]?.text;
+      if (iconUrl && description) {
+        enhancements.push({
+          option: Number(label[1]),
+          skill_slot: null,
+          _source_icon_url: iconUrl,
+          description,
+        });
+      }
+    }
+    enhancements.sort((left, right) => left.option - right.option);
+    if (!cells[0]?.text || !cells[0].imageUrl || !stat || enhancements.length !== 3) continue;
+    rows.push({
+      code: `ee-${heroCode}`,
+      hero_code: heroCode,
+      name: cells[0].text,
+      description: null,
+      icon_url: cells[0].imageUrl,
+      ...stat,
+      enhancements,
+      source: "gamekee",
+      source_updated_at: syncedAt,
+      updated_at: syncedAt,
+    });
+  }
+  return rows;
+}
+
+const GAMEKEE_EXCLUSIVE_SKILL_SLOT_OVERRIDES = {
+  c3084: [2, 2, 3], // Legacy Kikirat v2 images were replaced; text identifies S2, S2, S3.
+};
+
+const gameKeeIconSignatureCache = new Map();
+
+async function gameKeeIconSignature(url) {
+  if (!gameKeeIconSignatureCache.has(url)) {
+    gameKeeIconSignatureCache.set(url, (async () => {
+      const sharp = await sharpProcessor();
+      return sharp(await downloadImage(url))
+        .ensureAlpha()
+        .resize(32, 32, { fit: "fill" })
+        .raw()
+        .toBuffer();
+    })());
+  }
+  return gameKeeIconSignatureCache.get(url);
+}
+
+function gameKeeIconDistance(left, right) {
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference += Math.abs(left[index] - right[index]);
+  }
+  return difference / left.length;
+}
+
+async function assignGameKeeSkillSlots(row, skillIcons) {
+  if (!row) return false;
+  const override = GAMEKEE_EXCLUSIVE_SKILL_SLOT_OVERRIDES[row.hero_code];
+  if (override?.length === row.enhancements.length) {
+    row.enhancements.forEach((enhancement, index) => {
+      enhancement.skill_slot = override[index];
+      delete enhancement._source_icon_url;
+    });
+    return true;
+  }
+  if (skillIcons.length < 3) return false;
+  const skills = await Promise.all(skillIcons.map(async ({ slot, url }) => ({
+    slot,
+    signature: await gameKeeIconSignature(url),
+  })));
+  for (const enhancement of row.enhancements) {
+    const sourceUrl = enhancement._source_icon_url;
+    if (!sourceUrl) return false;
+    const signature = await gameKeeIconSignature(sourceUrl);
+    const matches = skills
+      .map((skill) => ({
+        slot: skill.slot,
+        distance: gameKeeIconDistance(signature, skill.signature),
+      }))
+      .sort((left, right) => left.distance - right.distance);
+    if (!matches[0] || matches[0].distance > 96) return false;
+    enhancement.skill_slot = matches[0].slot;
+    delete enhancement._source_icon_url;
+  }
+  return true;
+}
+
+async function syncExclusiveEquipment(heroes, syncedAt) {
+  const { codeByName, entriesByCode } = await gameKeeHeroIndex();
+  const aggregate = await fetchGameKeeJson(`${gameKeeUrl}/v1/content/detail/16446`);
+  const aggregateRowsByHeroCode = new Map(
+    parseGameKeeExclusiveIndex(aggregate.data?.content || "", codeByName, syncedAt)
+      .map((row) => [row.hero_code, row]),
+  );
+  const rowsByHeroCode = new Map();
+  const candidateCodes = new Set(
+    heroes
+      .filter(({ hero }) => hero.ex_equip?.length)
+      .map(({ code }) => code),
+  );
+  // Include legacy entries that only exist in the aggregate index.
+  for (const row of aggregateRowsByHeroCode.values()) candidateCodes.add(row.hero_code);
+  const candidates = [...candidateCodes]
+    .filter((code) => heroes.some((hero) => hero.code === code));
+  let completed = 0;
+  for (let start = 0; start < candidates.length; start += concurrency) {
+    const group = candidates.slice(start, start + concurrency);
+    const results = await Promise.all(group.map(async (code) => {
+      const entry = entriesByCode.get(code);
+      if (!entry?.content_id) return null;
+      try {
+        const detail = await fetchGameKeeJson(
+          `${gameKeeUrl}/v1/content/detail/${encodeURIComponent(entry.content_id)}`,
+        );
+        const html = detail.data?.content || "";
+        const row = parseGameKeeHeroExclusive(html, code, syncedAt) ||
+          aggregateRowsByHeroCode.get(code);
+        if (!row || !(await assignGameKeeSkillSlots(row, gameKeeHeroSkillIcons(html)))) {
+          return null;
+        }
+        return row;
+      } catch (error) {
+        console.warn(`GameKee exclusive equipment unavailable for ${code}: ${error.message}`);
+        return null;
+      } finally {
+        completed += 1;
+        if (completed % 25 === 0 || completed === candidates.length) {
+          console.log(`Fetched GameKee exclusive equipment ${completed}/${candidates.length}`);
+        }
+      }
+    }));
+    results.filter(Boolean).forEach((row) => rowsByHeroCode.set(row.hero_code, row));
+  }
+  const rows = [...rowsByHeroCode.values()]
+    .filter((row) => heroes.some((hero) => hero.code === row.hero_code));
+  console.log(`Resolved ${rows.length} partial GameKee exclusive-equipment records`);
+  return rows;
 }
 
 async function epicSevenDbWebSlugs() {
@@ -912,16 +1319,28 @@ function normalizeSkillEffects(rows, syncedAt) {
   };
 }
 
-async function writeExport(directory, heroes, skills, artifacts = [], effects = []) {
+async function writeExport(
+  directory,
+  heroes,
+  skills,
+  artifacts = [],
+  effects = [],
+  exclusiveEquipment = [],
+) {
   const { mkdir, writeFile } = await import("node:fs/promises");
   await mkdir(directory, { recursive: true });
   await writeFile(`${directory}/hero_catalog.json`, JSON.stringify(heroes, null, 2));
   await writeFile(`${directory}/hero_skills.json`, JSON.stringify(skills, null, 2));
   await writeFile(`${directory}/artifact_catalog.json`, JSON.stringify(artifacts, null, 2));
   await writeFile(`${directory}/status_effect_catalog.json`, JSON.stringify(effects, null, 2));
+  await writeFile(
+    `${directory}/hero_exclusive_equipment.json`,
+    JSON.stringify(exclusiveEquipment, null, 2),
+  );
   console.log(
     `Exported ${heroes.length} heroes, ${skills.length} skills, ` +
-    `${effects.length} effects and ${artifacts.length} artifacts to ${directory}`,
+    `${effects.length} effects, ${artifacts.length} artifacts and ` +
+    `${exclusiveEquipment.length} exclusive-equipment rows to ${directory}`,
   );
 }
 
@@ -1133,8 +1552,13 @@ async function storageObjectExists(path) {
 }
 
 async function downloadImage(url) {
+  const isGameKeeImage = new URL(url).hostname.endsWith("gamekee.com");
   const response = await fetch(url, {
-    headers: { "User-Agent": "E7Orbit-hero-catalog-sync/1.0" },
+    headers: {
+      Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+      ...(isGameKeeImage ? { Referer: `${gameKeeUrl}/` } : {}),
+      "User-Agent": "E7Orbit-hero-catalog-sync/1.0",
+    },
   });
   if (!response.ok) throw new Error(`HTTP ${response.status} downloading image`);
   return Buffer.from(await response.arrayBuffer());
@@ -1187,12 +1611,10 @@ async function transformHeroArtwork(sourceUrl) {
 async function uploadToStorage(path, body, contentType) {
   const response = await fetch(`${supabaseUrl}/storage/v1/object/${storageBucket}/${path}`, {
     method: "POST",
-    headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
+    headers: supabaseAdminHeaders({
       "Content-Type": contentType,
       "x-upsert": "true",
-    },
+    }),
     body,
   });
   if (!response.ok) {
@@ -1368,16 +1790,38 @@ async function mirrorArtifactImages(artifacts) {
   return artifacts;
 }
 
+async function mirrorExclusiveEquipmentImages(rows) {
+  if (skipImageMirror || !serviceRoleKey) return rows;
+  const mirroredRows = [];
+  const storagePrefix = `${supabaseUrl}/storage/v1/object/public/${storageBucket}/`;
+  let done = 0;
+  for (const row of rows) {
+    const ext = extensionFromUrl(row.icon_url);
+    row.icon_url = await mirrorImage(
+      row.icon_url,
+      `exclusive-equipment/${row.hero_code}/icon${ext}`,
+    );
+    if (row.icon_url?.startsWith(storagePrefix)) {
+      mirroredRows.push(row);
+    } else {
+      console.warn(`Skipping ${row.code}: exclusive-equipment icon was not mirrored`);
+    }
+    done += 1;
+    if (done % 25 === 0 || done === rows.length) {
+      console.log(`Mirrored exclusive-equipment icons ${done}/${rows.length}`);
+    }
+  }
+  return mirroredRows;
+}
+
 async function loadRestRows(table) {
   const rows = [];
   let start = 0;
   do {
     const response = await fetch(`${supabaseUrl}/rest/v1/${table}?select=*`, {
-      headers: {
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
+      headers: supabaseAdminHeaders({
         Range: `${start}-${start + 499}`,
-      },
+      }),
     });
     const text = await response.text();
     if (!response.ok) {
@@ -1431,12 +1875,10 @@ async function upsert(table, rows, conflictColumns) {
       `${supabaseUrl}/rest/v1/${table}?on_conflict=${encodeURIComponent(conflictColumns)}`,
       {
         method: "POST",
-        headers: {
-          apikey: serviceRoleKey,
-          Authorization: `Bearer ${serviceRoleKey}`,
+        headers: supabaseAdminHeaders({
           "Content-Type": "application/json",
           Prefer: "resolution=merge-duplicates,return=minimal",
-        },
+        }),
         body: JSON.stringify(batch),
       },
     );
@@ -1449,6 +1891,8 @@ async function upsert(table, rows, conflictColumns) {
 }
 
 const syncedAt = new Date().toISOString();
+
+if (!exportDir) await validateSupabaseAdminAccess();
 
 if (artifactsOnly) {
   console.log("Starting artifact-only sync...");
@@ -1478,6 +1922,22 @@ if (requestedHeroCodes.size) {
   const missingCodes = [...requestedHeroCodes].filter((code) => !matchedCodes.has(code));
   if (missingCodes.length) throw new Error(`Unknown hero codes: ${missingCodes.join(", ")}`);
   console.log(`Filtering sync to hero codes: ${[...requestedHeroCodes].join(", ")}`);
+}
+
+if (exclusiveOnly) {
+  console.log(`Starting exclusive-equipment-only sync for ${fribbelsHeroes.length} heroes...`);
+  const exclusiveEquipment = await mirrorExclusiveEquipmentImages(
+    await syncExclusiveEquipment(fribbelsHeroes, syncedAt),
+  );
+  if (exportDir) {
+    await writeExport(exportDir, [], [], [], [], exclusiveEquipment);
+  } else if (exclusiveEquipment.length) {
+    await upsert("hero_exclusive_equipment", exclusiveEquipment, "code");
+  }
+  console.log(
+    `Exclusive-equipment sync completed: ${exclusiveEquipment.length} partial records`,
+  );
+  process.exit(0);
 }
 
 if (heroArtOnly) {
@@ -1534,12 +1994,26 @@ if (!skillsOnly) {
 const heroes = skillsOnly ? heroRows : await mirrorHeroImages(heroRows);
 const rawSkills = await mirrorSkillImages(skillRows(fribbelsHeroes, details, syncedAt));
 const { skills, effects } = normalizeSkillEffects(rawSkills, syncedAt);
+let exclusiveEquipment = [];
+if (!skipExclusive && !skillsOnly) {
+  try {
+    exclusiveEquipment = await mirrorExclusiveEquipmentImages(
+      await syncExclusiveEquipment(fribbelsHeroes, syncedAt),
+    );
+  } catch (error) {
+    console.warn(`Exclusive-equipment sync failed (non-fatal): ${error.message}`);
+  }
+}
 if (exportDir) {
-  await writeExport(exportDir, heroes, skills, [], effects);
+  await writeExport(exportDir, heroes, skills, [], effects, exclusiveEquipment);
 }
 if (!exportDir && !skillsOnly) {
   console.log(`Preparing ${heroes.length} hero rows`);
   await upsert("hero_catalog", heroes, "code");
+}
+
+if (exclusiveEquipment.length && !exportDir) {
+  await upsert("hero_exclusive_equipment", exclusiveEquipment, "code");
 }
 
 if (skills.length && !exportDir) {
@@ -1568,4 +2042,7 @@ if (!skipArtifacts && !skillsOnly && !exportDir) {
   }
 }
 
-console.log(`Hero catalog sync completed: ${heroes.length} heroes, ${skills.length} skills`);
+console.log(
+  `Hero catalog sync completed: ${heroes.length} heroes, ${skills.length} skills, ` +
+  `${exclusiveEquipment.length} exclusive-equipment records`,
+);

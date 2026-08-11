@@ -15,6 +15,7 @@ data class E7Hero(
     val awakenings: List<E7HeroAwakening> = emptyList(),
     val memoryImprint: E7MemoryImprint? = null,
     val skills: List<E7HeroSkill> = emptyList(),
+    val exclusiveEquipment: E7HeroExclusiveEquipment? = null,
     val source: E7DataSource = E7DataSource.OFFICIAL_AND_FRIBBELS,
 )
 
@@ -37,6 +38,25 @@ data class E7HeroSkill(
     val enhancements: List<String> = emptyList(),
     val buffs: List<E7StatusEffect> = emptyList(),
     val debuffs: List<E7StatusEffect> = emptyList(),
+)
+
+data class E7HeroExclusiveEquipment(
+    val code: String,
+    val heroCode: String,
+    val name: String,
+    val description: String? = null,
+    val iconUrl: String,
+    val statType: String,
+    val statMin: Double,
+    val statMax: Double,
+    val statPercent: Boolean = false,
+    val enhancements: List<E7ExclusiveEquipmentEnhancement> = emptyList(),
+)
+
+data class E7ExclusiveEquipmentEnhancement(
+    val option: Int,
+    val skillSlot: Int? = null,
+    val description: String,
 )
 
 data class E7HeroAwakening(

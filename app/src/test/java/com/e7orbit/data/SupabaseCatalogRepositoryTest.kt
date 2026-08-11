@@ -39,6 +39,32 @@ class SupabaseCatalogRepositoryTest {
     }
 
     @Test
+    fun `exclusive equipment row maps the canonical catalog shape`() {
+        val equipment = SupabaseExclusiveEquipmentRow(
+            code = "ee-c1001",
+            heroCode = "c1001",
+            name = "Test Equipment",
+            iconUrl = "https://example.com/equipment.png",
+            statType = "speed",
+            statMin = 5.0,
+            statMax = 10.0,
+            enhancements = listOf(
+                SupabaseExclusiveEnhancementRow(option = 1, skillSlot = 1, description = "First"),
+                SupabaseExclusiveEnhancementRow(option = 2, skillSlot = 2, description = "Second"),
+                SupabaseExclusiveEnhancementRow(option = 3, skillSlot = 3, description = "Third"),
+            ),
+        ).toDomain()
+
+        assertEquals("c1001", equipment.heroCode)
+        assertEquals("speed", equipment.statType)
+        assertEquals(5.0, equipment.statMin, 0.0)
+        assertEquals(10.0, equipment.statMax, 0.0)
+        assertEquals(listOf(1, 2, 3), equipment.enhancements.map(E7ExclusiveEquipmentEnhancement::option))
+        assertEquals(listOf(1, 2, 3), equipment.enhancements.map { it.skillSlot })
+        assertEquals(listOf("First", "Second", "Third"), equipment.enhancements.map { it.description })
+    }
+
+    @Test
     fun `growth rows preserve awakening resources`() {
         val awakening = SupabaseAwakeningRow(
             rank = 3,

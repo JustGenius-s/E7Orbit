@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 private const val SUPABASE_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1_000L
-private const val SUPABASE_CACHE_VERSION = 8 // 8: switch hero artwork to Codex thumbnails
+private const val SUPABASE_CACHE_VERSION = 10 // 10: map exclusive equipment to hero skill slots
 private const val SUPABASE_PAGE_SIZE = 500
 
 /**
@@ -64,6 +64,10 @@ class SupabaseCatalogRepository(
                 heroes = loadAllRows("hero_catalog", listOf("code")),
                 skills = loadAllRows("hero_skills", listOf("hero_code", "slot")),
                 effects = effects,
+                exclusiveEquipment = loadAllRows(
+                    "hero_exclusive_equipment",
+                    listOf("hero_code"),
+                ),
                 artifacts = loadAllRows("artifact_catalog", listOf("code")),
             )
             cacheFile.writeText(json.encodeToString(payload))
@@ -108,6 +112,7 @@ internal data class SupabaseCatalogPayload(
     val heroes: List<SupabaseHeroRow> = emptyList(),
     val skills: List<SupabaseSkillRow> = emptyList(),
     val effects: List<SupabaseStatusEffectRow> = emptyList(),
+    val exclusiveEquipment: List<SupabaseExclusiveEquipmentRow> = emptyList(),
     val artifacts: List<SupabaseArtifactRow> = emptyList(),
 )
 
@@ -160,6 +165,27 @@ internal data class SupabaseImprintSectionRow(
 internal data class SupabaseMemoryImprintRow(
     val release: SupabaseImprintSectionRow? = null,
     val concentration: SupabaseImprintSectionRow? = null,
+)
+
+@Serializable
+internal data class SupabaseExclusiveEnhancementRow(
+    val option: Int = 0,
+    @SerialName("skill_slot") val skillSlot: Int? = null,
+    val description: String = "",
+)
+
+@Serializable
+internal data class SupabaseExclusiveEquipmentRow(
+    val code: String = "",
+    @SerialName("hero_code") val heroCode: String = "",
+    val name: String = "",
+    val description: String? = null,
+    @SerialName("icon_url") val iconUrl: String = "",
+    @SerialName("stat_type") val statType: String = "",
+    @SerialName("stat_min") val statMin: Double = 0.0,
+    @SerialName("stat_max") val statMax: Double = 0.0,
+    @SerialName("stat_percent") val statPercent: Boolean = false,
+    val enhancements: List<SupabaseExclusiveEnhancementRow> = emptyList(),
 )
 
 @Serializable
@@ -313,6 +339,25 @@ private fun SupabaseResourceCostRow.toDomain(): E7ResourceCost = E7ResourceCost(
     code = code,
     label = label,
     quantity = quantity,
+)
+
+internal fun SupabaseExclusiveEquipmentRow.toDomain(): E7HeroExclusiveEquipment = E7HeroExclusiveEquipment(
+    code = code,
+    heroCode = heroCode,
+    name = name,
+    description = description,
+    iconUrl = iconUrl,
+    statType = statType,
+    statMin = statMin,
+    statMax = statMax,
+    statPercent = statPercent,
+    enhancements = enhancements.map {
+        E7ExclusiveEquipmentEnhancement(
+            option = it.option,
+            skillSlot = it.skillSlot,
+            description = it.description,
+        )
+    },
 )
 
 private fun SupabaseStatusEffectRow.toDomain(): E7StatusEffect = E7StatusEffect(

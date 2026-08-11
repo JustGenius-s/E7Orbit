@@ -235,6 +235,8 @@ class E7DataRepository(
                     skill.toDomain(effectsBySlug)
                 }
             }
+        val exclusiveEquipmentByHeroCode = maintainedCatalog?.exclusiveEquipment.orEmpty()
+            .associateBy(SupabaseExclusiveEquipmentRow::heroCode)
         val allCodes = linkedSetOf<String>().apply {
             officialHeroes.forEach { add(it.code) }
             fribbelsHeroes.mapNotNull { it.code }.forEach(::add)
@@ -282,6 +284,7 @@ class E7DataRepository(
                 awakenings = maintained?.awakenings.orEmpty().map(SupabaseAwakeningRow::toDomain),
                 memoryImprint = maintained?.memoryImprint?.toDomain(),
                 skills = maintainedSkills[code].orEmpty(),
+                exclusiveEquipment = exclusiveEquipmentByHeroCode[code]?.toDomain(),
             )
         }.sortedBy { it.name.lowercase() }
     }

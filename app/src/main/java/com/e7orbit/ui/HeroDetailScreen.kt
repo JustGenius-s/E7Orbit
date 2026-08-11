@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import com.e7orbit.R
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7HeroAwakening
+import com.e7orbit.data.E7HeroExclusiveEquipment
 import com.e7orbit.data.E7HeroSkill
 import com.e7orbit.data.E7HeroStats
 import com.e7orbit.data.E7ImprintSection
@@ -120,6 +121,9 @@ internal fun HeroDetailScreen(
                             )
                             HeroStats(hero.stats)
                         }
+                    }
+                    hero.exclusiveEquipment?.let { equipment ->
+                        item { HeroExclusiveEquipment(equipment, hero.skills) }
                     }
                     if (hero.skills.isNotEmpty()) {
                         item { HeroSkills(hero.skills) }
@@ -591,6 +595,110 @@ private fun HeroRtaAnalysisContent(analysis: HeroRtaAnalysis) {
             }
         }
     }
+}
+
+@Composable
+private fun HeroExclusiveEquipment(
+    equipment: E7HeroExclusiveEquipment,
+    skills: List<E7HeroSkill>,
+) {
+    SectionTitle("专属装备")
+    Spacer(Modifier.height(8.dp))
+    SectionSurface {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            RemoteImage(
+                url = equipment.iconUrl,
+                contentDescription = "${equipment.name}图标",
+                modifier = Modifier.size(72.dp),
+                contentScale = ContentScale.Fit,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = equipment.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    text = "${equipment.statType.exclusiveStatLabel()} ${equipment.statRangeLabel()}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                equipment.description?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
+                    Spacer(Modifier.height(5.dp))
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (equipment.enhancements.isNotEmpty()) {
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 14.dp),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                equipment.enhancements.sortedBy { it.option }.forEach { enhancement ->
+                    val skill = skills.firstOrNull { it.slot == enhancement.skillSlot }
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        RemoteImage(
+                            url = skill?.iconUrl,
+                            contentDescription = "强化 ${enhancement.option} 技能图标",
+                            modifier = Modifier.size(44.dp),
+                            contentScale = ContentScale.Fit,
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            skill?.name?.takeIf(String::isNotBlank)?.let { skillName ->
+                                Text(
+                                    text = skillName,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            Text(
+                                text = enhancement.description.cleanSkillText(),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun E7HeroExclusiveEquipment.statRangeLabel(): String {
+    val suffix = if (statPercent) "%" else ""
+    return "${statMin.exclusiveStatValue()}$suffix - ${statMax.exclusiveStatValue()}$suffix"
+}
+
+private fun Double.exclusiveStatValue(): String =
+    if (this % 1.0 == 0.0) toInt().toString() else toString()
+
+private fun String.exclusiveStatLabel(): String = when (lowercase()) {
+    "attack" -> "攻击力"
+    "health" -> "生命值"
+    "defense" -> "防御力"
+    "speed" -> "速度"
+    "critical_chance" -> "暴击率"
+    "critical_damage" -> "暴击伤害"
+    "effectiveness" -> "效果命中"
+    "effect_resistance" -> "效果抗性"
+    else -> this
 }
 
 @Composable
