@@ -48,6 +48,27 @@ internal fun gearEnhanceDigitRes(digit: Char): Int? = when (digit) {
 }
 
 @DrawableRes
+internal fun powerDigitRes(digit: Char): Int? = when (digit) {
+    '0' -> R.drawable.e7_power_p0
+    '1' -> R.drawable.e7_power_p1
+    '2' -> R.drawable.e7_power_p2
+    '3' -> R.drawable.e7_power_p3
+    '4' -> R.drawable.e7_power_p4
+    '5' -> R.drawable.e7_power_p5
+    '6' -> R.drawable.e7_power_p6
+    '7' -> R.drawable.e7_power_p7
+    '8' -> R.drawable.e7_power_p8
+    '9' -> R.drawable.e7_power_p9
+    else -> null
+}
+
+internal fun powerDigitWidth(digit: Char): Int = if (digit == '1') 24 else 46
+
+@DrawableRes
+internal fun speedBadgeRes(@Suppress("UNUSED_PARAMETER") speed25Count: Int): Int =
+    R.drawable.e7_speed_badge_25_5
+
+@DrawableRes
 internal fun gearSetIconRes(setCode: String): Int? = when (setCode) {
     "set_max_hp" -> R.drawable.e7_set_health
     "set_def" -> R.drawable.e7_set_defense

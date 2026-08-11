@@ -2,6 +2,7 @@ package com.e7orbit.optimizer
 
 import android.content.Context
 import com.e7orbit.data.E7Gear
+import com.e7orbit.data.GearSetNames
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7ScannedHero
 import com.e7orbit.data.GearSlot
@@ -99,7 +100,7 @@ private fun gearComparator(sort: GearInventorySort): Comparator<E7Gear> {
 
 private fun E7Gear.sortValue(sort: GearInventorySort): Comparable<*>? = when (sort.field) {
     GearSortField.SCORE -> GearOptimizer.gearScore(this)
-    GearSortField.SET -> setName
+    GearSortField.SET -> GearSetNames.fullName(setCode, setName)
     GearSortField.MAIN_STAT -> mainStat.value.takeIf {
         sort.statType == null || mainStat.type == sort.statType
     }
@@ -237,7 +238,7 @@ private fun summarizeEquippedSets(items: List<E7Gear>): List<EquippedSetSummary>
             val required = GearOptimizer.setPieces(code)
             EquippedSetSummary(
                 code = code,
-                name = setItems.first().setName.removeSuffix("套装"),
+                name = GearSetNames.shortName(code, setItems.first().setName),
                 pieceCount = setItems.size,
                 requiredPieces = required,
                 completedCount = if (required > 0) setItems.size / required else 0,

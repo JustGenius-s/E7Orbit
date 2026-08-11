@@ -3,6 +3,7 @@ package com.e7orbit.capture
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7GearStat
 import com.e7orbit.data.E7ScannedHero
+import com.e7orbit.data.GearSetNames
 import com.e7orbit.data.GearSlot
 import java.nio.ByteBuffer
 import java.security.MessageDigest
@@ -82,7 +83,7 @@ internal object GearImportParser {
             code = item.string("code").orEmpty(),
             slot = parseSlot(item.string("type"), item.string("code")),
             setCode = setCode,
-            setName = SET_NAMES[setCode] ?: setCode,
+            setName = GearSetNames.fullName(setCode),
             rank = rank,
             level = level,
             enhance = calculateEnhance(rank, operations.size - 1),
@@ -128,7 +129,7 @@ internal object GearImportParser {
             code = item.string("code") ?: item.string("name").orEmpty(),
             slot = slot,
             setCode = setCode,
-            setName = SET_NAMES[setCode] ?: setValue,
+            setName = GearSetNames.fullName(setCode, setValue),
             rank = CONVERTED_RANKS[item.string("rank")] ?: item.string("rank").orEmpty(),
             level = item.int("level") ?: return null,
             enhance = item.int("enhance") ?: 0,
@@ -281,31 +282,5 @@ internal object GearImportParser {
         "cri_dmg" to "CriticalHitDamagePercent",
         "acc" to "EffectivenessPercent",
         "coop" to "DualAttackChancePercent",
-    )
-    private val SET_NAMES = mapOf(
-        "set_acc" to "命中套装",
-        "set_att" to "攻击套装",
-        "set_coop" to "夹攻套装",
-        "set_counter" to "反击套装",
-        "set_cri_dmg" to "破灭套装",
-        "set_cri" to "暴击套装",
-        "set_def" to "防御套装",
-        "set_immune" to "免疫套装",
-        "set_max_hp" to "生命套装",
-        "set_penetrate" to "穿透套装",
-        "set_rage" to "愤怒套装",
-        "set_res" to "抗性套装",
-        "set_revenge" to "复仇套装",
-        "set_scar" to "伤口套装",
-        "set_speed" to "速度套装",
-        "set_vampire" to "吸血套装",
-        "set_shield" to "保护套装",
-        "set_torrent" to "激流套装",
-        "set_revenant" to "逆袭套装",
-        "set_riposte" to "裂伤套装",
-        "set_chase" to "追击套装",
-        "set_opener" to "先制套装",
-        "set_weak" to "弱化套装",
-        "set_might" to "威势套装",
     )
 }

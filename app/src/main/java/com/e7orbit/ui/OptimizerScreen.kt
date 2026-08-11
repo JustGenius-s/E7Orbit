@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.e7orbit.data.E7Gear
+import com.e7orbit.data.GearSetNames
 import com.e7orbit.optimizer.EquippedHeroBuild
 import com.e7orbit.optimizer.GearOptimizer
 import com.e7orbit.optimizer.HeroBuildSort
@@ -120,7 +121,7 @@ internal fun OptimizerScreen(
     val gearSetOptions = remember(state.data.gears) {
         state.data.gears
             .groupBy(E7Gear::setCode)
-            .map { (code, items) -> code to items.first().setName.removeSuffix("套装") }
+            .map { (code, items) -> code to GearSetNames.shortName(code, items.first().setName) }
             .sortedBy { it.second }
     }
     val gearMainStatOptions = remember(state.data.gears) {
@@ -368,9 +369,9 @@ private fun OptimizerEquipmentContent(
             items(filteredGears, key = E7Gear::id) { gear ->
                 InventoryGearCard(
                     gear = gear,
-                    equippedName = builds.firstOrNull {
+                    equippedHero = builds.firstOrNull {
                         it.instanceId == gear.equippedHeroId
-                    }?.displayName,
+                    },
                     modifier = Modifier.animateItem(
                         fadeInSpec = itemEffectsSpec,
                         placementSpec = itemSpatialSpec,
@@ -409,7 +410,7 @@ private fun OptimizerPowerContent(
         } else {
             powerScreenItems(
                 gears = displayedGears,
-                heroNames = builds.associate { it.instanceId to it.displayName },
+                equippedHeroes = builds.associateBy { it.instanceId },
                 importedAtEpochMs = state.vpnCapture.importedAtEpochMs,
             )
         }
@@ -475,7 +476,7 @@ internal fun OptimizerHeroDetailScreen(
             .map { (code, items) ->
                 OptimizerSetOption(
                     code = code,
-                    name = items.first().setName.removeSuffix("套装"),
+                    name = GearSetNames.shortName(code, items.first().setName),
                     pieces = GearOptimizer.setPieces(code),
                 )
             }

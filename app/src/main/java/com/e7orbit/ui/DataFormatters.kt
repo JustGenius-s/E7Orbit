@@ -1,6 +1,7 @@
 package com.e7orbit.ui
 
 import com.e7orbit.data.E7Hero
+import com.e7orbit.data.GearSetNames
 import com.e7orbit.data.HeroRtaAnalysis
 import java.util.Locale
 
@@ -47,23 +48,5 @@ internal fun HeroRtaAnalysis.hasRtaData(): Boolean =
         pickPositions.isNotEmpty() ||
         banPositions.isNotEmpty()
 
-internal fun String.rtaSetLabel(): String = when (this) {
-    "set_speed" -> "速度"
-    "set_immune" -> "免疫"
-    "set_max_hp" -> "生命"
-    "set_acc" -> "命中"
-    "set_shield" -> "护盾"
-    "set_att" -> "攻击"
-    "set_def" -> "防御"
-    "set_cri" -> "暴击"
-    "set_cri_dmg" -> "暴伤"
-    "set_res" -> "抗性"
-    "set_counter" -> "反击"
-    "set_vampire" -> "吸血"
-    "set_revenge" -> "复仇"
-    "set_penetrate" -> "穿透"
-    "set_torrent" -> "激流"
-    "set_rage" -> "愤怒"
-    "set_injury" -> "伤口"
-    else -> removePrefix("set_")
-}
+internal fun String.rtaSetLabel(): String =
+    GearSetNames.shortName(this, removePrefix("set_"))

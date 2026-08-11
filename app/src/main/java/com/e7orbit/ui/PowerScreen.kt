@@ -29,19 +29,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.e7orbit.data.BailiPower
 import com.e7orbit.data.E7Gear
+import com.e7orbit.data.GearSetNames
+import com.e7orbit.optimizer.EquippedHeroBuild
 import com.e7orbit.optimizer.GearOptimizer
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -53,13 +52,13 @@ import kotlin.math.roundToInt
  */
 internal fun LazyListScope.powerScreenItems(
     gears: List<E7Gear>,
-    heroNames: Map<Long, String>,
+    equippedHeroes: Map<Long, EquippedHeroBuild>,
     importedAtEpochMs: Long,
 ) {
     item(key = "power-content") {
         PowerContent(
             gears = gears,
-            heroNames = heroNames,
+            equippedHeroes = equippedHeroes,
             importedAtEpochMs = importedAtEpochMs,
         )
     }
@@ -68,7 +67,7 @@ internal fun LazyListScope.powerScreenItems(
 @Composable
 private fun PowerContent(
     gears: List<E7Gear>,
-    heroNames: Map<Long, String>,
+    equippedHeroes: Map<Long, EquippedHeroBuild>,
     importedAtEpochMs: Long,
 ) {
     val result = remember(gears) { BailiPower.evaluate(gears) }
@@ -81,7 +80,11 @@ private fun PowerContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // 主卡片：对齐网页版
-        MainPowerCard(result = result, updatedAt = importedAtEpochMs)
+        MainPowerCard(
+            result = result,
+            speed25Count = result.stats.speed25.second,
+            updatedAt = importedAtEpochMs,
+        )
 
         // 统计格子
         StatsGrid(stats = result.stats)
@@ -109,7 +112,7 @@ private fun PowerContent(
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsInCategory.forEach { scored ->
-                    PowerGearRow(scored = scored, heroNames = heroNames)
+                    PowerGearRow(scored = scored, equippedHeroes = equippedHeroes)
                 }
             }
         }
@@ -129,7 +132,7 @@ private fun PowerContent(
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 stashItems.forEach { scored ->
-                    PowerGearRow(scored = scored, heroNames = heroNames, dimmed = true)
+                    PowerGearRow(scored = scored, equippedHeroes = equippedHeroes, dimmed = true)
                 }
             }
         }
@@ -141,7 +144,11 @@ private fun PowerContent(
 // ---------------------------------------------------------------
 
 @Composable
-private fun MainPowerCard(result: BailiPower.Result, updatedAt: Long) {
+private fun MainPowerCard(
+    result: BailiPower.Result,
+    speed25Count: Int,
+    updatedAt: Long,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -155,13 +162,21 @@ private fun MainPowerCard(result: BailiPower.Result, updatedAt: Long) {
                     .padding(vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // 总战力大数字（多层立体描边）
-                GradientPowerNumber(total = result.total)
+                // 总战力使用游戏原始数字素材。
+                GamePowerNumber(
+                    value = result.total.roundToInt(),
+                    height = 58.dp,
+                )
 
                 Spacer(Modifier.height(2.dp))
 
-                // 装饰分隔：横线 + 交叉剑图标 + 横线（对齐网页版）
-                SwordDivider()
+                GearAssetIcon(
+                    resId = com.e7orbit.R.drawable.e7_power_bar_19,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .width(251.dp)
+                        .aspectRatio(251f / 27f),
+                )
 
                 Spacer(Modifier.height(4.dp))
 
@@ -208,12 +223,12 @@ private fun MainPowerCard(result: BailiPower.Result, updatedAt: Long) {
                 )
             }
 
-            // 左上角速度勋章
+            // 左上角速度勋章：1-4 阶段资源补齐前暂时统一使用 5/5 图标。
             androidx.compose.foundation.Image(
                 painter = androidx.compose.ui.res.painterResource(
-                    com.e7orbit.R.drawable.e7_power_emblem,
+                    speedBadgeRes(speed25Count),
                 ),
-                contentDescription = null,
+                contentDescription = "25速装备 ${speed25Count} 件",
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(top = 120.dp, start = 16.dp)
@@ -223,150 +238,30 @@ private fun MainPowerCard(result: BailiPower.Result, updatedAt: Long) {
     }
 }
 
-/**
- * 装饰分隔：左横线 - 交叉剑 - 右横线（对齐网页版）。
- */
+/** Displays a non-negative integer with the game's p0-p9 digit assets. */
 @Composable
-private fun SwordDivider() {
-    androidx.compose.foundation.Canvas(
-        modifier = Modifier
-            .width(220.dp)
-            .height(16.dp),
+private fun GamePowerNumber(
+    value: Int,
+    height: Dp,
+    modifier: Modifier = Modifier,
+    alpha: Float = 1f,
+) {
+    Row(
+        modifier = modifier.height(height),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        val cy = size.height / 2f
-        val lineColor = Color(0xFF999999)
-        val swordColor = Color(0xFF666666)
-
-        // 左横线
-        drawLine(
-            color = lineColor,
-            start = Offset(0f, cy),
-            end = Offset(size.width * 0.38f, cy),
-            strokeWidth = 1.5f,
-        )
-        // 右横线
-        drawLine(
-            color = lineColor,
-            start = Offset(size.width * 0.62f, cy),
-            end = Offset(size.width, cy),
-            strokeWidth = 1.5f,
-        )
-
-        // 交叉剑（X 形）
-        val cx = size.width / 2f
-        val swordLen = 10.dp.toPx()
-        // 剑 1: 从左上到右下
-        drawLine(
-            color = swordColor,
-            start = Offset(cx - swordLen, cy - swordLen * 0.7f),
-            end = Offset(cx + swordLen, cy + swordLen * 0.7f),
-            strokeWidth = 2.5f,
-        )
-        // 剑 2: 从右上到左下
-        drawLine(
-            color = swordColor,
-            start = Offset(cx + swordLen, cy - swordLen * 0.7f),
-            end = Offset(cx - swordLen, cy + swordLen * 0.7f),
-            strokeWidth = 2.5f,
-        )
-        // 剑钉饰（中心两个小圆点）
-        drawCircle(color = swordColor, radius = 2.5f, center = Offset(cx - 4.dp.toPx(), cy + 5.dp.toPx()))
-        drawCircle(color = swordColor, radius = 2.5f, center = Offset(cx + 4.dp.toPx(), cy + 5.dp.toPx()))
-    }
-}
-
-/**
- * 百里战力总分数数字（对齐 e7bot.top 网页版的多层立体描边字）。
- *
- * 参考图是分 4 层绘制：
- *   1. 外层深棕红描边（最粗，提供轮廓）
- *   2. 中层亮红描边（制造立体感）
- *   3. 内层金色渐变（从顶到底：亮金→橙金→橙红）
- *   4. 顶部亮金高光
- */
-@Composable
-private fun GradientPowerNumber(total: Double) {
-    val formatted = "%,d".format(total.roundToInt())
-    androidx.compose.foundation.Canvas(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(90.dp),
-    ) {
-        val centerX = size.width / 2f
-        val centerY = size.height / 2f
-        val textSizePx = 64.sp.toPx()
-
-        // 共同 Paint
-        val basePaint = android.graphics.Paint().apply {
-            isAntiAlias = true
-            textAlign = android.graphics.Paint.Align.CENTER
-            textSize = textSizePx
-            // 使用 SANS_SERIF + BOLD_ITALIC 更接近游戏感
-            typeface = android.graphics.Typeface.create(
-                android.graphics.Typeface.SANS_SERIF,
-                android.graphics.Typeface.BOLD_ITALIC,
-            )
+        value.coerceAtLeast(0).toString().forEach { digit ->
+            powerDigitRes(digit)?.let { resId ->
+                GearAssetIcon(
+                    resId = resId,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .height(height)
+                        .aspectRatio(powerDigitWidth(digit) / 68f)
+                        .alpha(alpha),
+                )
+            }
         }
-
-        // 第 1 层：深棕红外描边（最粗）
-        val outlinePaint = android.graphics.Paint(basePaint).apply {
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = textSizePx * 0.16f
-            color = android.graphics.Color.parseColor("#7B1F0A")
-            strokeJoin = android.graphics.Paint.Join.ROUND
-        }
-        drawContext.canvas.nativeCanvas.drawText(
-            formatted, centerX, centerY + textSizePx * 0.35f, outlinePaint,
-        )
-
-        // 第 2 层：亮红描边（中等粗细）
-        val midPaint = android.graphics.Paint(basePaint).apply {
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = textSizePx * 0.09f
-            color = android.graphics.Color.parseColor("#E63946")
-            strokeJoin = android.graphics.Paint.Join.ROUND
-        }
-        drawContext.canvas.nativeCanvas.drawText(
-            formatted, centerX, centerY + textSizePx * 0.35f, midPaint,
-        )
-
-        // 第 3 层：金色渐变填充
-        val gradientPaint = android.graphics.Paint(basePaint).apply {
-            style = android.graphics.Paint.Style.FILL
-            shader = android.graphics.LinearGradient(
-                0f, centerY - textSizePx * 0.5f,
-                0f, centerY + textSizePx * 0.4f,
-                intArrayOf(
-                    android.graphics.Color.parseColor("#FFEB3B"),  // 顶部亮金
-                    android.graphics.Color.parseColor("#FFC107"),  // 中黄金
-                    android.graphics.Color.parseColor("#FF9800"),  // 橙金
-                    android.graphics.Color.parseColor("#FF5722"),  // 底部橙红
-                ),
-                floatArrayOf(0f, 0.4f, 0.75f, 1f),
-                android.graphics.Shader.TileMode.CLAMP,
-            )
-        }
-        drawContext.canvas.nativeCanvas.drawText(
-            formatted, centerX, centerY + textSizePx * 0.35f, gradientPaint,
-        )
-
-        // 第 4 层：顶部亮金高光（在上半部分加一层半透明白色渐变）
-        val highlightPaint = android.graphics.Paint(basePaint).apply {
-            style = android.graphics.Paint.Style.FILL
-            shader = android.graphics.LinearGradient(
-                0f, centerY - textSizePx * 0.5f,
-                0f, centerY + textSizePx * 0.05f,
-                intArrayOf(
-                    android.graphics.Color.parseColor("#B3FFFFFF"),  // 70% 白
-                    android.graphics.Color.parseColor("#00FFFFFF"),  // 透明
-                ),
-                null,
-                android.graphics.Shader.TileMode.CLAMP,
-            )
-        }
-        drawContext.canvas.nativeCanvas.drawText(
-            formatted, centerX, centerY + textSizePx * 0.35f, highlightPaint,
-        )
     }
 }
 
@@ -455,7 +350,14 @@ private fun CategoryChipsRow(
                 selected = selected == category,
                 onClick = { onSelected(category) },
                 label = {
-                    Text("${category.label} ${score.roundToInt()}")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(category.label)
+                        Spacer(Modifier.width(4.dp))
+                        GamePowerNumber(
+                            value = score.roundToInt(),
+                            height = 14.dp,
+                        )
+                    }
                 },
             )
         }
@@ -480,7 +382,7 @@ private fun EmptyCategoryHint(category: BailiPower.Category) {
 @Composable
 private fun PowerGearRow(
     scored: BailiPower.Scored,
-    heroNames: Map<Long, String>,
+    equippedHeroes: Map<Long, EquippedHeroBuild>,
     dimmed: Boolean = false,
 ) {
     val gear = scored.gear
@@ -508,16 +410,10 @@ private fun PowerGearRow(
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = gear.setName,
+                        text = GearSetNames.fullName(gear.setCode, gear.setName),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = gear.rank,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
                     )
                 }
                 Spacer(Modifier.height(2.dp))
@@ -528,23 +424,25 @@ private fun PowerGearRow(
                         append(gear.mainStat.label)
                         append(" ")
                         append(gear.mainStat.displayValue())
-                        gear.equippedHeroId?.let { id ->
-                            heroNames[id]?.let { name ->
-                                append(" · ")
-                                append(name)
-                            }
-                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = scored.points.roundToInt().toString(),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+                gear.equippedHeroId?.let { heroId ->
+                    equippedHeroes[heroId]?.let { build ->
+                        EquippedHeroAvatar(
+                            build = build,
+                            modifier = Modifier.size(30.dp),
+                        )
+                        Spacer(Modifier.height(3.dp))
+                    }
+                }
+                GamePowerNumber(
+                    value = scored.points.roundToInt(),
+                    height = 20.dp,
+                    alpha = alpha,
                 )
                 Text(
                     text = "装等 ${scored.totalGs.takeIf { it > 0 } ?: GearOptimizer.gearScore(gear)}",
@@ -584,7 +482,11 @@ private fun PowerMainCardPreview() {
     )
     MaterialTheme {
         Column(modifier = Modifier.padding(16.dp)) {
-            MainPowerCard(result = fakeResult, updatedAt = System.currentTimeMillis())
+            MainPowerCard(
+                result = fakeResult,
+                speed25Count = fakeResult.stats.speed25.second,
+                updatedAt = System.currentTimeMillis(),
+            )
         }
     }
 }

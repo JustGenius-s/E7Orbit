@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -31,9 +32,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7GearStat
+import com.e7orbit.data.GearSetNames
 import com.e7orbit.data.GearSlot
+import com.e7orbit.optimizer.EquippedHeroBuild
 import com.e7orbit.optimizer.EquippedSetSummary
 import com.e7orbit.optimizer.GearOptimizer
+import com.e7orbit.ui.theme.OrbitPolygonShapes
+import com.e7orbit.ui.theme.asShape
 
 internal val EQUIPMENT_SLOTS = listOf(
     GearSlot.WEAPON,
@@ -79,13 +84,13 @@ internal fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
                     gearSetIconRes(gear.setCode)?.let { resId ->
                         GearAssetIcon(
                             resId = resId,
-                            contentDescription = gear.setName,
+                            contentDescription = GearSetNames.fullName(gear.setCode, gear.setName),
                             modifier = Modifier.size(22.dp),
                         )
                         Spacer(Modifier.width(5.dp))
                     }
                     Text(
-                        "${gear.setName.removeSuffix("套装")} · ${gear.rank}",
+                        GearSetNames.shortName(gear.setCode, gear.setName),
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -119,7 +124,7 @@ internal fun DetailedGearRow(slot: GearSlot, gear: E7Gear?) {
 @Composable
 internal fun InventoryGearCard(
     gear: E7Gear,
-    equippedName: String?,
+    equippedHero: EquippedHeroBuild?,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -144,13 +149,13 @@ internal fun InventoryGearCard(
                         gearSetIconRes(gear.setCode)?.let { resId ->
                             GearAssetIcon(
                                 resId = resId,
-                                contentDescription = gear.setName,
+                                contentDescription = GearSetNames.fullName(gear.setCode, gear.setName),
                                 modifier = Modifier.size(22.dp),
                             )
                             Spacer(Modifier.width(5.dp))
                         }
                         Text(
-                            "${gear.setName.removeSuffix("套装")} · ${gear.rank} · Lv.${gear.level}",
+                            "${GearSetNames.shortName(gear.setCode, gear.setName)} · Lv.${gear.level}",
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -163,16 +168,15 @@ internal fun InventoryGearCard(
                         GearOptimizer.gearScore(gear).toString(),
                         fontWeight = FontWeight.Bold,
                     )
-                    Text(
-                        equippedName ?: "库存",
+                    equippedHero?.let { build ->
+                        EquippedHeroAvatar(
+                            build = build,
+                            modifier = Modifier.size(30.dp),
+                        )
+                    } ?: Text(
+                        "库存",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (equippedName == null) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -182,6 +186,19 @@ internal fun InventoryGearCard(
             }
         }
     }
+}
+
+@Composable
+internal fun EquippedHeroAvatar(
+    build: EquippedHeroBuild,
+    modifier: Modifier = Modifier,
+) {
+    RemoteImage(
+        url = build.hero?.assets?.iconUrl ?: build.hero?.assets?.thumbnailUrl,
+        contentDescription = "已装备英雄",
+        modifier = modifier.clip(OrbitPolygonShapes.HeroAvatar.asShape),
+        contentScale = ContentScale.Crop,
+    )
 }
 
 @Composable

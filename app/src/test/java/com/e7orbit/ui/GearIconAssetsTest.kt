@@ -37,6 +37,24 @@ class GearIconAssetsTest {
     }
 
     @Test
+    fun `power digits use the p series assets`() {
+        assertEquals(R.drawable.e7_power_p0, powerDigitRes('0'))
+        assertEquals(R.drawable.e7_power_p1, powerDigitRes('1'))
+        assertEquals(R.drawable.e7_power_p9, powerDigitRes('9'))
+        assertEquals(24, powerDigitWidth('1'))
+        assertEquals(46, powerDigitWidth('8'))
+        assertNull(powerDigitRes('+'))
+    }
+
+    @Test
+    fun `speed badge currently uses the verified 25 speed stage five asset`() {
+        assertEquals(R.drawable.e7_speed_badge_25_5, speedBadgeRes(0))
+        assertEquals(R.drawable.e7_speed_badge_25_5, speedBadgeRes(1))
+        assertEquals(R.drawable.e7_speed_badge_25_5, speedBadgeRes(5))
+        assertEquals(R.drawable.e7_speed_badge_25_5, speedBadgeRes(8))
+    }
+
+    @Test
     fun `gear codes map to their extracted item icons`() {
         assertEquals(
             R.drawable.e7_item_icon_eq_weapon_pas006_u,

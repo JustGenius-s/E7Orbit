@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.e7orbit.R
 import com.e7orbit.data.E7Gear
+import com.e7orbit.data.GearSetNames
 import com.e7orbit.data.E7Hero
 import com.e7orbit.optimizer.EquippedHeroBuild
 import com.e7orbit.optimizer.EquipmentPlan
@@ -656,7 +657,8 @@ internal fun OptimizedSetRow(build: OptimizedBuild) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(build.completedSets, key = { it }) { setCode ->
             val name = build.items.firstOrNull { it.setCode == setCode }
-                ?.setName?.removeSuffix("套装") ?: setCode
+                ?.let { GearSetNames.shortName(setCode, it.setName) }
+                ?: GearSetNames.shortName(setCode)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 gearSetIconRes(setCode)?.let { resId ->
                     GearAssetIcon(

@@ -6,6 +6,7 @@ import com.e7orbit.data.E7ScannedHero
 import com.e7orbit.data.GearExportSerializer
 import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.GearImportState
+import com.e7orbit.data.cnSetName
 import com.e7orbit.logging.OrbitLogger
 import com.e7orbit.vpn.GearCapturePayload
 import java.io.File
@@ -231,25 +232,35 @@ class GearImportRepository(
                 }
             }
             .ifEmpty { restoredHeroes }
-        if (heroes != saved.heroes) {
+        val gears = saved.gears.map { gear ->
+            val normalized = gear.copy(setName = gear.cnSetName())
+            if (normalized != gear) normalized else gear
+        }
+        if (heroes != saved.heroes || gears != saved.gears) {
             writeAtomically(
                 storeFile,
                 json.encodeToString(
                     saved.copy(
+                        gears = gears,
                         heroes = heroes,
                         heroCount = heroes.size,
                     ),
                 ),
             )
+        }
+        if (heroes != saved.heroes) {
             logger.info(
                 "gear.import_heroes_migrated",
                 "heroes" to heroes.size,
                 "codes" to heroes.count { !it.code.isNullOrBlank() },
             )
         }
+        if (gears != saved.gears) {
+            logger.info("gear.import_set_names_migrated", "gears" to gears.size)
+        }
         GearImportState(
             phase = GearImportPhase.READY,
-            gears = saved.gears,
+            gears = gears,
             heroes = heroes,
             heroCount = heroes.size.takeIf { it > 0 } ?: saved.heroCount,
             importedAtEpochMs = saved.importedAtEpochMs,
