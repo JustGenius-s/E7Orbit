@@ -564,6 +564,39 @@ function effectEntriesFromRow(row) {
   return [];
 }
 
+export function parseGameKeeArtifactLocalization(data) {
+  const document = gameKeeDocument(data);
+  const table = document.tables.find((candidate) => candidate.rows.some((row) =>
+    row.some((cell) => ["最大攻击", "初始技能", "最大技能"].includes(cell.text)),
+  ));
+  if (!table) return null;
+  const rows = table.rows;
+  const first = rows[0] || [];
+  const second = rows[1] || [];
+  const valueAfterRow = (row, label) => {
+    const index = row.findIndex((cell) => cell.text.replace(/\s+/g, "") === label);
+    return index >= 0 ? row[index + 1]?.text || "" : "";
+  };
+  const rarity = second.find((cell) => /^\d星$/.test(cell.text))?.text.match(/\d+/)?.[0];
+  const role = second.find((cell) =>
+    ["共用", "通用", "战士", "骑士", "盗贼", "精灵师", "魔导士", "射手"].includes(cell.text),
+  )?.text || "";
+  const loreIndex = rows.findIndex((row) => row[0]?.text === "神器背景");
+  return {
+    name: first[0]?.text || normalizeText(data?.title),
+    rarity: rarity ? Number(rarity) : null,
+    role: role === "通用" ? "共用" : role || null,
+    baseAttack: parseNumber(valueAfterRow(first, "最大攻击")),
+    baseHealth: parseNumber(valueAfterRow(second, "最大生命")),
+    description: valueAfterRow(rows.find((row) => row[0]?.text === "初始技能") || [], "初始技能") || null,
+    maxDescription: valueAfterRow(rows.find((row) => row[0]?.text === "最大技能") || [], "最大技能") || null,
+    lore: loreIndex >= 0
+      ? (rows[loreIndex + 1]?.map((cell) => cell.text).filter(Boolean).join("\n") || null)
+      : null,
+    imageUrl: first[0]?.imageUrl || null,
+  };
+}
+
 export function parseGameKeeEffectMetadata(data) {
   const document = gameKeeDocument(data);
   const effects = new Map();

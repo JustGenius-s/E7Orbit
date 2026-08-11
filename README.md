@@ -69,6 +69,8 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 
 增益和减益统一写入 `status_effect_catalog`。技能数组使用原始 `efct_*`/`stic_*` 代码作为唯一 slug；GameKee 才有的机制使用独立的 `gamekee_*` slug，不再用图片文件名合并不同效果。名称和说明来自 GameKee 状态效果词条（默认 `content/52652`）并以本地中文定义作回退。没有可靠对应图标的新增机制保留 `icon_url = null`，避免显示错误图标。
 
+神器名称按官方 STOVE `zh-CN` 的神器 code 覆盖；初始效果、最大效果和背景故事优先使用 GameKee 神器详情页，Fribbels/Epic7DB 只作为职业、属性和缺失文本回退。GameKee 没有收录的固定效果使用本地中文回退，未确认的最新神器不会伪造效果。
+
 没有配置 Supabase，或云端请求失败时，应用仍使用本地缓存以及官方 Stove/Fribbels 公开数据。云端数据成功读取后会缓存 7 天，适合社区源短暂失效时继续使用。
 
 初始化数据库：
@@ -92,9 +94,9 @@ $env:SUPABASE_SECRET_KEY = "你的 sb_secret_ key"
 node .\tools\sync-hero-catalog.mjs
 ```
 
-`npm install` 会安装用于按比例缩小透明角色缩略图的 `sharp`。脚本会依次同步英雄、技能、专属装备和神器。专属装备采用唯一的 `hero_exclusive_equipment` 结构，以 GameKee 英雄详情页为主、专属装备总表为回退；只有名称、图标、属性区间和三个强化选项均完整的记录才会写入。只同步专属装备可用 `--exclusive-only`，全量同步时跳过它可用 `--skip-exclusive`。神器数据来自 Fribbels（属性/职业）与 Epic7DB 网页（立绘、基础/满级效果描述、背景故事），以神器编码幂等 upsert 到 `artifact_catalog`。只同步神器可用 `--artifacts-only`，跳过神器可用 `--skip-artifacts`。觉醒、刻印与技能觉醒文本使用 `--growth-only` 单独同步；该模式只抓英雄网页并合并成长字段，不处理图片、神器和 RTA。可用环境变量覆盖默认值：`FRIBBELS_ARTIFACT_URL`、`EPICSEVENDB_ARTIFACTS_WEB`、`GAMEKEE_URL`、`GAMEKEE_LANGUAGE`、`GAMEKEE_ALIAS`、`GAMEKEE_HERO_PIDS`、`GAMEKEE_EFFECTS_CONTENT_ID`。
+`npm install` 会安装用于按比例缩小透明角色缩略图的 `sharp`。脚本会依次同步英雄、技能、专属装备和神器。专属装备采用唯一的 `hero_exclusive_equipment` 结构，以 GameKee 英雄详情页为主、专属装备总表为回退；只有名称、图标、属性区间和三个强化选项均完整的记录才会写入。只同步专属装备可用 `--exclusive-only`，全量同步时跳过它可用 `--skip-exclusive`。神器以 Fribbels code 作为主键，名称来自官方 STOVE `zh-CN`，中文初始/最大效果和背景故事来自 GameKee，Epic7DB 网页仅补立绘和缺失字段，并幂等 upsert 到 `artifact_catalog`。只同步神器可用 `--artifacts-only`，只更新神器名称、效果和背景并保留现有属性/图片可用 `--artifacts-only --artifact-localization-only`，跳过神器可用 `--skip-artifacts`。觉醒、刻印与技能觉醒文本使用 `--growth-only` 单独同步；该模式只抓英雄网页并合并成长字段，不处理图片、神器和 RTA。可用环境变量覆盖默认值：`FRIBBELS_ARTIFACT_URL`、`OFFICIAL_ARTIFACT_URL`、`EPICSEVENDB_ARTIFACTS_WEB`、`GAMEKEE_URL`、`GAMEKEE_LANGUAGE`、`GAMEKEE_ALIAS`、`GAMEKEE_HERO_PIDS`、`GAMEKEE_ARTIFACT_PIDS`、`GAMEKEE_EFFECTS_CONTENT_ID`。
 
-脚本从 Fribbels 获取基础属性和倍率，从官方 STOVE 获取简体中文英雄名，从 GameKee 获取简体中文技能覆盖，并从 E7 Codex 获取按首页规则维护的英雄素材：优先使用已经紧裁好的 `thumb.png`，缺失时回退到 `pose.png` 或同单位的 face 图。素材只做等比缩小到最长边 1024px，编码为透明 WebP 并保存到 `Epic7/heroes/{code}/art.webp`，不做裁切或拉伸；Fribbels 的 `question_circle.png` 占位图不会写入目录。技能数值仍优先使用 Epic7DB API/GitHub Raw，API 因网络或 TLS 不可用时回退到 Epic7DB 网页。可用环境变量覆盖默认值：`SUPABASE_URL`、`SUPABASE_SECRET_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`FRIBBELS_HERO_URL`、`EPICSEVENDB_API_URL`、`EPICSEVENDB_WEB`、`EPICSEVENDB_SOURCE`、`EPICSEVENDB_LANGUAGE`、`OFFICIAL_HERO_URL`、`GAMEKEE_URL`、`GAMEKEE_LANGUAGE`、`GAMEKEE_ALIAS`、`GAMEKEE_HERO_PIDS`、`GAMEKEE_EFFECTS_CONTENT_ID`、`E7_CODEX_URL`、`E7_CODEX_UNITS_URL`、`HERO_ART_MAX_SIZE`、`HERO_ART_QUALITY`、`SYNC_BATCH_SIZE`、`SYNC_CONCURRENCY`。
+脚本从 Fribbels 获取基础属性和倍率，从官方 STOVE 获取简体中文英雄名，从 GameKee 获取简体中文技能覆盖，并从 E7 Codex 获取按首页规则维护的英雄素材：优先使用已经紧裁好的 `thumb.png`，缺失时回退到 `pose.png` 或同单位的 face 图。素材只做等比缩小到最长边 1024px，编码为透明 WebP 并保存到 `Epic7/heroes/{code}/art.webp`，不做裁切或拉伸；Fribbels 的 `question_circle.png` 占位图不会写入目录。技能数值仍优先使用 Epic7DB API/GitHub Raw，API 因网络或 TLS 不可用时回退到 Epic7DB 网页。可用环境变量覆盖默认值：`SUPABASE_URL`、`SUPABASE_SECRET_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`FRIBBELS_HERO_URL`、`FRIBBELS_ARTIFACT_URL`、`EPICSEVENDB_API_URL`、`EPICSEVENDB_WEB`、`EPICSEVENDB_SOURCE`、`EPICSEVENDB_LANGUAGE`、`OFFICIAL_HERO_URL`、`OFFICIAL_ARTIFACT_URL`、`GAMEKEE_URL`、`GAMEKEE_LANGUAGE`、`GAMEKEE_ALIAS`、`GAMEKEE_HERO_PIDS`、`GAMEKEE_ARTIFACT_PIDS`、`GAMEKEE_EFFECTS_CONTENT_ID`、`E7_CODEX_URL`、`E7_CODEX_UNITS_URL`、`HERO_ART_MAX_SIZE`、`HERO_ART_QUALITY`、`SYNC_BATCH_SIZE`、`SYNC_CONCURRENCY`。
 
 已有数据库先在 Supabase SQL Editor 执行 [`supabase/add-hero-growth-data.sql`](supabase/add-hero-growth-data.sql)，然后快速同步成长资料：
 

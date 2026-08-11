@@ -3,6 +3,7 @@
 import process from "node:process";
 
 import {
+  parseGameKeeArtifactLocalization,
   parseGameKeeEffectMetadata,
   parseGameKeeHeroLocalization,
 } from "./lib/gamekee-catalog.mjs";
@@ -13,6 +14,7 @@ import {
   statusEffectIconUrl as chineseStatusEffectIconUrl,
   statusEffectKind,
 } from "./lib/status-effects-zh.mjs";
+import { artifactChineseFallback } from "./lib/artifacts-zh.mjs";
 
 const supabaseUrl = (process.env.SUPABASE_URL || "https://biayslzufpixsyuitjus.supabase.co").replace(/\/$/, "");
 const serviceRoleKey = (
@@ -22,6 +24,8 @@ const storageBucket = (process.env.SUPABASE_STORAGE_BUCKET || "Epic7").replace(/
 const skipImageMirror = process.argv.includes("--skip-image-mirror");
 const officialHeroUrl = process.env.OFFICIAL_HERO_URL ||
   "https://static-pubcomm.onstove.com/gameRecord/epic7/epic7_hero.json";
+const officialArtifactUrl = process.env.OFFICIAL_ARTIFACT_URL ||
+  "https://static-pubcomm.onstove.com/gameRecord/epic7/epic7_artifact.json";
 const fribbelsUrl = process.env.FRIBBELS_HERO_URL ||
   "https://e7-optimizer-game-data.s3-accelerate.amazonaws.com/herodata.json";
 const fribbelsArtifactUrl = process.env.FRIBBELS_ARTIFACT_URL ||
@@ -36,6 +40,11 @@ const e7CodexUrl = (process.env.E7_CODEX_URL || "https://e7codex.com").replace(/
 const e7CodexUnitsUrl = process.env.E7_CODEX_UNITS_URL || `${e7CodexUrl}/data/units.json`;
 const gameKeeUrl = (process.env.GAMEKEE_URL || "https://www.gamekee.com").replace(/\/$/, "");
 const gameKeeHeroPids = (process.env.GAMEKEE_HERO_PIDS || "243,244,246,68344,68345,68346")
+  .split(",")
+  .map((pid) => Number(pid.trim()))
+  .filter(Number.isInteger);
+const gameKeeArtifactPids = (process.env.GAMEKEE_ARTIFACT_PIDS ||
+  "247,68337,68338,68339,68340,68341,68342,14623,68088")
   .split(",")
   .map((pid) => Number(pid.trim()))
   .filter(Number.isInteger);
@@ -54,6 +63,7 @@ const growthOnly = process.argv.includes("--growth-only");
 const heroArtOnly = process.argv.includes("--hero-art-only");
 const forceHeroArt = process.argv.includes("--force-hero-art");
 const artifactsOnly = process.argv.includes("--artifacts-only");
+const artifactLocalizationOnly = process.argv.includes("--artifact-localization-only");
 const exclusiveOnly = process.argv.includes("--exclusive-only");
 const skipArtifacts = process.argv.includes("--skip-artifacts");
 const skipExclusive = process.argv.includes("--skip-exclusive");
@@ -70,7 +80,9 @@ let epicSevenDbApiAvailable = skillSource === "auto" || skillSource === "api";
 let apiFailureLogged = false;
 let epicSevenDbWebSlugsPromise = null;
 let officialHeroesPromise = null;
+let officialArtifactPayloadPromise = null;
 let gameKeeHeroIndexPromise = null;
+let gameKeeArtifactIndexPromise = null;
 const gameKeeDetailPromises = new Map();
 
 if (!serviceRoleKey && !exportDir) {
@@ -352,6 +364,133 @@ async function officialHeroes() {
     officialHeroesPromise = fetchJson(officialHeroUrl).then((payload) => payload["zh-CN"] || []);
   }
   return officialHeroesPromise;
+}
+
+async function officialArtifactPayload() {
+  if (!officialArtifactPayloadPromise) {
+    officialArtifactPayloadPromise = fetchJson(officialArtifactUrl);
+  }
+  return officialArtifactPayloadPromise;
+}
+
+async function officialArtifacts() {
+  return (await officialArtifactPayload())["zh-CN"] || [];
+}
+
+function normalizedChineseArtifactName(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s·‧・&＆()（）._:：!！?？\-—《》「」『』'’]+/g, "");
+}
+
+const GAMEKEE_ARTIFACT_NAME_ALIASES = {
+  "小小女王的巨大皇冠": "小小女王的巨大王冠",
+  "孤独祈祷限定": "孤独祈祷",
+  "秘籍雷天一剑": "秘笈雷天一剑",
+  "宴会之主限定": "宴会之主",
+  "雷因格尔特调饮料": "雷茵格尔特调饮料",
+  "暗夜指挥官": "暗夜指挥者",
+  "隐形的观测者": "隐形的观察者",
+  "恶魔与天使限定": "恶魔＆天使",
+  "时间物资": "时间的物质",
+  "为了朋友的魔法玫勒赛德丝专用": "为了朋友的魔法",
+  "唯一的慰藉": "唯一慰藉",
+  "ivtheempreror": "ivtheemperor",
+  "xivthetower": "xvithetower",
+  "至崭新的时代": "致崭新的时代",
+  "里柏林沙滩排球指定用球": "里伯林沙滩排球指定用球",
+  "心存感激的一年": "心存感谢的一年",
+  "红莲种子": "红焰种子",
+  "赛弗克鲁姆": "塞弗克鲁姆",
+  "安德烈斯之弓": "安德烈斯之弩",
+  "赫克塔尔古书": "塔克赫尔古书",
+  "希拉一莲": "席拉莲",
+  "码姬哈拉的魔法古书": "玛姬拉哈的魔法古书",
+};
+
+function artifactRoleLabel(role) {
+  return {
+    warrior: "战士",
+    knight: "骑士",
+    assassin: "盗贼",
+    mage: "魔导士",
+    ranger: "射手",
+    manauser: "精灵师",
+    "": "共用",
+  }[role] || null;
+}
+
+function gameKeeArtifactCode(name, role, officialByName, fribbelsByCode) {
+  const normalized = normalizedChineseArtifactName(name);
+  const target = normalizedChineseArtifactName(
+    GAMEKEE_ARTIFACT_NAME_ALIASES[normalized] || normalized,
+  );
+  const candidates = officialByName.get(target) || [];
+  if (candidates.length <= 1) return candidates[0] || null;
+  const roleMatch = candidates.filter((code) =>
+    artifactRoleLabel(fribbelsByCode.get(code)?.role) === role,
+  );
+  return roleMatch.length === 1 ? roleMatch[0] : candidates[0];
+}
+
+async function gameKeeArtifactIndex() {
+  if (!gameKeeArtifactIndexPromise) {
+    gameKeeArtifactIndexPromise = (async () => {
+      const entries = [];
+      for (const pid of gameKeeArtifactPids) {
+        const response = await fetchGameKeeJson(
+          `${gameKeeUrl}/v1/entry/treesByPid?pid=${encodeURIComponent(pid)}`,
+        );
+        entries.push(...(response.data || []));
+      }
+      return [...new Map(
+        entries.filter((entry) => entry.content_id).map((entry) => [entry.id, entry]),
+      ).values()];
+    })();
+  }
+  return gameKeeArtifactIndexPromise;
+}
+
+async function fetchChineseArtifactLocalizations(fribbelsList) {
+  const officialByName = new Map();
+  const officialPayload = await officialArtifactPayload();
+  for (const artifact of [
+    ...(officialPayload["zh-CN"] || []),
+    ...(officialPayload.en || []),
+  ]) {
+    if (!artifact.name || !artifact.code) continue;
+    const key = normalizedChineseArtifactName(artifact.name);
+    const codes = officialByName.get(key) || [];
+    if (!codes.includes(artifact.code)) codes.push(artifact.code);
+    officialByName.set(key, codes);
+  }
+  const fribbelsByCode = new Map(fribbelsList.map(({ artifact }) => [artifact.code, artifact]));
+  const entries = await gameKeeArtifactIndex();
+  const localizations = new Map();
+  let completed = 0;
+  for (let start = 0; start < entries.length; start += concurrency) {
+    const group = entries.slice(start, start + concurrency);
+    const results = await Promise.all(group.map(async (entry) => {
+      try {
+        const parsed = parseGameKeeArtifactLocalization(await gameKeeDetail(entry.content_id));
+        if (!parsed) return null;
+        const code = gameKeeArtifactCode(parsed.name, parsed.role, officialByName, fribbelsByCode);
+        return code ? [code, parsed] : null;
+      } catch (error) {
+        console.warn(`GameKee Chinese artifact unavailable for ${entry.name}: ${error.message}`);
+        return null;
+      } finally {
+        completed += 1;
+      }
+    }));
+    for (const result of results.filter(Boolean)) localizations.set(result[0], result[1]);
+    if (completed === entries.length || completed % 25 === 0) {
+      console.log(`Fetched GameKee Chinese artifact data ${completed}/${entries.length}`);
+    }
+  }
+  console.log(`Resolved Chinese artifact data for ${localizations.size}/${fribbelsList.length} artifacts`);
+  return localizations;
 }
 
 async function gameKeeHeroIndex() {
@@ -1581,14 +1720,40 @@ async function artifactRowFallback(code, name, fribbels, syncedAt) {
   };
 }
 
+function localizeArtifactRow(row, code, chineseLocalizations, officialByCode) {
+  const localization = chineseLocalizations.get(code);
+  const fallback = artifactChineseFallback(code);
+  const officialName = officialByCode.get(code)?.name;
+  return {
+    ...row,
+    name: code === "efk21" && localization?.name
+      ? localization.name
+      : officialName || localization?.name || fallback?.name || row.name,
+    description: localization?.description || row.description || fallback?.description,
+    max_description: localization?.maxDescription || row.max_description || fallback?.maxDescription,
+    lore: localization?.lore || row.lore,
+    source: localization
+      ? "stove-zh-cn + gamekee + fribbels"
+      : fallback
+        ? "stove-zh-cn + local-zh-fallback + fribbels"
+        : officialName
+          ? "stove-zh-cn + fribbels + epic7db"
+          : row.source,
+  };
+}
+
 async function syncArtifacts(syncedAt) {
   const fribbelsArtifacts = await fetchJson(fribbelsArtifactUrl);
   const fribbelsList = Object.values(fribbelsArtifacts)
     .map((artifact) => ({ artifact, code: textOrNull(artifact.code) }))
     .filter(({ code }) => code);
   const fribbelsByCode = new Map(fribbelsList.map(({ artifact, code }) => [code, artifact]));
-
-  const slugByName = await epicSevenDbArtifactSlugs();
+  const [slugByName, chineseLocalizations, officialArtifactRows] = await Promise.all([
+    epicSevenDbArtifactSlugs(),
+    fetchChineseArtifactLocalizations(fribbelsList),
+    officialArtifacts(),
+  ]);
+  const officialByCode = new Map(officialArtifactRows.map((artifact) => [artifact.code, artifact]));
   const slugByCode = new Map();
   for (const { artifact, code } of fribbelsList) {
     const slug = slugByName.get(normalizedHeroName(artifact.name || "")) ||
@@ -1604,10 +1769,20 @@ async function syncArtifacts(syncedAt) {
     const results = await Promise.all(group.map(async ([code, slug]) => {
       const fribbels = fribbelsByCode.get(code);
       try {
-        return await fetchArtifactDetail(slug, fribbels, syncedAt);
+        return localizeArtifactRow(
+          await fetchArtifactDetail(slug, fribbels, syncedAt),
+          code,
+          chineseLocalizations,
+          officialByCode,
+        );
       } catch (error) {
         console.warn(`Artifact ${code} (${slug}) failed: ${error.message.split(":")[0]}`);
-        return await artifactRowFallback(code, textOrNull(fribbels?.name) || slug, fribbels, syncedAt);
+        return localizeArtifactRow(
+          await artifactRowFallback(code, textOrNull(fribbels?.name) || slug, fribbels, syncedAt),
+          code,
+          chineseLocalizations,
+          officialByCode,
+        );
       } finally {
         completed += 1;
         if (completed % 25 === 0 || completed === entries.length) {
@@ -1885,7 +2060,7 @@ async function mirrorStatusEffectImages(skills) {
 }
 
 async function mirrorArtifactImages(artifacts) {
-  if (skipImageMirror || !serviceRoleKey) return artifacts;
+  if (skipImageMirror || artifactLocalizationOnly || !serviceRoleKey) return artifacts;
   console.log(`Mirroring images for ${artifacts.length} artifacts to bucket ${storageBucket}...`);
   let done = 0;
   for (const artifact of artifacts) {
@@ -1946,6 +2121,44 @@ async function loadRestRows(table) {
     if (page.length < 500) break;
   } while (true);
   return rows;
+}
+
+async function mergeExistingArtifactRows(rows) {
+  if (!serviceRoleKey || !rows.length) return rows;
+  const existingByCode = new Map(
+    (await loadRestRows("artifact_catalog")).map((row) => [row.code, row]),
+  );
+  return rows.map((row) => {
+    const existing = existingByCode.get(row.code);
+    if (!existing) return row;
+
+    const usesLocalFallback = String(row.source || "").includes("local-zh-fallback");
+    const description = usesLocalFallback
+      ? existing.description || row.description
+      : row.description || existing.description;
+    const maxDescription = usesLocalFallback
+      ? existing.max_description || row.max_description
+      : row.max_description || existing.max_description;
+    const lore = usesLocalFallback
+      ? existing.lore || row.lore
+      : row.lore || existing.lore;
+
+    if (!artifactLocalizationOnly) {
+      return { ...row, description, max_description: maxDescription, lore };
+    }
+
+    return {
+      ...existing,
+      code: row.code,
+      name: row.name || existing.name,
+      description,
+      max_description: maxDescription,
+      lore,
+      source: row.source,
+      source_updated_at: row.source_updated_at,
+      updated_at: row.updated_at,
+    };
+  });
 }
 
 function rowKey(row, columns) {
@@ -2048,7 +2261,9 @@ if (!exportDir) await validateSupabaseAdminAccess();
 
 if (artifactsOnly) {
   console.log("Starting artifact-only sync...");
-  const artifacts = await mirrorArtifactImages(await syncArtifacts(syncedAt));
+  const artifacts = await mergeExistingArtifactRows(
+    await mirrorArtifactImages(await syncArtifacts(syncedAt)),
+  );
 
   if (exportDir) {
     await writeExport(exportDir, [], [], artifacts);
@@ -2234,7 +2449,9 @@ if (skills.length && !exportDir) {
 if (!skipArtifacts && !skillsOnly && !exportDir) {
   try {
     console.log("Starting artifact sync (inline)...");
-    const artifacts = await mirrorArtifactImages(await syncArtifacts(syncedAt));
+    const artifacts = await mergeExistingArtifactRows(
+      await mirrorArtifactImages(await syncArtifacts(syncedAt)),
+    );
 
     if (artifacts.length) {
       console.log(`Preparing ${artifacts.length} artifact rows`);

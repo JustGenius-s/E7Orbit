@@ -827,7 +827,6 @@ private fun HeroSkillCard(skill: E7HeroSkill) {
                     val meta = listOfNotNull(
                         skill.cooldown?.takeIf { it > 0 }?.let { "冷却 $it 回合" },
                         skill.soulGain?.takeIf { it > 0 }?.let { "获得灵魂 $it" },
-                        skill.soulRequirement?.takeIf { it > 0 }?.let { "灵魂燃烧 $it" },
                     ).joinToString(" · ")
                     if (meta.isNotBlank()) {
                         Spacer(Modifier.height(3.dp))
@@ -872,20 +871,23 @@ private fun HeroSkillCard(skill: E7HeroSkill) {
             }
             skill.description?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
                 Spacer(Modifier.height(10.dp))
-                Text(description, style = MaterialTheme.typography.bodyMedium)
+                Text(description.withSkillValueHighlight(), style = MaterialTheme.typography.bodyMedium)
             }
             skill.soulDescription?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "灵魂燃烧：$description",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SoulBurnIcons(skill.soulRequirement)
+                    Text(
+                        "灵魂燃烧：$description".withSkillValueHighlight(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             skill.enhancedDescription?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "觉醒后：$description",
+                    "觉醒后：$description".withSkillValueHighlight(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -894,7 +896,7 @@ private fun HeroSkillCard(skill: E7HeroSkill) {
                 Spacer(Modifier.height(8.dp))
                 skill.enhancements.forEach { enhancement ->
                     Text(
-                        "· ${enhancement.cleanSkillText()}",
+                        "· ${enhancement.cleanSkillText()}".withSkillValueHighlight(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -914,6 +916,28 @@ private fun HeroSkillCard(skill: E7HeroSkill) {
             }
     }
     Spacer(Modifier.height(8.dp))
+}
+
+// 10 魂 = 1 个图标，不足 10 的部分按 1 个算（最多 3 个，防止异常数据刷屏）。
+// 图标资源还没找到可用 CDN，URL 为空时 RemoteImage 会自动隐藏，拿到地址后填 SOUL_ICON_URL 即可。
+private val SOUL_ICON_URL: String? = null
+private const val SOULS_PER_ICON = 10
+private const val MAX_SOUL_ICONS = 3
+
+@Composable
+private fun SoulBurnIcons(soulRequirement: Int?) {
+    val requirement = soulRequirement ?: return
+    if (requirement <= 0 || SOUL_ICON_URL == null) return
+    val count = ((requirement + SOULS_PER_ICON - 1) / SOULS_PER_ICON).coerceIn(1, MAX_SOUL_ICONS)
+    repeat(count) {
+        RemoteImage(
+            url = SOUL_ICON_URL,
+            contentDescription = "消耗灵魂",
+            modifier = Modifier.size(16.dp),
+            contentScale = ContentScale.Fit,
+        )
+    }
+    Spacer(Modifier.width(6.dp))
 }
 
 private fun String.cleanSkillText(): String = replace("\\\\n", "\n")
