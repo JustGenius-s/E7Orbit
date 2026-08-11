@@ -177,7 +177,7 @@ class GearOptimizer(
     }
 
     fun calculateStats(hero: E7Hero, items: List<E7Gear>): OptimizedHeroStats {
-        require(items.size == SLOT_ORDER.size) { "配装必须包含六个部位" }
+        require(items.size <= SLOT_ORDER.size) { "配装不能超过六个部位" }
         val base = hero.stats ?: throw IllegalArgumentException("该英雄缺少基础属性")
         val accumulated = StatAccumulator()
         items.forEach { accumulated.add(it, base.attack ?: 0, base.health ?: 0, base.defense ?: 0) }

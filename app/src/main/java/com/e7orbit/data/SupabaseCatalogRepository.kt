@@ -145,6 +145,9 @@ internal data class SupabaseAwakeningRow(
 internal data class SupabaseImprintGradeRow(
     val rank: String = "",
     val value: String = "",
+    val stat: String? = null,
+    val amount: Double? = null,
+    val percent: Boolean = false,
 )
 
 @Serializable
@@ -295,7 +298,15 @@ internal fun SupabaseMemoryImprintRow.toDomain(): E7MemoryImprint = E7MemoryImpr
 
 private fun SupabaseImprintSectionRow.toDomain(): E7ImprintSection = E7ImprintSection(
     position = position,
-    grades = grades.map { E7ImprintGrade(rank = it.rank, value = it.value) },
+    grades = grades.map {
+        E7ImprintGrade(
+            rank = it.rank,
+            value = it.value,
+            stat = it.stat,
+            amount = it.amount,
+            percent = it.percent,
+        )
+    },
 )
 
 private fun SupabaseResourceCostRow.toDomain(): E7ResourceCost = E7ResourceCost(

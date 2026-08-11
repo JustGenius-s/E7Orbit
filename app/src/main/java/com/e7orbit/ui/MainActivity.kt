@@ -249,6 +249,7 @@ class MainActivity : ComponentActivity() {
                     onOptimizerMetricChanged = viewModel::setOptimizerMetric,
                     onOptimizerMinimumChanged = viewModel::setOptimizerMinimum,
                     onOptimizerRequiredSetToggled = viewModel::toggleOptimizerRequiredSet,
+                    onOptimizerImprintRankChanged = viewModel::setOptimizerImprintRank,
                     onOptimizerAllowLockedChanged = viewModel::setOptimizerAllowLocked,
                     onOptimizerAllowEquippedChanged = viewModel::setOptimizerAllowEquipped,
                     onOptimizerOnlyMaxedChanged = viewModel::setOptimizerOnlyMaxed,
@@ -395,6 +396,7 @@ private fun OrbitApp(
     onOptimizerMetricChanged: (com.e7orbit.optimizer.OptimizerMetric) -> Unit,
     onOptimizerMinimumChanged: (com.e7orbit.optimizer.OptimizerStat, Int) -> Unit,
     onOptimizerRequiredSetToggled: (String) -> Unit,
+    onOptimizerImprintRankChanged: (com.e7orbit.optimizer.ImprintRank) -> Unit,
     onOptimizerAllowLockedChanged: (Boolean) -> Unit,
     onOptimizerAllowEquippedChanged: (Boolean) -> Unit,
     onOptimizerOnlyMaxedChanged: (Boolean) -> Unit,
@@ -578,6 +580,7 @@ private fun OrbitApp(
                         onMetricChanged = onOptimizerMetricChanged,
                         onMinimumChanged = onOptimizerMinimumChanged,
                         onRequiredSetToggled = onOptimizerRequiredSetToggled,
+                        onImprintRankChanged = onOptimizerImprintRankChanged,
                         onAllowLockedChanged = onOptimizerAllowLockedChanged,
                         onAllowEquippedChanged = onOptimizerAllowEquippedChanged,
                         onOnlyMaxedChanged = onOptimizerOnlyMaxedChanged,
@@ -863,7 +866,6 @@ private fun OptimizerPlanTopBar(
                     HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text("新建方案…") },
-                        enabled = canCreate,
                         onClick = {
                             planMenuExpanded = false
                             planName = "方案 ${plans.size + 1}"
@@ -886,15 +888,15 @@ private fun OptimizerPlanTopBar(
                     expanded = moreMenuExpanded,
                     onDismissRequest = { moreMenuExpanded = false },
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("复制方案…") },
+                        onClick = {
+                            moreMenuExpanded = false
+                            planName = "${selectedPlan?.name ?: "默认方案"} 副本"
+                            nameDialogAction = "copy"
+                        },
+                    )
                     if (selectedPlan != null) {
-                        DropdownMenuItem(
-                            text = { Text("复制方案…") },
-                            onClick = {
-                                moreMenuExpanded = false
-                                planName = "${selectedPlan.name} 副本"
-                                nameDialogAction = "copy"
-                            },
-                        )
                         DropdownMenuItem(
                             text = { Text("导出方案 gear.txt") },
                             onClick = {

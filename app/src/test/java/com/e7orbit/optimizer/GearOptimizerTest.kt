@@ -98,7 +98,9 @@ class GearOptimizerTest {
         assertEquals(1, builds.size)
         assertEquals(99L, builds.single().instanceId)
         assertEquals(0, builds.single().items.size)
-        assertEquals(null, builds.single().stats)
+        // 无装备时仍然能算出基础面板
+        assertEquals(100, builds.single().stats?.speed)
+        assertEquals(1000, builds.single().stats?.attack)
     }
 
     @Test

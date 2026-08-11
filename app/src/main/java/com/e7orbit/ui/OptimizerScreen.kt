@@ -13,6 +13,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -65,10 +66,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -93,6 +96,7 @@ import com.e7orbit.optimizer.GearSortDirection
 import com.e7orbit.optimizer.GearSortField
 import com.e7orbit.optimizer.HeroBuildSort
 import com.e7orbit.optimizer.HeroBuildSortField
+import com.e7orbit.optimizer.ImprintRank
 import com.e7orbit.optimizer.OptimizedBuild
 import com.e7orbit.optimizer.OptimizedHeroStats
 import com.e7orbit.optimizer.OptimizerContent
@@ -129,12 +133,16 @@ internal fun OptimizerScreen(
     val displayedGears = remember(state.data.gears, optimizer.selectedPlan) {
         optimizer.selectedPlan?.applyTo(state.data.gears) ?: state.data.gears
     }
-    val builds = remember(state.data.scannedHeroes, state.data.heroes, displayedGears) {
+    val imprintRanks = remember(optimizer.heroPreferences) {
+        optimizer.heroPreferences.mapValues { it.value.imprintRank }
+    }
+    val builds = remember(state.data.scannedHeroes, state.data.heroes, displayedGears, imprintRanks) {
         buildEquippedHeroes(
             scannedHeroes = state.data.scannedHeroes,
             catalog = state.data.heroes,
             gears = displayedGears,
             includeEmptyScannedHeroes = optimizer.selectedPlan != null,
+            imprintRanks = imprintRanks,
         )
     }
     val sortedBuilds = remember(builds, optimizer.heroSort) {
@@ -449,6 +457,7 @@ internal fun OptimizerHeroDetailScreen(
     onMetricChanged: (OptimizerMetric) -> Unit,
     onMinimumChanged: (OptimizerStat, Int) -> Unit,
     onRequiredSetToggled: (String) -> Unit,
+    onImprintRankChanged: (ImprintRank) -> Unit,
     onAllowLockedChanged: (Boolean) -> Unit,
     onAllowEquippedChanged: (Boolean) -> Unit,
     onOnlyMaxedChanged: (Boolean) -> Unit,
@@ -460,17 +469,22 @@ internal fun OptimizerHeroDetailScreen(
     val displayedGears = remember(state.data.gears, optimizer.selectedPlan) {
         optimizer.selectedPlan?.applyTo(state.data.gears) ?: state.data.gears
     }
+    val imprintRanks = remember(optimizer.heroPreferences) {
+        optimizer.heroPreferences.mapValues { it.value.imprintRank }
+    }
     val build = remember(
         optimizer.selectedEquippedHeroId,
         state.data.scannedHeroes,
         state.data.heroes,
         displayedGears,
+        imprintRanks,
     ) {
         buildEquippedHeroes(
             scannedHeroes = state.data.scannedHeroes,
             catalog = state.data.heroes,
             gears = displayedGears,
             includeEmptyScannedHeroes = optimizer.selectedPlan != null,
+            imprintRanks = imprintRanks,
         ).firstOrNull { it.instanceId == optimizer.selectedEquippedHeroId }
     }
     val setOptions = remember(state.data.gears) {
@@ -554,7 +568,7 @@ internal fun OptimizerHeroDetailScreen(
                 SectionTitle(
                     title = "最终属性",
                     detail = if (build.stats == null) {
-                        "需要完整六件装备和可匹配的英雄基础属性。"
+                        "缺少可匹配的英雄基础属性。"
                     } else {
                         "按当前装备、基础属性和已激活套装计算。"
                     },
@@ -594,6 +608,19 @@ internal fun OptimizerHeroDetailScreen(
                     detail = "设置只属于 ${build.displayName}，计算结果先满足最低属性，再按目标排序。",
                 )
                 Spacer(Modifier.height(12.dp))
+                Text(
+                    "自身刻印档位",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                ImprintRankSelector(
+                    build = build,
+                    selectedRank = optimizer.imprintRank,
+                    enabled = optimizer.phase != OptimizerPhase.RUNNING,
+                    onRankSelected = onImprintRankChanged,
+                )
+                Spacer(Modifier.height(14.dp))
                 Text(
                     "排序目标",
                     style = MaterialTheme.typography.labelLarge,
@@ -1582,6 +1609,117 @@ internal fun GearAssetIcon(
         modifier = modifier,
         contentScale = ContentScale.Fit,
     )
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ImprintRankSelector(
+    build: EquippedHeroBuild,
+    selectedRank: ImprintRank,
+    enabled: Boolean,
+    onRankSelected: (ImprintRank) -> Unit,
+) {
+    val grades = build.hero?.memoryImprint?.concentration?.grades.orEmpty()
+    if (grades.isEmpty()) {
+        Text(
+            "该英雄暂无自身刻印数据",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    val gradeByRank = grades.associateBy { ImprintRank.of(it.rank) }
+    val cookieShape = OrbitPolygonShapes.ImprintRankBadge.asShape
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ImprintRank.entries.forEach { rank ->
+            val selected = rank == selectedRank
+            val grade = gradeByRank[rank]
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                // 选中时 cookie 背景旋转 90°，图标保持不动。
+                val rotation by animateFloatAsState(
+                    targetValue = if (selected) 90f else 0f,
+                    animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                    label = "imprint rank rotation",
+                )
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        // clip 让 clickable 的波纹也按 cookie 形状裁剪，不再出现方块背景。
+                        .clip(cookieShape)
+                        .clickable(enabled = enabled) { onRankSelected(rank) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // 背景 + 边框随 cookie 一起旋转；图标在其上层不受影响。
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .graphicsLayer { rotationZ = rotation }
+                            .then(
+                                if (selected) {
+                                    Modifier.background(
+                                        MaterialTheme.colorScheme.primaryContainer,
+                                        cookieShape,
+                                    )
+                                } else {
+                                    Modifier.border(
+                                        width = 1.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                        shape = cookieShape,
+                                    )
+                                },
+                            ),
+                    )
+                    imprintRankIconRes(rank.label)?.let { resId ->
+                        Image(
+                            painter = painterResource(resId),
+                            contentDescription = rank.label,
+                            modifier = Modifier.width(32.dp).height(20.dp),
+                            contentScale = ContentScale.Fit,
+                            alpha = if (grade != null || selected) 1f else 0.45f,
+                        )
+                    } ?: Text(
+                        rank.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                Text(
+                    text = grade?.value?.imprintGradeLabel() ?: "—",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+private fun String.imprintGradeLabel(): String = when {
+    startsWith("Effectiveness", ignoreCase = true) -> replaceFirst("Effectiveness", "命中", ignoreCase = true)
+    startsWith("Effect Resistance", ignoreCase = true) -> replaceFirst("Effect Resistance", "抗性", ignoreCase = true)
+    startsWith("Critical Hit Chance", ignoreCase = true) -> replaceFirst("Critical Hit Chance", "暴击", ignoreCase = true)
+    startsWith("Critical Hit Damage", ignoreCase = true) -> replaceFirst("Critical Hit Damage", "暴伤", ignoreCase = true)
+    startsWith("Attack", ignoreCase = true) -> replaceFirst("Attack", "攻击", ignoreCase = true)
+    startsWith("Health", ignoreCase = true) -> replaceFirst("Health", "生命", ignoreCase = true)
+    startsWith("Defense", ignoreCase = true) -> replaceFirst("Defense", "防御", ignoreCase = true)
+    startsWith("Speed", ignoreCase = true) -> replaceFirst("Speed", "速度", ignoreCase = true)
+    else -> this
 }
 
 @Composable

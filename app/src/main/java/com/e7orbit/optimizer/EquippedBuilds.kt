@@ -145,6 +145,7 @@ data class HeroOptimizerPreference(
     val metric: OptimizerMetric = OptimizerMetric.COMBAT_POWER,
     val minimums: Map<OptimizerStat, Int> = emptyMap(),
     val requiredSets: Set<String> = emptySet(),
+    val imprintRank: ImprintRank = ImprintRank.DEFAULT,
 ) {
     val isConfigured: Boolean
         get() = metric != OptimizerMetric.COMBAT_POWER ||
@@ -181,6 +182,7 @@ fun buildEquippedHeroes(
     gears: List<E7Gear>,
     calculator: GearOptimizer = GearOptimizer(),
     includeEmptyScannedHeroes: Boolean = false,
+    imprintRanks: Map<Long, ImprintRank> = emptyMap(),
 ): List<EquippedHeroBuild> {
     val scannedById = scannedHeroes.associateBy(E7ScannedHero::id)
     val catalogByName = catalog.associateBy { normalizeHeroName(it.name) }
@@ -195,12 +197,12 @@ fun buildEquippedHeroes(
         .map { instanceId ->
             val scanned = scannedById[instanceId]
             val hero = scanned?.name?.let { catalogByName[normalizeHeroName(it)] }
+                ?.withSelfImprint(imprintRanks[instanceId] ?: ImprintRank.DEFAULT)
             val items = equippedByHero[instanceId].orEmpty()
                 .filter { it.slot in EQUIPMENT_SLOTS }
                 .distinctBy(E7Gear::slot)
                 .sortedBy { EQUIPMENT_SLOTS.indexOf(it.slot) }
             val stats = hero
-                ?.takeIf { items.size == EQUIPMENT_SLOTS.size }
                 ?.let { runCatching { calculator.calculateStats(it, items) }.getOrNull() }
             EquippedHeroBuild(
                 instanceId = instanceId,
@@ -339,6 +341,7 @@ class OptimizerPreferenceStore(context: Context) {
         val metric: String = OptimizerMetric.COMBAT_POWER.name,
         val minimums: Map<String, Int> = emptyMap(),
         val requiredSets: Set<String> = emptySet(),
+        val imprintRank: String = ImprintRank.DEFAULT.name,
     ) {
         fun toDomain(): HeroOptimizerPreference = HeroOptimizerPreference(
             metric = runCatching { OptimizerMetric.valueOf(metric) }
@@ -348,6 +351,8 @@ class OptimizerPreferenceStore(context: Context) {
                     ?.let { it to value.coerceAtLeast(0) }
             }.toMap(),
             requiredSets = requiredSets,
+            imprintRank = runCatching { ImprintRank.valueOf(imprintRank) }
+                .getOrDefault(ImprintRank.DEFAULT),
         )
     }
 
@@ -355,5 +360,6 @@ class OptimizerPreferenceStore(context: Context) {
         metric = metric.name,
         minimums = minimums.mapKeys { it.key.name },
         requiredSets = requiredSets,
+        imprintRank = imprintRank.name,
     )
 }

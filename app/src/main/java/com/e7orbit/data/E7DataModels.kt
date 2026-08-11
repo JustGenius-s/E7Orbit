@@ -71,6 +71,12 @@ data class E7ImprintSection(
 data class E7ImprintGrade(
     val rank: String,
     val value: String,
+    /** Structured stat code (e.g. "speed", "critical_chance"), when synced with it. */
+    val stat: String? = null,
+    /** Numeric bonus amount. */
+    val amount: Double? = null,
+    /** True when [amount] is a percentage of the base stat. */
+    val percent: Boolean = false,
 )
 
 /** A buff/debuff applied by a skill. [iconUrl] points at the status effect icon. */

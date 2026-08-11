@@ -427,6 +427,28 @@ function parseWebAwakenings(html) {
     );
 }
 
+const IMPRINT_STAT_CODES = {
+  attack: "attack",
+  health: "health",
+  defense: "defense",
+  speed: "speed",
+  "critical hit chance": "critical_chance",
+  "critical hit damage": "critical_damage",
+  effectiveness: "effectiveness",
+  "effect resistance": "effect_resistance",
+};
+
+// Parses imprint text like "Critical Hit Chance +16.8%" / "Speed +4" into
+// structured fields so clients don't need to re-parse the display string.
+function parseImprintValue(text) {
+  const match = String(text || "").trim().match(/^([A-Za-z ]+?)\s*\+?\s*([0-9]+(?:\.[0-9]+)?)\s*(%?)$/);
+  if (!match) return {};
+  const stat = IMPRINT_STAT_CODES[match[1].trim().toLowerCase()];
+  const amount = Number(match[2]);
+  if (!stat || !Number.isFinite(amount)) return {};
+  return { stat, amount, percent: match[3] === "%" };
+}
+
 function parseWebMemoryImprint(html) {
   const sections = extractDivBlocks(htmlSection(html, "memory-imprints"), "memory-imprint");
   const result = {};
@@ -438,7 +460,10 @@ function parseWebMemoryImprint(html) {
     const position = block.match(/images\/imprints\/([^."]+)\.png"[^>]*alt="[^"]*"/i)?.[1] || null;
     const grades = [...block.matchAll(
       /images\/imprints\/(SSS|SS|S|A|B)\.png"[^>]*>\s*([^<]+)<\/li>/gi,
-    )].map((match) => ({ rank: match[1].toUpperCase(), value: htmlText(match[2]) }));
+    )].map((match) => {
+      const value = htmlText(match[2]);
+      return { rank: match[1].toUpperCase(), value, ...parseImprintValue(value) };
+    });
     result[key] = { position, grades };
   }
   return result;

@@ -37,6 +37,9 @@ object OrbitPolygonShapes {
     /** 英雄头像：饼干形，柔化的多边形，适合框住人像。 */
     val HeroAvatar: RoundedPolygon = MaterialShapes.Cookie9Sided
 
+    /** 刻印档位选中态：七边形饼干，包裹选中的档位徽标。 */
+    val ImprintRankBadge: RoundedPolygon = MaterialShapes.Cookie7Sided
+
     /** 悬浮状态球：宝石形（区别于普通圆形控件）。 */
     val StatusOrb: RoundedPolygon = MaterialShapes.Gem
 

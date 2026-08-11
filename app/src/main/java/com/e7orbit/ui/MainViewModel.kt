@@ -43,10 +43,12 @@ import com.e7orbit.optimizer.EquipmentPlanCollection
 import com.e7orbit.optimizer.EquipmentPlanStore
 import com.e7orbit.optimizer.HeroBuildSort
 import com.e7orbit.optimizer.HeroOptimizerPreference
+import com.e7orbit.optimizer.ImprintRank
 import com.e7orbit.optimizer.OptimizerContent
 import com.e7orbit.optimizer.OptimizerPreferenceStore
 import com.e7orbit.optimizer.OptimizerUiPreferenceStore
 import com.e7orbit.optimizer.matchScannedHero
+import com.e7orbit.optimizer.withSelfImprint
 import com.e7orbit.optimizer.applyBuild
 import com.e7orbit.optimizer.applyTo
 import com.e7orbit.optimizer.copyAs
@@ -122,6 +124,7 @@ data class OptimizerUiState(
     val metric: OptimizerMetric = OptimizerMetric.COMBAT_POWER,
     val minimums: Map<OptimizerStat, Int> = emptyMap(),
     val requiredSets: Set<String> = emptySet(),
+    val imprintRank: ImprintRank = ImprintRank.DEFAULT,
     val allowLocked: Boolean = true,
     val allowEquipped: Boolean = true,
     val onlyMaxed: Boolean = true,
@@ -386,7 +389,7 @@ class MainViewModel(
         if (trimmed.isEmpty()) return
         val plan = createEquipmentPlan(
             name = trimmed,
-            gears = AppGraph.gearImportRepository.state.value.gears,
+            gears = emptyList(),
         )
         optimizer.value = optimizer.value.copy(
             plans = optimizer.value.plans + plan,
@@ -397,9 +400,12 @@ class MainViewModel(
     }
 
     fun copySelectedEquipmentPlan(name: String) {
-        val source = optimizer.value.selectedPlan ?: return
         val trimmed = name.trim().take(40)
         if (trimmed.isEmpty()) return
+        val source = optimizer.value.selectedPlan ?: createEquipmentPlan(
+            name = "默认方案",
+            gears = AppGraph.gearImportRepository.state.value.gears,
+        )
         val copy = source.copyAs(trimmed)
         optimizer.value = optimizer.value.copy(
             plans = optimizer.value.plans + copy,
@@ -468,6 +474,7 @@ class MainViewModel(
                 metric = preference.metric,
                 minimums = preference.minimums,
                 requiredSets = preference.requiredSets,
+                imprintRank = preference.imprintRank,
             )
         }
     }
@@ -534,6 +541,10 @@ class MainViewModel(
         }
     }
 
+    fun setOptimizerImprintRank(rank: ImprintRank) {
+        updateOptimizerPreference { copy(imprintRank = rank) }
+    }
+
     fun setOptimizerAllowLocked(enabled: Boolean) {
         updateOptimizerConfig { copy(allowLocked = enabled) }
     }
@@ -595,7 +606,7 @@ class MainViewModel(
             try {
                 val outcome = withContext(Dispatchers.Default) {
                     gearOptimizer.optimize(
-                        hero = hero,
+                        hero = hero.withSelfImprint(current.imprintRank),
                         inventory = inventory,
                         config = config,
                         isCancelled = { requestId != optimizerRequestId || !isActive },
@@ -653,6 +664,7 @@ class MainViewModel(
                 metric = optimizer.value.metric,
                 minimums = optimizer.value.minimums,
                 requiredSets = optimizer.value.requiredSets,
+                imprintRank = optimizer.value.imprintRank,
             ).transform()
             updateOptimizerConfig {
                 copy(
@@ -669,6 +681,7 @@ class MainViewModel(
                 metric = next.metric,
                 minimums = next.minimums,
                 requiredSets = next.requiredSets,
+                imprintRank = next.imprintRank,
                 heroPreferences = heroPreferences + (instanceId to next),
             )
         }
