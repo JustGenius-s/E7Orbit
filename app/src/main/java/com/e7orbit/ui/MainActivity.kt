@@ -21,6 +21,7 @@ import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -684,9 +685,17 @@ private fun orbitContentTransform(
         else -> false
     }
     if (usesContainerTransform) {
-        val usesFade = initial.destination != OrbitDestination.TASKS
-        val enter = if (usesFade) fadeIn(animationSpec = effectsSpec) else EnterTransition.None
-        val exit = if (usesFade) fadeOut(animationSpec = effectsSpec) else ExitTransition.None
+        // Stagger the two fades: outgoing page fades first, incoming page waits
+        // until the shared element lands before revealing its non-shared content.
+        // A simultaneous fadeOut+fadeIn would dip the shared element's combined
+        // alpha below 1 mid-flight and produce a visible flicker.
+        val exit = fadeOut(animationSpec = effectsSpec)
+        val enter = fadeIn(
+            animationSpec = tween(
+                durationMillis = ContainerTransformFadeMillis,
+                delayMillis = ContainerTransformFadeMillis,
+            ),
+        )
         return (enter togetherWith exit).apply { targetContentZIndex = 1f }
     }
 
@@ -706,6 +715,13 @@ private fun orbitContentTransform(
     ) + fadeOut(animationSpec = effectsSpec)
     return (enter togetherWith exit).apply { targetContentZIndex = 1f }
 }
+
+/**
+ * Duration of each half of the staggered container-transform fade. Matches the M3
+ * shared-element flight time (~450ms slow spatial spec) so the incoming page only
+ * reveals its non-shared content after the shared element has landed.
+ */
+private const val ContainerTransformFadeMillis = 450
 
 private fun DetailRoute?.isTaskDetail(): Boolean =
     this == DetailRoute.SHOP || this == DetailRoute.HUNT
