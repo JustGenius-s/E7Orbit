@@ -84,13 +84,27 @@ internal fun OptimizerScreen(
     val imprintRanks = remember(optimizer.heroPreferences) {
         optimizer.heroPreferences.mapValues { it.value.imprintRank }
     }
-    val builds = remember(state.data.scannedHeroes, state.data.heroes, displayedGears, imprintRanks) {
+    val artifactCodes = remember(optimizer.heroPreferences) {
+        optimizer.heroPreferences.mapNotNull { (id, pref) ->
+            pref.artifactCode?.let { id to it }
+        }.toMap()
+    }
+    val builds = remember(
+        state.data.scannedHeroes,
+        state.data.heroes,
+        displayedGears,
+        imprintRanks,
+        artifactCodes,
+        state.data.artifacts,
+    ) {
         buildEquippedHeroes(
             scannedHeroes = state.data.scannedHeroes,
             catalog = state.data.heroes,
             gears = displayedGears,
             includeEmptyScannedHeroes = optimizer.selectedPlan != null,
             imprintRanks = imprintRanks,
+            artifacts = state.data.artifacts,
+            artifactCodes = artifactCodes,
         )
     }
     val sortedBuilds = remember(builds, optimizer.heroSort) {
@@ -406,6 +420,7 @@ internal fun OptimizerHeroDetailScreen(
     onMinimumChanged: (OptimizerStat, Int) -> Unit,
     onRequiredSetToggled: (String) -> Unit,
     onImprintRankChanged: (ImprintRank) -> Unit,
+    onArtifactChanged: (String?) -> Unit,
     onAllowLockedChanged: (Boolean) -> Unit,
     onAllowEquippedChanged: (Boolean) -> Unit,
     onOnlyMaxedChanged: (Boolean) -> Unit,
@@ -420,12 +435,19 @@ internal fun OptimizerHeroDetailScreen(
     val imprintRanks = remember(optimizer.heroPreferences) {
         optimizer.heroPreferences.mapValues { it.value.imprintRank }
     }
+    val artifactCodes = remember(optimizer.heroPreferences) {
+        optimizer.heroPreferences.mapNotNull { (id, pref) ->
+            pref.artifactCode?.let { id to it }
+        }.toMap()
+    }
     val build = remember(
         optimizer.selectedEquippedHeroId,
         state.data.scannedHeroes,
         state.data.heroes,
         displayedGears,
         imprintRanks,
+        artifactCodes,
+        state.data.artifacts,
     ) {
         buildEquippedHeroes(
             scannedHeroes = state.data.scannedHeroes,
@@ -433,6 +455,8 @@ internal fun OptimizerHeroDetailScreen(
             gears = displayedGears,
             includeEmptyScannedHeroes = optimizer.selectedPlan != null,
             imprintRanks = imprintRanks,
+            artifacts = state.data.artifacts,
+            artifactCodes = artifactCodes,
         ).firstOrNull { it.instanceId == optimizer.selectedEquippedHeroId }
     }
     val setOptions = remember(state.data.gears) {
@@ -513,18 +537,11 @@ internal fun OptimizerHeroDetailScreen(
         if (tab == 0) {
         item(key = "stats") {
             SectionSurface {
-                SectionTitle(
-                    title = "最终属性",
-                    detail = if (build.stats == null) {
-                        "缺少可匹配的英雄基础属性。"
-                    } else {
-                        "按当前装备、基础属性和已激活套装计算。"
-                    },
-                )
+                SectionTitle(title = "面板属性")
                 Spacer(Modifier.height(12.dp))
                 build.stats?.let { HeroStatsGrid(it) }
                     ?: Text(
-                        "最终面板暂不可计算",
+                        "缺少可匹配的英雄基础属性",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
             }
@@ -556,6 +573,14 @@ internal fun OptimizerHeroDetailScreen(
                     selectedRank = optimizer.imprintRank,
                     enabled = optimizer.phase != OptimizerPhase.RUNNING,
                     onRankSelected = onImprintRankChanged,
+                )
+                Spacer(Modifier.height(14.dp))
+                ArtifactSelector(
+                    artifacts = state.data.artifacts,
+                    heroRole = build.hero?.role,
+                    selectedCode = optimizer.artifactCode,
+                    enabled = optimizer.phase != OptimizerPhase.RUNNING,
+                    onSelected = onArtifactChanged,
                 )
                 Spacer(Modifier.height(14.dp))
                 Text(

@@ -62,6 +62,19 @@ data class OptimizedHeroStats(
     val damage: Int,
     val damagePerSpeed: Int,
     val gearScore: Int,
+    val breakdowns: Map<OptimizerStat, StatBreakdown> = emptyMap(),
+)
+
+/**
+ * 单条属性的面板构成，用于概览页括号展开。
+ * [gearPercent] 装备百分比加成合计（%），[gearFlat] 装备固定加成合计，
+ * [setBonus] 套装提供的加成（百分比属性为 %，固定属性为点数）。
+ */
+data class StatBreakdown(
+    val gearPercent: Double = 0.0,
+    val gearFlat: Double = 0.0,
+    val setBonus: Double = 0.0,
+    val setIsPercent: Boolean = false,
 )
 
 data class OptimizedBuild(
@@ -253,6 +266,90 @@ class GearOptimizer(
             damage = damage.toInt(),
             damagePerSpeed = (damage * speed / 1000.0).toInt(),
             gearScore = items.sumOf(::gearScore),
+            breakdowns = buildBreakdowns(items, baseAttack, baseHealth, baseDefense, setCounts),
+        )
+    }
+
+    private fun buildBreakdowns(
+        items: List<E7Gear>,
+        baseAttack: Int,
+        baseHealth: Int,
+        baseDefense: Int,
+        setCounts: Map<String, Int>,
+    ): Map<OptimizerStat, StatBreakdown> {
+        // 分类累加装备的百分比与固定值（只对攻击/生命/防御区分，其余属性装备只有固定值）。
+        var attackPct = 0.0
+        var attackFlat = 0.0
+        var healthPct = 0.0
+        var healthFlat = 0.0
+        var defensePct = 0.0
+        var defenseFlat = 0.0
+        var speed = 0.0
+        var critChance = 0.0
+        var critDamage = 0.0
+        var effectiveness = 0.0
+        var resistance = 0.0
+        items.forEach { item ->
+            (listOf(item.mainStat) + item.substats).forEach { stat ->
+                when (stat.type) {
+                    "Attack" -> attackFlat += stat.value
+                    "AttackPercent" -> attackPct += stat.value
+                    "Health" -> healthFlat += stat.value
+                    "HealthPercent" -> healthPct += stat.value
+                    "Defense" -> defenseFlat += stat.value
+                    "DefensePercent" -> defensePct += stat.value
+                    "Speed" -> speed += stat.value
+                    "CriticalHitChancePercent" -> critChance += stat.value
+                    "CriticalHitDamagePercent" -> critDamage += stat.value
+                    "EffectivenessPercent" -> effectiveness += stat.value
+                    "EffectResistancePercent" -> resistance += stat.value
+                }
+            }
+        }
+        return mapOf(
+            OptimizerStat.ATTACK to StatBreakdown(
+                gearPercent = attackPct,
+                gearFlat = attackFlat,
+                setBonus = setCounts.completeCount("set_att") * 45.0,
+                setIsPercent = true,
+            ),
+            OptimizerStat.HEALTH to StatBreakdown(
+                gearPercent = healthPct,
+                gearFlat = healthFlat,
+                setBonus = setCounts.completeCount("set_max_hp") * 20.0 +
+                    setCounts.completeCount("set_opener") * 20.0 -
+                    setCounts.completeCount("set_torrent") * 10.0,
+                setIsPercent = true,
+            ),
+            OptimizerStat.DEFENSE to StatBreakdown(
+                gearPercent = defensePct,
+                gearFlat = defenseFlat,
+                setBonus = setCounts.completeCount("set_def") * 20.0,
+                setIsPercent = true,
+            ),
+            OptimizerStat.SPEED to StatBreakdown(
+                gearFlat = speed,
+                setBonus = setCounts.completeCount("set_speed") * 25.0 +
+                    setCounts.completeCount("set_revenge") * 12.0 +
+                    (setCounts.completeCount("set_revenant") + setCounts.completeCount("set_weak")) * 15.0,
+                setIsPercent = true,
+            ),
+            OptimizerStat.CRIT_CHANCE to StatBreakdown(
+                gearFlat = critChance,
+                setBonus = setCounts.completeCount("set_cri") * 12.0,
+            ),
+            OptimizerStat.CRIT_DAMAGE to StatBreakdown(
+                gearFlat = critDamage,
+                setBonus = setCounts.completeCount("set_cri_dmg") * 60.0,
+            ),
+            OptimizerStat.EFFECTIVENESS to StatBreakdown(
+                gearFlat = effectiveness,
+                setBonus = setCounts.completeCount("set_acc") * 20.0,
+            ),
+            OptimizerStat.RESISTANCE to StatBreakdown(
+                gearFlat = resistance,
+                setBonus = setCounts.completeCount("set_res") * 20.0,
+            ),
         )
     }
 

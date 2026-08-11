@@ -49,6 +49,7 @@ import com.e7orbit.optimizer.OptimizerPreferenceStore
 import com.e7orbit.optimizer.OptimizerUiPreferenceStore
 import com.e7orbit.optimizer.matchScannedHero
 import com.e7orbit.optimizer.withSelfImprint
+import com.e7orbit.optimizer.withArtifact
 import com.e7orbit.optimizer.applyBuild
 import com.e7orbit.optimizer.applyTo
 import com.e7orbit.optimizer.copyAs
@@ -125,6 +126,7 @@ data class OptimizerUiState(
     val minimums: Map<OptimizerStat, Int> = emptyMap(),
     val requiredSets: Set<String> = emptySet(),
     val imprintRank: ImprintRank = ImprintRank.DEFAULT,
+    val artifactCode: String? = null,
     val allowLocked: Boolean = true,
     val allowEquipped: Boolean = true,
     val onlyMaxed: Boolean = true,
@@ -475,6 +477,7 @@ class MainViewModel(
                 minimums = preference.minimums,
                 requiredSets = preference.requiredSets,
                 imprintRank = preference.imprintRank,
+                artifactCode = preference.artifactCode,
             )
         }
     }
@@ -545,6 +548,10 @@ class MainViewModel(
         updateOptimizerPreference { copy(imprintRank = rank) }
     }
 
+    fun setOptimizerArtifact(code: String?) {
+        updateOptimizerPreference { copy(artifactCode = code?.takeIf(String::isNotBlank)) }
+    }
+
     fun setOptimizerAllowLocked(enabled: Boolean) {
         updateOptimizerConfig { copy(allowLocked = enabled) }
     }
@@ -605,8 +612,11 @@ class MainViewModel(
             val startedAt = System.currentTimeMillis()
             try {
                 val outcome = withContext(Dispatchers.Default) {
+                    val artifact = data.value.artifacts.firstOrNull { it.code == current.artifactCode }
                     gearOptimizer.optimize(
-                        hero = hero.withSelfImprint(current.imprintRank),
+                        hero = hero
+                            .withSelfImprint(current.imprintRank)
+                            .withArtifact(artifact),
                         inventory = inventory,
                         config = config,
                         isCancelled = { requestId != optimizerRequestId || !isActive },
@@ -665,12 +675,15 @@ class MainViewModel(
                 minimums = optimizer.value.minimums,
                 requiredSets = optimizer.value.requiredSets,
                 imprintRank = optimizer.value.imprintRank,
+                artifactCode = optimizer.value.artifactCode,
             ).transform()
             updateOptimizerConfig {
                 copy(
                     metric = next.metric,
                     minimums = next.minimums,
                     requiredSets = next.requiredSets,
+                    imprintRank = next.imprintRank,
+                    artifactCode = next.artifactCode,
                 )
             }
             return
@@ -682,6 +695,7 @@ class MainViewModel(
                 minimums = next.minimums,
                 requiredSets = next.requiredSets,
                 imprintRank = next.imprintRank,
+                artifactCode = next.artifactCode,
                 heroPreferences = heroPreferences + (instanceId to next),
             )
         }

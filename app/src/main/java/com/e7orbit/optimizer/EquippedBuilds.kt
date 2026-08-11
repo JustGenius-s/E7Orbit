@@ -146,6 +146,7 @@ data class HeroOptimizerPreference(
     val minimums: Map<OptimizerStat, Int> = emptyMap(),
     val requiredSets: Set<String> = emptySet(),
     val imprintRank: ImprintRank = ImprintRank.DEFAULT,
+    val artifactCode: String? = null,
 ) {
     val isConfigured: Boolean
         get() = metric != OptimizerMetric.COMBAT_POWER ||
@@ -183,9 +184,12 @@ fun buildEquippedHeroes(
     calculator: GearOptimizer = GearOptimizer(),
     includeEmptyScannedHeroes: Boolean = false,
     imprintRanks: Map<Long, ImprintRank> = emptyMap(),
+    artifacts: List<com.e7orbit.data.E7Artifact> = emptyList(),
+    artifactCodes: Map<Long, String> = emptyMap(),
 ): List<EquippedHeroBuild> {
     val scannedById = scannedHeroes.associateBy(E7ScannedHero::id)
     val catalogByName = catalog.associateBy { normalizeHeroName(it.name) }
+    val artifactsByCode = artifacts.associateBy(com.e7orbit.data.E7Artifact::code)
     val equippedByHero = gears.asSequence()
         .filter { it.equippedHeroId != null }
         .groupBy { requireNotNull(it.equippedHeroId) }
@@ -198,6 +202,7 @@ fun buildEquippedHeroes(
             val scanned = scannedById[instanceId]
             val hero = scanned?.name?.let { catalogByName[normalizeHeroName(it)] }
                 ?.withSelfImprint(imprintRanks[instanceId] ?: ImprintRank.DEFAULT)
+                ?.withArtifact(artifactCodes[instanceId]?.let(artifactsByCode::get))
             val items = equippedByHero[instanceId].orEmpty()
                 .filter { it.slot in EQUIPMENT_SLOTS }
                 .distinctBy(E7Gear::slot)
@@ -342,6 +347,7 @@ class OptimizerPreferenceStore(context: Context) {
         val minimums: Map<String, Int> = emptyMap(),
         val requiredSets: Set<String> = emptySet(),
         val imprintRank: String = ImprintRank.DEFAULT.name,
+        val artifactCode: String? = null,
     ) {
         fun toDomain(): HeroOptimizerPreference = HeroOptimizerPreference(
             metric = runCatching { OptimizerMetric.valueOf(metric) }
@@ -353,6 +359,7 @@ class OptimizerPreferenceStore(context: Context) {
             requiredSets = requiredSets,
             imprintRank = runCatching { ImprintRank.valueOf(imprintRank) }
                 .getOrDefault(ImprintRank.DEFAULT),
+            artifactCode = artifactCode?.takeIf(String::isNotBlank),
         )
     }
 
@@ -361,5 +368,6 @@ class OptimizerPreferenceStore(context: Context) {
         minimums = minimums.mapKeys { it.key.name },
         requiredSets = requiredSets,
         imprintRank = imprintRank.name,
+        artifactCode = artifactCode,
     )
 }

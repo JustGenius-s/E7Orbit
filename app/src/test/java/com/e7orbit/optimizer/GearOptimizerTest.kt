@@ -56,6 +56,21 @@ class GearOptimizerTest {
         // Fribbels WSS only scores substats; these fixtures only have main stats.
         assertEquals(0, items.sumOf(GearOptimizer::gearScore))
         assertTrue(GearOptimizer.hasOnlyCompleteSets(items.groupingBy(E7Gear::setCode).eachCount()))
+
+        // 分量：攻击 = 基础1000 + 固定500 + 百分比65%*1000，套装无攻击套。
+        val attack = stats.breakdowns.getValue(OptimizerStat.ATTACK)
+        assertEquals(65.0, attack.gearPercent, 0.001)
+        assertEquals(500.0, attack.gearFlat, 0.001)
+        assertEquals(0.0, attack.setBonus, 0.001)
+        // 速度 = 基础100 + 固定45 + 速度套 25%（4 件 set_speed）。
+        val speed = stats.breakdowns.getValue(OptimizerStat.SPEED)
+        assertEquals(45.0, speed.gearFlat, 0.001)
+        assertEquals(25.0, speed.setBonus, 0.001)
+        assertTrue(speed.setIsPercent)
+        // 暴击率 = 基础15 + 暴击套 12 点（2 件 set_cri），无装备加成。
+        val crit = stats.breakdowns.getValue(OptimizerStat.CRIT_CHANCE)
+        assertEquals(0.0, crit.gearFlat, 0.001)
+        assertEquals(12.0, crit.setBonus, 0.001)
     }
 
     @Test

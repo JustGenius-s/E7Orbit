@@ -134,6 +134,8 @@ internal fun HeroBuildSortControls(
 internal fun CompactDropdown(
     label: String,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    leadingContent: (@Composable () -> Unit)? = null,
     content: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -141,12 +143,19 @@ internal fun CompactDropdown(
         FilterChip(
             selected = false,
             onClick = { expanded = true },
+            enabled = enabled,
             label = {
-                Text(
-                    label,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    leadingContent?.invoke()
+                    Text(
+                        label,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             },
             trailingIcon = {
                 Icon(

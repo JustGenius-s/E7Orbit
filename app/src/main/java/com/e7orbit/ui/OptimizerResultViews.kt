@@ -31,6 +31,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -179,6 +180,112 @@ internal fun ImprintRankSelector(
                     maxLines = 1,
                 )
             }
+        }
+    }
+}
+
+@Composable
+internal fun ArtifactSelector(
+    artifacts: List<com.e7orbit.data.E7Artifact>,
+    heroRole: String?,
+    selectedCode: String?,
+    enabled: Boolean,
+    onSelected: (String?) -> Unit,
+) {
+    // 神器有职业限制：只列出无职业限制或匹配当前英雄职业的神器。
+    val equippable = artifacts.filter { artifact ->
+        val required = artifact.role
+        required.isNullOrBlank() || heroRole == null || required.equals(heroRole, ignoreCase = true)
+    }
+    val selected = artifacts.firstOrNull { it.code == selectedCode }
+    // 已选神器与当前英雄职业不匹配（例如切换了英雄）时提示。
+    val selectedMismatch = selected != null && equippable.none { it.code == selected.code }
+    Column {
+        Text(
+            "神器",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        CompactDropdown(
+            label = selected?.name ?: "不装备神器",
+            enabled = enabled,
+            leadingContent = {
+                if (selected != null) {
+                    RemoteImage(
+                        url = selected.iconUrl ?: selected.imageUrl,
+                        contentDescription = selected.name,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(MaterialTheme.shapes.small),
+                    )
+                }
+            },
+        ) { dismiss ->
+            DropdownMenuItem(
+                text = { Text("不装备神器") },
+                leadingIcon = {
+                    if (selectedCode == null) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_check),
+                            contentDescription = null,
+                        )
+                    }
+                },
+                onClick = {
+                    dismiss()
+                    onSelected(null)
+                },
+            )
+            equippable.forEach { artifact ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(artifact.name, maxLines = 1)
+                            val stats = listOfNotNull(
+                                artifact.attack?.takeIf { it > 0 }?.let { "攻击 $it" },
+                                artifact.health?.takeIf { it > 0 }?.let { "生命 $it" },
+                            ).joinToString(" · ")
+                            if (stats.isNotEmpty()) {
+                                Text(
+                                    stats,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    },
+                    leadingIcon = {
+                        RemoteImage(
+                            url = artifact.iconUrl ?: artifact.imageUrl,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(MaterialTheme.shapes.small),
+                        )
+                    },
+                    trailingIcon = {
+                        if (artifact.code == selectedCode) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_check),
+                                contentDescription = null,
+                            )
+                        }
+                    },
+                    onClick = {
+                        dismiss()
+                        onSelected(artifact.code)
+                    },
+                )
+            }
+        }
+        if (selectedMismatch && selected != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "「${selected.name}」与当前英雄职业不符，未生效。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }

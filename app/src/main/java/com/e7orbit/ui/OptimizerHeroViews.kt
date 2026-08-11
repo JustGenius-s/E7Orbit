@@ -22,12 +22,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.e7orbit.optimizer.EquippedHeroBuild
 import com.e7orbit.optimizer.OptimizedHeroStats
+import com.e7orbit.optimizer.OptimizerStat
+import com.e7orbit.optimizer.StatBreakdown
 import com.e7orbit.ui.theme.OrbitPolygonShapes
 import com.e7orbit.ui.theme.asShape
 import java.text.NumberFormat
@@ -212,29 +219,39 @@ internal fun CompactStatsGrid(stats: OptimizedHeroStats) {
 @Composable
 internal fun HeroStatsGrid(stats: OptimizedHeroStats) {
     val values = listOf(
-        StatDisplay("Attack", "攻击", formatNumber(stats.attack)),
-        StatDisplay("Health", "生命", formatNumber(stats.health)),
-        StatDisplay("Defense", "防御", formatNumber(stats.defense)),
-        StatDisplay("Speed", "速度", stats.speed.toString()),
-        StatDisplay("CriticalHitChancePercent", "暴击率", "${stats.critChance}%"),
-        StatDisplay("CriticalHitDamagePercent", "暴击伤害", "${stats.critDamage}%"),
-        StatDisplay("EffectivenessPercent", "效果命中", "${stats.effectiveness}%"),
-        StatDisplay("EffectResistancePercent", "效果抗性", "${stats.resistance}%"),
+        StatDisplay("Attack", "攻击", formatNumber(stats.attack),
+            breakdown = stats.breakdowns[OptimizerStat.ATTACK]),
+        StatDisplay("Health", "生命", formatNumber(stats.health),
+            breakdown = stats.breakdowns[OptimizerStat.HEALTH]),
+        StatDisplay("Defense", "防御", formatNumber(stats.defense),
+            breakdown = stats.breakdowns[OptimizerStat.DEFENSE]),
+        StatDisplay("Speed", "速度", stats.speed.toString(),
+            breakdown = stats.breakdowns[OptimizerStat.SPEED]),
+        StatDisplay("CriticalHitChancePercent", "暴击率", "${stats.critChance}%",
+            breakdown = stats.breakdowns[OptimizerStat.CRIT_CHANCE]),
+        StatDisplay("CriticalHitDamagePercent", "暴击伤害", "${stats.critDamage}%",
+            breakdown = stats.breakdowns[OptimizerStat.CRIT_DAMAGE]),
+        StatDisplay("EffectivenessPercent", "效果命中", "${stats.effectiveness}%",
+            breakdown = stats.breakdowns[OptimizerStat.EFFECTIVENESS]),
+        StatDisplay("EffectResistancePercent", "效果抗性", "${stats.resistance}%",
+            breakdown = stats.breakdowns[OptimizerStat.RESISTANCE]),
         StatDisplay(null, "战斗力", formatNumber(stats.combatPower)),
         StatDisplay(null, "有效生命", formatNumber(stats.effectiveHealth)),
         StatDisplay(null, "伤害", formatNumber(stats.damage)),
         StatDisplay(null, "装备分", stats.gearScore.toString()),
     )
-    values.chunked(3).forEachIndexed { rowIndex, row ->
+    values.chunked(2).forEachIndexed { rowIndex, row ->
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             row.forEach { stat ->
                 StatCell(stat, Modifier.weight(1f), compact = false)
             }
+            // 奇数个时补齐占位，保持两列对齐。
+            repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
         }
-        if (rowIndex != values.chunked(3).lastIndex) Spacer(Modifier.height(10.dp))
+        if (rowIndex != values.chunked(2).lastIndex) Spacer(Modifier.height(12.dp))
     }
 }
 
@@ -242,7 +259,41 @@ internal data class StatDisplay(
     val type: String?,
     val label: String,
     val value: String,
+    val breakdown: StatBreakdown? = null,
 )
+
+private val BreakdownPercentColor = Color(0xFFF5A623) // 橙：装备百分比
+private val BreakdownFlatColor = Color(0xFF3D8BFF)    // 蓝：装备固定
+private val BreakdownSetColor = Color(0xFFE53935)     // 红：套装
+
+private fun breakdownText(breakdown: StatBreakdown): AnnotatedString? {
+    data class Part(val text: String, val color: Color)
+    val parts = buildList {
+        if (breakdown.gearPercent != 0.0) {
+            add(Part("+${formatBreakdownValue(breakdown.gearPercent)}%", BreakdownPercentColor))
+        }
+        if (breakdown.gearFlat != 0.0) {
+            add(Part("+${formatBreakdownValue(breakdown.gearFlat)}", BreakdownFlatColor))
+        }
+        if (breakdown.setBonus != 0.0) {
+            val suffix = if (breakdown.setIsPercent) "%" else ""
+            val sign = if (breakdown.setBonus > 0) "+" else ""
+            add(Part("$sign${formatBreakdownValue(breakdown.setBonus)}$suffix", BreakdownSetColor))
+        }
+    }
+    if (parts.isEmpty()) return null
+    return buildAnnotatedString {
+        withStyle(SpanStyle(color = Color(0xFF8A9099))) { append("(") }
+        parts.forEachIndexed { index, part ->
+            if (index > 0) withStyle(SpanStyle(color = Color(0xFF8A9099))) { append(" ") }
+            withStyle(SpanStyle(color = part.color)) { append(part.text) }
+        }
+        withStyle(SpanStyle(color = Color(0xFF8A9099))) { append(")") }
+    }
+}
+
+private fun formatBreakdownValue(value: Double): String =
+    if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
 
 @Composable
 internal fun StatCell(stat: StatDisplay, modifier: Modifier, compact: Boolean) {
@@ -263,12 +314,23 @@ internal fun StatCell(stat: StatDisplay, modifier: Modifier, compact: Boolean) {
                 maxLines = 1,
             )
         }
-        Text(
-            text = stat.value,
-            fontSize = if (compact) 13.sp else 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stat.value,
+                fontSize = if (compact) 13.sp else 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            stat.breakdown?.let { breakdownText(it) }?.let { breakdownText ->
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = breakdownText,
+                    fontSize = if (compact) 11.sp else 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
