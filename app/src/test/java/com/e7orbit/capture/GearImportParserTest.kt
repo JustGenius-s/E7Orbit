@@ -31,6 +31,7 @@ class GearImportParserTest {
               "heroes": [
                 {
                   "id":"hero-uuid-1",
+                  "code":"c1001",
                   "name":"Ruele of Light",
                   "stars":6,
                   "awaken":6,
@@ -55,6 +56,7 @@ class GearImportParserTest {
 
         assertEquals(1, parsed.heroes.size)
         assertEquals(1, parsed.gears.size)
+        assertEquals("c1001", parsed.heroes.single().code)
         assertEquals(parsed.heroes.single().id, parsed.gears.single().equippedHeroId)
         assertEquals(GearSlot.WEAPON, parsed.gears.single().slot)
         assertEquals("set_speed", parsed.gears.single().setCode)
@@ -87,13 +89,14 @@ class GearImportParserTest {
     @Test
     fun parsesScannedHeroIdentity() {
         val unit = Json.parseToJsonElement(
-            """{"id":987654321,"name":"Ruele of Light","g":6,"z":6}""",
+            """{"id":987654321,"code":"c1001","name":"Ruele of Light","g":6,"z":6}""",
         ).jsonObject
 
         val hero = GearImportParser.parseHero(unit)
 
         assertNotNull(hero)
         assertEquals(987654321L, hero?.id)
+        assertEquals("c1001", hero?.code)
         assertEquals("Ruele of Light", hero?.name)
         assertEquals(6, hero?.stars)
         assertEquals(6, hero?.awaken)

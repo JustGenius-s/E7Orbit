@@ -113,6 +113,7 @@ kotlin {
 dependencies {
     implementation(platform(libs.compose.bom))
     implementation(platform(libs.supabase.bom))
+    implementation(libs.supabase.auth)
     implementation(libs.supabase.postgrest)
     implementation(libs.ktor.client.android)
     implementation(libs.compose.ui)

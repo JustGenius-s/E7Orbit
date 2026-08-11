@@ -23,6 +23,7 @@ import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.HeroRtaAnalysis
 import com.e7orbit.data.RtaSeason
 import com.e7orbit.data.RtaTier
+import com.e7orbit.data.WikiAuthLinkType
 import com.e7orbit.model.AutomationStatus
 import com.e7orbit.model.E7_CN_PACKAGE
 import com.e7orbit.model.HuntConfig
@@ -59,6 +60,8 @@ import com.e7orbit.optimizer.OptimizedBuild
 import com.e7orbit.optimizer.OptimizerMetric
 import com.e7orbit.optimizer.OptimizerStat
 import com.e7orbit.service.E7AccessibilityService
+import io.github.jan.supabase.auth.exception.AuthErrorCode
+import io.github.jan.supabase.auth.exception.AuthRestException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -178,7 +181,55 @@ data class DataUiState(
     val fetchedAtEpochMs: Long = 0L,
     val errorMessage: String? = null,
     val rta: HeroRtaUiState = HeroRtaUiState(),
+    val wikiEditor: WikiEditorUiState = WikiEditorUiState(),
 )
+
+data class WikiEditorUiState(
+    val configured: Boolean = false,
+    val email: String? = null,
+    val canEdit: Boolean = false,
+    val authenticating: Boolean = false,
+    val saving: Boolean = false,
+    val message: String? = null,
+    val errorMessage: String? = null,
+    val pendingConfirmationEmail: String? = null,
+    val passwordRecovery: Boolean = false,
+    val saveRevision: Long = 0L,
+    val savedHeroCode: String? = null,
+)
+
+private val WikiEmailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+
+private fun isValidWikiEmail(email: String): Boolean = WikiEmailPattern.matches(email)
+
+private fun validateWikiPassword(
+    password: String,
+    confirmation: String? = null,
+): String? = when {
+    password.length < 8 -> "密码至少需要 8 个字符"
+    confirmation != null && password != confirmation -> "两次输入的密码不一致"
+    else -> null
+}
+
+private fun Throwable.wikiAuthMessage(fallback: String): String {
+    return when ((this as? AuthRestException)?.errorCode) {
+        AuthErrorCode.InvalidCredentials -> "邮箱或密码错误"
+        AuthErrorCode.EmailNotConfirmed -> "邮箱尚未确认，请先打开确认邮件"
+        AuthErrorCode.EmailExists,
+        AuthErrorCode.UserAlreadyExists -> "该邮箱已注册，请直接登录"
+        AuthErrorCode.WeakPassword -> "密码强度不足，请至少使用 8 个字符"
+        AuthErrorCode.SignupDisabled -> "当前 Supabase 项目未开放注册"
+        AuthErrorCode.EmailProviderDisabled,
+        AuthErrorCode.ProviderDisabled -> "当前 Supabase 项目未启用邮箱登录"
+        AuthErrorCode.EmailAddressInvalid -> "邮箱地址格式无效"
+        AuthErrorCode.OverEmailSendRateLimit,
+        AuthErrorCode.OverRequestRateLimit -> "请求过于频繁，请稍后再试"
+        AuthErrorCode.OtpExpired,
+        AuthErrorCode.FlowStateExpired -> "邮件链接已过期，请重新发送"
+        AuthErrorCode.SamePassword -> "新密码不能与当前密码相同"
+        else -> fallback
+    }
+}
 
 data class HeroRtaUiState(
     val loadState: DataLoadState = DataLoadState.IDLE,
@@ -348,6 +399,333 @@ class MainViewModel(
             }
         }
         taskCoordinator.refreshHealth()
+        restoreWikiEditorSession()
+    }
+
+    private fun restoreWikiEditorSession() {
+        val configured = AppGraph.e7DataRepository.wikiEditingConfigured
+        data.value = data.value.copy(
+            wikiEditor = data.value.wikiEditor.copy(configured = configured),
+        )
+        if (!configured) return
+        viewModelScope.launch {
+            runCatching { AppGraph.e7DataRepository.restoreWikiEditor() }
+                .onSuccess { identity ->
+                    data.value = data.value.copy(
+                        wikiEditor = data.value.wikiEditor.copy(
+                            email = identity?.email,
+                            canEdit = identity?.canEdit == true,
+                            authenticating = false,
+                            errorMessage = null,
+                        ),
+                    )
+                }
+                .onFailure { error ->
+                    AppGraph.logger.error("wiki.session_restore_failed", error)
+                    data.value = data.value.copy(
+                        wikiEditor = data.value.wikiEditor.copy(
+                            authenticating = false,
+                            errorMessage = "Wiki 管理会话读取失败：${error.message ?: "未知错误"}",
+                        ),
+                    )
+                }
+        }
+    }
+
+    private fun beginWikiAuthentication(): Boolean {
+        val editor = data.value.wikiEditor
+        if (!editor.configured) {
+            setWikiAuthError("Supabase 尚未配置")
+            return false
+        }
+        if (editor.authenticating || editor.saving) return false
+        data.value = data.value.copy(
+            wikiEditor = editor.copy(
+                authenticating = true,
+                message = null,
+                errorMessage = null,
+            ),
+        )
+        return true
+    }
+
+    private fun setWikiAuthError(message: String) {
+        data.value = data.value.copy(
+            wikiEditor = data.value.wikiEditor.copy(
+                authenticating = false,
+                message = null,
+                errorMessage = message,
+            ),
+        )
+    }
+
+    private fun finishWikiAuthError(error: Throwable, fallback: String) {
+        AppGraph.logger.error("wiki.auth_failed", error)
+        setWikiAuthError(error.wikiAuthMessage(fallback))
+    }
+
+    fun signInWikiEditor(email: String, password: String) {
+        val trimmedEmail = email.trim()
+        when {
+            !isValidWikiEmail(trimmedEmail) -> setWikiAuthError("请输入有效的邮箱地址")
+            password.isEmpty() -> setWikiAuthError("请输入密码")
+            !beginWikiAuthentication() -> Unit
+            else -> viewModelScope.launch {
+                try {
+                    val identity = AppGraph.e7DataRepository.signInWikiEditor(trimmedEmail, password)
+                    data.value = data.value.copy(
+                        wikiEditor = data.value.wikiEditor.copy(
+                            email = identity.email,
+                            canEdit = identity.canEdit,
+                            authenticating = false,
+                            pendingConfirmationEmail = null,
+                            passwordRecovery = false,
+                            message = if (identity.canEdit) {
+                                "已登录并进入 Wiki 管理模式"
+                            } else {
+                                "已登录，当前账号没有 Wiki 编辑权限"
+                            },
+                            errorMessage = null,
+                        ),
+                    )
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    val pendingEmail = (error as? AuthRestException)
+                        ?.errorCode
+                        ?.takeIf { it == AuthErrorCode.EmailNotConfirmed }
+                        ?.let { trimmedEmail }
+                    data.value = data.value.copy(
+                        wikiEditor = data.value.wikiEditor.copy(
+                            authenticating = false,
+                            pendingConfirmationEmail = pendingEmail,
+                            errorMessage = error.wikiAuthMessage("登录失败，请检查邮箱和密码"),
+                        ),
+                    )
+                    AppGraph.logger.error("wiki.sign_in_failed", error)
+                }
+            }
+        }
+    }
+
+    fun registerWikiAccount(email: String, password: String, confirmation: String) {
+        val trimmedEmail = email.trim()
+        when {
+            !isValidWikiEmail(trimmedEmail) -> setWikiAuthError("请输入有效的邮箱地址")
+            validateWikiPassword(password, confirmation) != null ->
+                setWikiAuthError(validateWikiPassword(password, confirmation)!!)
+            !beginWikiAuthentication() -> Unit
+            else -> viewModelScope.launch {
+                try {
+                    val result = AppGraph.e7DataRepository.registerWikiAccount(trimmedEmail, password)
+                    data.value = data.value.copy(
+                        wikiEditor = data.value.wikiEditor.copy(
+                            email = result.identity?.email,
+                            canEdit = result.identity?.canEdit == true,
+                            authenticating = false,
+                            pendingConfirmationEmail = result.email.takeIf {
+                                result.requiresEmailConfirmation
+                            },
+                            message = if (result.requiresEmailConfirmation) {
+                                "注册成功，请打开邮箱中的确认链接"
+                            } else {
+                                "注册成功，已登录账号"
+                            },
+                            errorMessage = null,
+                        ),
+                    )
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    finishWikiAuthError(error, "注册失败，请稍后再试")
+                }
+            }
+        }
+    }
+
+    fun resendWikiConfirmation(email: String) {
+        val trimmedEmail = email.trim()
+        if (!isValidWikiEmail(trimmedEmail)) {
+            setWikiAuthError("请输入有效的邮箱地址")
+            return
+        }
+        if (!beginWikiAuthentication()) return
+        viewModelScope.launch {
+            try {
+                AppGraph.e7DataRepository.resendWikiConfirmation(trimmedEmail)
+                data.value = data.value.copy(
+                    wikiEditor = data.value.wikiEditor.copy(
+                        authenticating = false,
+                        pendingConfirmationEmail = trimmedEmail,
+                        message = "确认邮件已重新发送",
+                        errorMessage = null,
+                    ),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                finishWikiAuthError(error, "确认邮件发送失败，请稍后再试")
+            }
+        }
+    }
+
+    fun sendWikiPasswordReset(email: String) {
+        val trimmedEmail = email.trim()
+        if (!isValidWikiEmail(trimmedEmail)) {
+            setWikiAuthError("请输入有效的邮箱地址")
+            return
+        }
+        if (!beginWikiAuthentication()) return
+        viewModelScope.launch {
+            try {
+                AppGraph.e7DataRepository.sendWikiPasswordReset(trimmedEmail)
+                data.value = data.value.copy(
+                    wikiEditor = data.value.wikiEditor.copy(
+                        authenticating = false,
+                        pendingConfirmationEmail = null,
+                        message = "如果该邮箱已注册，重置密码邮件会很快送达",
+                        errorMessage = null,
+                    ),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                finishWikiAuthError(error, "重置邮件发送失败，请稍后再试")
+            }
+        }
+    }
+
+    fun updateWikiPassword(password: String, confirmation: String) {
+        val validationError = validateWikiPassword(password, confirmation)
+        if (validationError != null) {
+            setWikiAuthError(validationError)
+            return
+        }
+        if (!beginWikiAuthentication()) return
+        viewModelScope.launch {
+            try {
+                val identity = AppGraph.e7DataRepository.updateWikiPassword(password)
+                data.value = data.value.copy(
+                    wikiEditor = data.value.wikiEditor.copy(
+                        email = identity.email,
+                        canEdit = identity.canEdit,
+                        authenticating = false,
+                        passwordRecovery = false,
+                        message = "密码已更新",
+                        errorMessage = null,
+                    ),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                finishWikiAuthError(error, "密码更新失败，请重新打开重置邮件")
+            }
+        }
+    }
+
+    internal fun handleWikiAuthLink(linkType: WikiAuthLinkType) {
+        data.value = data.value.copy(
+            wikiEditor = data.value.wikiEditor.copy(
+                authenticating = true,
+                passwordRecovery = linkType == WikiAuthLinkType.PASSWORD_RECOVERY,
+                message = null,
+                errorMessage = null,
+            ),
+        )
+        viewModelScope.launch {
+            try {
+                val identity = AppGraph.e7DataRepository.restoreWikiEditor()
+                data.value = data.value.copy(
+                    wikiEditor = data.value.wikiEditor.copy(
+                        email = identity?.email,
+                        canEdit = identity?.canEdit == true,
+                        authenticating = false,
+                        pendingConfirmationEmail = null,
+                        message = when (linkType) {
+                            WikiAuthLinkType.SIGNUP_CONFIRMATION -> "邮箱已确认，账号登录成功"
+                            WikiAuthLinkType.PASSWORD_RECOVERY -> null
+                            WikiAuthLinkType.UNKNOWN -> "账号验证成功"
+                        },
+                        errorMessage = null,
+                    ),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                finishWikiAuthError(error, "账号验证失败，请重新打开邮件链接")
+            }
+        }
+    }
+
+    internal fun handleWikiAuthLinkError(error: Throwable) {
+        finishWikiAuthError(error, "邮件链接无效或已过期")
+    }
+
+    fun clearWikiAuthRecovery() {
+        data.value = data.value.copy(
+            wikiEditor = data.value.wikiEditor.copy(passwordRecovery = false),
+        )
+    }
+
+    fun signOutWikiEditor() {
+        if (data.value.wikiEditor.authenticating || data.value.wikiEditor.saving) return
+        data.value = data.value.copy(
+            wikiEditor = data.value.wikiEditor.copy(
+                authenticating = true,
+                message = null,
+                errorMessage = null,
+            ),
+        )
+        viewModelScope.launch {
+            runCatching { AppGraph.e7DataRepository.signOutWikiEditor() }
+                .onFailure { AppGraph.logger.error("wiki.sign_out_failed", it) }
+            data.value = data.value.copy(
+                wikiEditor = WikiEditorUiState(
+                    configured = AppGraph.e7DataRepository.wikiEditingConfigured,
+                    message = "已退出账号",
+                ),
+            )
+        }
+    }
+
+    fun saveWikiHero(hero: E7Hero) {
+        val editor = data.value.wikiEditor
+        if (!editor.canEdit || editor.saving) return
+        data.value = data.value.copy(
+            wikiEditor = editor.copy(
+                saving = true,
+                message = null,
+                errorMessage = null,
+            ),
+        )
+        viewModelScope.launch {
+            try {
+                val snapshot = AppGraph.e7DataRepository.saveWikiHero(hero)
+                applyDataSnapshot(snapshot)
+                val currentEditor = data.value.wikiEditor
+                data.value = data.value.copy(
+                    wikiEditor = currentEditor.copy(
+                        saving = false,
+                        message = "已保存 ${hero.name} 的 Wiki 资料",
+                        errorMessage = null,
+                        saveRevision = currentEditor.saveRevision + 1L,
+                        savedHeroCode = hero.code,
+                    ),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                AppGraph.logger.error("wiki.hero_save_failed", error, "hero" to hero.code)
+                data.value = data.value.copy(
+                    wikiEditor = data.value.wikiEditor.copy(
+                        saving = false,
+                        errorMessage = "保存失败：${error.message ?: "未知错误"}",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun clearWikiEditorFeedback() {
+        data.value = data.value.copy(
+            wikiEditor = data.value.wikiEditor.copy(
+                message = null,
+                errorMessage = null,
+            ),
+        )
     }
 
     fun refreshEnvironment() {
@@ -372,7 +750,7 @@ class MainViewModel(
                 AppGraph.logger.error("data.load_failed", error)
                 data.value = data.value.copy(
                     loadState = DataLoadState.ERROR,
-                    errorMessage = error.message ?: "公开数据暂时不可用",
+                    errorMessage = error.message ?: "公开 Wiki 数据暂时不可用",
                 )
             }
         }

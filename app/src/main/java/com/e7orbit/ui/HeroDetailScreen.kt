@@ -1,5 +1,6 @@
 package com.e7orbit.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.Image
@@ -29,6 +30,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -37,9 +40,12 @@ import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,10 +78,47 @@ internal fun HeroDetailScreen(
     onSeasonChanged: (String) -> Unit,
     onTierChanged: (RtaTier) -> Unit,
     onRetryRta: () -> Unit,
+    wikiEditor: WikiEditorUiState,
+    onOpenWikiAuth: () -> Unit,
+    onSignOutWikiEditor: () -> Unit,
+    onSaveWikiHero: (E7Hero) -> Unit,
+    onClearWikiEditorFeedback: () -> Unit,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
 ) {
     var selectedTab by rememberSaveable(hero?.code) { mutableIntStateOf(0) }
+    var editing by rememberSaveable(hero?.code) { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    BackHandler(enabled = editing) {
+        if (!wikiEditor.saving) editing = false
+    }
+    LaunchedEffect(wikiEditor.canEdit) {
+        if (!wikiEditor.canEdit) editing = false
+    }
+    LaunchedEffect(wikiEditor.saveRevision, wikiEditor.savedHeroCode) {
+        if (wikiEditor.savedHeroCode == hero?.code && wikiEditor.saveRevision > 0L) {
+            editing = false
+        }
+    }
+    LaunchedEffect(wikiEditor.message) {
+        wikiEditor.message?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            onClearWikiEditorFeedback()
+        }
+    }
+
+    if (editing && hero != null) {
+        WikiHeroEditorScreen(
+            hero = hero,
+            state = wikiEditor,
+            modifier = modifier,
+            onCancel = { editing = false },
+            onSave = onSaveWikiHero,
+        )
+        return
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -142,6 +185,12 @@ internal fun HeroDetailScreen(
                 }
             }
         }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp),
+        )
         // Floating back affordance replaces the top app bar on this full-screen detail.
         Surface(
             onClick = onBack,
@@ -161,6 +210,21 @@ internal fun HeroDetailScreen(
                 )
             }
         }
+        WikiHeroManagementMenu(
+            state = wikiEditor,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp),
+            onEdit = {
+                onClearWikiEditorFeedback()
+                editing = true
+            },
+            onSignIn = {
+                onClearWikiEditorFeedback()
+                onOpenWikiAuth()
+            },
+            onSignOut = onSignOutWikiEditor,
+        )
     }
 }
 
@@ -183,7 +247,7 @@ private fun HeroHeader(
             )
             .clip(MaterialTheme.shapes.extraLargeIncreased),
     ) {
-        // 与图鉴卡同一套元素光辉背景 + scrim，保证共享元素过渡连贯。
+        // 与 Wiki 卡片使用同一套元素光辉背景和 scrim，保证共享元素过渡连贯。
         HeroCardBackdrop()
         RemoteImage(
             url = hero.assets.imageUrl ?: hero.assets.thumbnailUrl ?: hero.assets.iconUrl,
@@ -623,12 +687,28 @@ private fun HeroExclusiveEquipment(
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.height(5.dp))
-                Text(
-                    text = "${equipment.statType.exclusiveStatLabel()} ${equipment.statRangeLabel()}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    exclusiveEquipmentStatIconRes(
+                        statType = equipment.statType,
+                        isPercent = equipment.statPercent,
+                    )?.let { iconRes ->
+                        Image(
+                            painter = painterResource(iconRes),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+                    Text(
+                        text = equipment.statRangeLabel(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
                 equipment.description?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
                     Spacer(Modifier.height(5.dp))
                     Text(
@@ -688,18 +768,6 @@ private fun E7HeroExclusiveEquipment.statRangeLabel(): String {
 
 private fun Double.exclusiveStatValue(): String =
     if (this % 1.0 == 0.0) toInt().toString() else toString()
-
-private fun String.exclusiveStatLabel(): String = when (lowercase()) {
-    "attack" -> "攻击力"
-    "health" -> "生命值"
-    "defense" -> "防御力"
-    "speed" -> "速度"
-    "critical_chance" -> "暴击率"
-    "critical_damage" -> "暴击伤害"
-    "effectiveness" -> "效果命中"
-    "effect_resistance" -> "效果抗性"
-    else -> this
-}
 
 @Composable
 private fun HeroSkills(skills: List<E7HeroSkill>) {

@@ -148,16 +148,16 @@ internal fun DataBrowserScreen(
 
             when (data.loadState) {
                 DataLoadState.IDLE -> DataEmptyState(
-                    title = "图鉴尚未加载",
+                    title = "Wiki 尚未加载",
                     detail = "从官方 Stove 和 Fribbels 读取英雄与神器资料。",
-                    action = "加载图鉴",
+                    action = "加载 Wiki",
                     onAction = onLoad,
                 )
 
                 DataLoadState.LOADING -> DataLoadingState()
                 DataLoadState.ERROR -> DataEmptyState(
-                    title = "图鉴读取失败",
-                    detail = data.errorMessage ?: "公开图鉴暂时不可用",
+                    title = "Wiki 读取失败",
+                    detail = data.errorMessage ?: "公开 Wiki 暂时不可用",
                     action = "重新尝试",
                     onAction = onLoad,
                     error = true,
@@ -286,7 +286,7 @@ private fun ColumnScope.CatalogSearchResults(
 ) {
     when {
         data.loadState == DataLoadState.LOADING -> DataLoadingState()
-        data.loadState != DataLoadState.READY -> NoResultsState("图鉴尚未加载")
+        data.loadState != DataLoadState.READY -> NoResultsState("Wiki 尚未加载")
         data.section == DataSection.HEROES -> {
             val results = remember(data.heroes, data.query) {
                 data.heroes.filter { hero ->
@@ -873,7 +873,7 @@ private fun ColumnScope.DataLoadingState() {
         ) {
             LoadingIndicator(modifier = Modifier.size(64.dp))
             Text(
-                "正在读取图鉴",
+                "正在读取 Wiki",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -2,6 +2,18 @@
 
 import process from "node:process";
 
+import {
+  parseGameKeeEffectMetadata,
+  parseGameKeeHeroLocalization,
+} from "./lib/gamekee-catalog.mjs";
+import {
+  canonicalStatusEffectCode,
+  mentionedStatusEffectCodes,
+  statusEffectDefinition,
+  statusEffectIconUrl as chineseStatusEffectIconUrl,
+  statusEffectKind,
+} from "./lib/status-effects-zh.mjs";
+
 const supabaseUrl = (process.env.SUPABASE_URL || "https://biayslzufpixsyuitjus.supabase.co").replace(/\/$/, "");
 const serviceRoleKey = (
   process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || ""
@@ -29,6 +41,7 @@ const gameKeeHeroPids = (process.env.GAMEKEE_HERO_PIDS || "243,244,246,68344,683
   .filter(Number.isInteger);
 const gameKeeLanguage = process.env.GAMEKEE_LANGUAGE || "zh-cn";
 const gameKeeAlias = process.env.GAMEKEE_ALIAS || "epic7";
+const gameKeeEffectsContentId = process.env.GAMEKEE_EFFECTS_CONTENT_ID || "52652";
 const heroArtMaxSize = Number(process.env.HERO_ART_MAX_SIZE || 1024);
 const heroArtQuality = Number(process.env.HERO_ART_QUALITY || 84);
 const language = process.env.EPICSEVENDB_LANGUAGE || "cn";
@@ -36,6 +49,7 @@ const skillSource = process.env.EPICSEVENDB_SOURCE || "auto";
 const batchSize = Number(process.env.SYNC_BATCH_SIZE || 50);
 const concurrency = Number(process.env.SYNC_CONCURRENCY || 6);
 const skillsOnly = process.argv.includes("--skills-only");
+const heroNamesOnly = process.argv.includes("--hero-names-only");
 const growthOnly = process.argv.includes("--growth-only");
 const heroArtOnly = process.argv.includes("--hero-art-only");
 const forceHeroArt = process.argv.includes("--force-hero-art");
@@ -55,6 +69,9 @@ const requestedHeroCodes = new Set(
 let epicSevenDbApiAvailable = skillSource === "auto" || skillSource === "api";
 let apiFailureLogged = false;
 let epicSevenDbWebSlugsPromise = null;
+let officialHeroesPromise = null;
+let gameKeeHeroIndexPromise = null;
+const gameKeeDetailPromises = new Map();
 
 if (!serviceRoleKey && !exportDir) {
   console.error("Missing SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY.");
@@ -200,13 +217,14 @@ function heroStats(hero) {
   };
 }
 
-function toHeroRow(hero, syncedAt, detail = null) {
+function toHeroRow(hero, syncedAt, detail = null, localization = null) {
   const code = heroCode(hero);
-  if (!code || !hero.name) return null;
+  const name = textOrNull(localization?.name) || textOrNull(hero.name);
+  if (!code || !name) return null;
   const sourceImage = textOrNull(hero.assets?.image);
   return {
     code,
-    name: hero.name,
+    name,
     rarity: integerOrNull(hero.rarity),
     attribute: textOrNull(hero.attribute) || "",
     role: textOrNull(hero.role) || "",
@@ -214,9 +232,11 @@ function toHeroRow(hero, syncedAt, detail = null) {
     icon_url: textOrNull(hero.assets?.icon),
     thumbnail_url: textOrNull(hero.assets?.thumbnail),
     image_url: sourceImage && !isPlaceholderImageUrl(sourceImage) ? sourceImage : null,
-    description: textOrNull(detail?.description),
+    description: textOrNull(localization?.description) || textOrNull(detail?.description),
     ...heroStats(hero),
-    source: "fribbels + epic7db",
+    source: localization?.gameKee
+      ? "stove-zh-cn + gamekee + fribbels"
+      : "stove-zh-cn + fribbels + epic7db",
     source_updated_at: syncedAt,
     updated_at: syncedAt,
   };
@@ -253,51 +273,121 @@ function normalizedHeroName(value) {
     .replace(/[^a-z0-9]+/g, "");
 }
 
-// GameKee uses a handful of nicknames and older Chinese translations. These are
-// explicit aliases for the canonical Stove hero codes, not a fuzzy matcher.
+// GameKee mixes older translations, nicknames and regional spellings. Keep the
+// mapping explicit so a similar-looking Chinese name can never select the wrong hero.
 const GAMEKEE_HERO_NAME_ALIASES = {
+  c0002: ["玫勒赛德丝"],
   c1015: ["巴尔&塞尚"],
+  c1021: ["玎果"],
+  c1024: ["伊赛莉亚"],
   c1040: ["赛利拉", "南瓜妹（赛丽拉）"],
   c1044: ["谬伊"],
   c1054: ["玲儿"],
   c1062: ["安杰莉卡"],
   c1091: ["艾雷娜"],
+  c1102: ["萝安纳"],
+  c1114: ["蕾姆"],
+  c1116: ["爱密莉雅"],
   c1119: ["扎哈克"],
   c1122: ["蜜莉姆"],
+  c1130: ["洁克·欧"],
+  c1134: ["爱德华·艾力克"],
+  c1170: ["裴妮"],
+  c2002: ["地狱的塞西莉亚"],
+  c2015: ["贤者巴尔&赛尚"],
   c2018: ["求道者"],
   c2019: ["末日罗菲"],
   c2022: ["戴斯蒂娜"],
   c2028: ["暗喵"],
   c2035: ["光狗（大将法济斯）"],
   c2038: ["实验体赛泽"],
+  c2054: ["新月舞姬玲儿"],
   c2062: ["暴戾的安洁莉卡"],
   c2072: ["操作员赛柯兰特"],
   c2082: ["最强模特儿璐璐卡"],
+  c2091: ["星辰的神谕艾蕾娜"],
+  c2099: ["策画者莱伊卡"],
+  c2102: ["镇魂萝安纳"],
+  c2113: ["苍穹伊利娜芙"],
+  c2124: ["组长亚路嘉"],
+  c2148: ["波涛的裂痕艾碧拉"],
+  c2185: ["里安娜&路西艾拉"],
   c3026: ["永恒不变的黛莉娅"],
   c3084: ["奇奇拉特v.2", "暗熊"],
+  c3104: ["苏妮娅"],
+  c3121: ["玫拉尼"],
+  c3124: ["卡密拉"],
+  c3131: ["扎怒塔"],
+  c3151: ["珍妮"],
+  c3163: ["蕾婭"],
+  c3164: ["郎巴特"],
+  c4034: ["先锋队长里科黎思"],
+  c4042: ["守护天使蒙茉郎西"],
+  c4071: ["传道者卡麦罗兹"],
   c5024: ["南国的伊赛莉亚"],
+  c5069: ["黎明的序曲鲁特比"],
   c6008: ["坏猫猫亚敏"],
+  c6037: ["月兔多米尼尔"],
 };
 
-async function gameKeeHeroIndex() {
-  const official = await fetchJson(officialHeroUrl);
-  const officialHeroes = official["zh-CN"] || [];
-  const codeByName = new Map(officialHeroes.map((hero) => [hero.name, hero.code]));
-  for (const [code, aliases] of Object.entries(GAMEKEE_HERO_NAME_ALIASES)) {
-    aliases.forEach((name) => codeByName.set(name, code));
-  }
+function normalizedChineseHeroName(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s·‧・&＆()（）._-]+/g, "");
+}
 
-  const entriesByCode = new Map();
-  for (const pid of gameKeeHeroPids) {
-    const response = await fetchGameKeeJson(
-      `${gameKeeUrl}/v1/entry/treesByPid?pid=${encodeURIComponent(pid)}`,
-    );
-    for (const entry of response.data || []) {
-      const code = codeByName.get(entry.name);
-      if (code && entry.content_id) entriesByCode.set(code, entry);
-    }
+function addHeroNameMapping(map, name, code) {
+  if (!name || !code) return;
+  map.set(name, code);
+  map.set(normalizedChineseHeroName(name), code);
+}
+
+function gameKeeHeroCode(codeByName, name) {
+  return codeByName.get(name) || codeByName.get(normalizedChineseHeroName(name)) || null;
+}
+
+async function officialHeroes() {
+  if (!officialHeroesPromise) {
+    officialHeroesPromise = fetchJson(officialHeroUrl).then((payload) => payload["zh-CN"] || []);
   }
-  return { codeByName, entriesByCode };
+  return officialHeroesPromise;
+}
+
+async function gameKeeHeroIndex() {
+  if (!gameKeeHeroIndexPromise) {
+    gameKeeHeroIndexPromise = (async () => {
+      const codeByName = new Map();
+      for (const hero of await officialHeroes()) addHeroNameMapping(codeByName, hero.name, hero.code);
+      for (const [code, aliases] of Object.entries(GAMEKEE_HERO_NAME_ALIASES)) {
+        aliases.forEach((name) => addHeroNameMapping(codeByName, name, code));
+      }
+
+      const entriesByCode = new Map();
+      for (const pid of gameKeeHeroPids) {
+        const response = await fetchGameKeeJson(
+          `${gameKeeUrl}/v1/entry/treesByPid?pid=${encodeURIComponent(pid)}`,
+        );
+        for (const entry of response.data || []) {
+          const code = gameKeeHeroCode(codeByName, entry.name);
+          if (code && entry.content_id) entriesByCode.set(code, entry);
+        }
+      }
+      return { codeByName, entriesByCode };
+    })();
+  }
+  return gameKeeHeroIndexPromise;
+}
+
+async function gameKeeDetail(contentId) {
+  const key = String(contentId || "");
+  if (!key) return null;
+  if (!gameKeeDetailPromises.has(key)) {
+    gameKeeDetailPromises.set(key, fetchGameKeeJson(
+      `${gameKeeUrl}/v1/content/detail/${encodeURIComponent(key)}`,
+    ).then((response) => response.data || null));
+  }
+  return gameKeeDetailPromises.get(key);
 }
 
 function gameKeeImageUrl(value) {
@@ -441,7 +531,7 @@ function parseGameKeeExclusiveIndex(html, codeByName, syncedAt) {
   for (const table of html.match(/<table\b[\s\S]*?<\/table>/gi) || []) {
     const cells = gameKeeTableCells(table);
     const heroName = cells[2]?.text;
-    const heroCode = codeByName.get(heroName);
+    const heroCode = gameKeeHeroCode(codeByName, heroName);
     if (!heroCode) continue;
     const stat = gameKeeStat(cells[4]?.text);
     const enhancements = [];
@@ -539,9 +629,9 @@ async function assignGameKeeSkillSlots(row, skillIcons) {
 
 async function syncExclusiveEquipment(heroes, syncedAt) {
   const { codeByName, entriesByCode } = await gameKeeHeroIndex();
-  const aggregate = await fetchGameKeeJson(`${gameKeeUrl}/v1/content/detail/16446`);
+  const aggregate = await gameKeeDetail("16446");
   const aggregateRowsByHeroCode = new Map(
-    parseGameKeeExclusiveIndex(aggregate.data?.content || "", codeByName, syncedAt)
+    parseGameKeeExclusiveIndex(aggregate?.content || "", codeByName, syncedAt)
       .map((row) => [row.hero_code, row]),
   );
   const rowsByHeroCode = new Map();
@@ -561,10 +651,8 @@ async function syncExclusiveEquipment(heroes, syncedAt) {
       const entry = entriesByCode.get(code);
       if (!entry?.content_id) return null;
       try {
-        const detail = await fetchGameKeeJson(
-          `${gameKeeUrl}/v1/content/detail/${encodeURIComponent(entry.content_id)}`,
-        );
-        const html = detail.data?.content || "";
+        const detail = await gameKeeDetail(entry.content_id);
+        const html = detail?.content || "";
         const row = parseGameKeeHeroExclusive(html, code, syncedAt) ||
           aggregateRowsByHeroCode.get(code);
         if (!row || !(await assignGameKeeSkillSlots(row, gameKeeHeroSkillIcons(html)))) {
@@ -587,6 +675,81 @@ async function syncExclusiveEquipment(heroes, syncedAt) {
     .filter((row) => heroes.some((hero) => hero.code === row.hero_code));
   console.log(`Resolved ${rows.length} partial GameKee exclusive-equipment records`);
   return rows;
+}
+
+async function fetchChineseHeroLocalizations(heroes) {
+  const officialByCode = new Map((await officialHeroes()).map((hero) => [hero.code, hero]));
+  const localizations = new Map(heroes.map(({ code }) => [code, {
+    name: officialByCode.get(code)?.name || null,
+    description: null,
+    skills: [],
+    gameKee: false,
+  }]));
+
+  let entriesByCode;
+  try {
+    ({ entriesByCode } = await gameKeeHeroIndex());
+  } catch (error) {
+    console.warn(`GameKee Chinese hero index unavailable (${error.message}); using official names only.`);
+    return localizations;
+  }
+
+  let completed = 0;
+  let skillHeroes = 0;
+  const missingEntries = [];
+  const missingSkills = [];
+  for (let start = 0; start < heroes.length; start += concurrency) {
+    const group = heroes.slice(start, start + concurrency);
+    const results = await Promise.all(group.map(async ({ code }) => {
+      const entry = entriesByCode.get(code);
+      if (!entry?.content_id) {
+        missingEntries.push(code);
+        return null;
+      }
+      try {
+        const parsed = parseGameKeeHeroLocalization(await gameKeeDetail(entry.content_id));
+        if (!parsed.skills.length) missingSkills.push(code);
+        else skillHeroes += 1;
+        return [code, parsed];
+      } catch (error) {
+        console.warn(`GameKee Chinese localization unavailable for ${code}: ${error.message}`);
+        return null;
+      } finally {
+        completed += 1;
+        if (completed % 25 === 0 || completed === heroes.length - missingEntries.length) {
+          console.log(`Fetched GameKee Chinese data ${completed}/${heroes.length}`);
+        }
+      }
+    }));
+    for (const result of results.filter(Boolean)) {
+      const [code, parsed] = result;
+      localizations.set(code, {
+        ...parsed,
+        name: officialByCode.get(code)?.name || parsed.name,
+        gameKee: Boolean(parsed.skills.length || parsed.description),
+      });
+    }
+  }
+
+  console.log(`Resolved Chinese skills for ${skillHeroes}/${heroes.length} heroes`);
+  if (missingEntries.length) {
+    console.warn(`GameKee hero page missing for ${missingEntries.length} codes: ${missingEntries.join(", ")}`);
+  }
+  if (missingSkills.length) {
+    console.warn(`GameKee skill table missing for ${missingSkills.length} codes: ${missingSkills.join(", ")}`);
+  }
+  return localizations;
+}
+
+async function fetchChineseEffectMetadata() {
+  try {
+    const rows = parseGameKeeEffectMetadata(await gameKeeDetail(gameKeeEffectsContentId));
+    console.log(`Loaded ${rows.length} Chinese status-effect definitions from GameKee`);
+    return new Map(rows.map((row) => [row.label, row]));
+  } catch (error) {
+    console.warn(`GameKee status-effect catalog unavailable (${error.message}); using built-in Chinese text.`);
+    return new Map();
+  }
 }
 
 async function epicSevenDbWebSlugs() {
@@ -745,13 +908,17 @@ function parseWebSkillBlock(hero, block, index, syncedAt) {
   const seenEffects = new Set();
   const effects = [];
   for (const match of effectMatches) {
-    const slug = match[1].toLowerCase();
-    if (seenEffects.has(slug)) continue;
-    seenEffects.add(slug);
+    const imageSlug = match[1].toLowerCase();
+    const code = canonicalStatusEffectCode(imageSlug);
+    if (seenEffects.has(code)) continue;
+    seenEffects.add(code);
+    const definition = statusEffectDefinition(code);
     effects.push({
-      slug,
-      label: htmlDecode(match[2]).trim() || slug.replace(/-/g, " "),
-      icon_url: `https://epic7db.com/images/status_effects/${slug}.png`,
+      slug: code,
+      label: definition?.label || "未知效果",
+      description: definition?.description || null,
+      icon_url: chineseStatusEffectIconUrl(code) ||
+        `https://epic7db.com/images/status_effects/${imageSlug}.png`,
     });
   }
   const isPassive = /^\s*passive\s*$/i.test(cooldownText);
@@ -772,8 +939,8 @@ function parseWebSkillBlock(hero, block, index, syncedAt) {
     can_enhance: block.includes("skill-upgrades"),
     values: [],
     enhancements,
-    buffs: effects,
-    debuffs: [],
+    buffs: effects.filter((effect) => statusEffectKind(effect.slug) === "buff"),
+    debuffs: effects.filter((effect) => statusEffectKind(effect.slug) === "debuff"),
     source: "epic7db-web",
     source_updated_at: syncedAt,
     updated_at: syncedAt,
@@ -930,160 +1097,21 @@ function damageModifier(skill, name) {
   return skill.damageModifiers?.find((modifier) => modifier.name === name)?.value ?? null;
 }
 
-// Map gamedatabase buff/debuff codes (efct_*/stic_*) to epic7db status-effect page slugs.
-const EFFECT_SLUG_MAP = {
-  stic_att_up: "increase-attack",
-  stic_att_up2: "increase-attack-greater",
-  stic_def_up: "increase-defense",
-  stic_speed_up: "increase-speed",
-  stic_cri_up: "increase-critical-hit-chance",
-  stic_cridmg_up: "increase-critical-hit-chance",
-  stic_eff_up: "effectiveness",
-  stic_dodge_up: "evasion",
-  stic_counter: "counterattack",
-  stic_invincible: "invincible",
-  stic_immortality: "immortal",
-  stic_hide: "stealth",
-  stic_protect: "barrier",
-  stic_reflect: "reflect",
-  stic_endure: "effectiveness",
-  stic_bless: "revive",
-  stic_heal: "healing",
-  stic_debuf_impossible: "debuff-immunity",
-  stic_rcv_dmg_dn: "barrier",
-  stic_share_dmg: "escort",
-  stic_vampire: "healing",
-  efct_ex_turn: "extra-turn",
-  efct_cr_up: "increase-combat-readiness",
-  efct_cd_dn: "decrease-skill-cooldown",
-  efct_cleanse: "cleanse",
-  efct_dual_att: "dual-attack",
-  efct_buf_extn: "buff-extension",
-  efct_steal: "dispel",
-  efct_rnd_buf: "increase-attack",
-  stic_att_dn: "decrease-attack",
-  stic_def_dn: "decrease-defense",
-  stic_speed_dn: "decrease-speed",
-  stic_cri_dn: "decrease-hit-chance",
-  stic_eff_dn: "decrease-hit-chance",
-  stic_blind: "decrease-hit-chance",
-  stic_stun: "stun",
-  stic_sleep: "sleep",
-  stic_silence: "silence",
-  stic_provoke: "provoke",
-  stic_curse: "curse",
-  stic_blaze: "burn",
-  stic_blood: "bleed",
-  stic_bomb: "bomb",
-  stic_dot: "poison",
-  stic_heal_impossible: "unhealable",
-  stic_buf_impossible: "cannot-buff",
-  stic_madness: "possession",
-  stic_nail: "stigma",
-  stic_sign: "stigma",
-  efct_cr_dn: "decrease-combat-readiness",
-  efct_cd_up: "increase-skill-cooldown",
-  efct_dispel: "dispel",
-  efct_extinct: "stun",
-  efct_detonate: "detonate",
-  efct_def_pen: "penetrate",
-  efct_rnd_debuf: "decrease-attack",
-  efct_soul_dn: "decrease-combat-readiness",
-  efct_debuf_extn: "debuff-extension",
-  stic_debuf_ext: "debuff-extension",
-  efct_trans: "transfer",
-  efct_buf_reduction: "dispel",
-  stic_haki: null,
-  stic_lovely: "loveliness",
-  stic_showtime: "idol",
-  stic_sk_null: "skill-nullifier",
-};
-
-const EFFECT_META = {
-  efct_buf_extn: { label: "Buff Extension", description: "Extend buff duration by X turns" },
-  efct_buf_reduction: { label: "efct_buf_reduction", description: "" },
-  efct_cd_dn: { label: "Cooldown Reduction", description: "Decreases the cooldown of a skill" },
-  efct_cd_up: { label: "Cooldown Increase", description: "Increases the cooldown of a skill" },
-  efct_cleanse: { label: "Cleanse", description: "Removes debuff from target" },
-  efct_cr_dn: { label: "Decrease Combat Readiness", description: "Increases the time to the next turn to move" },
-  efct_cr_up: { label: "Increase Combat Readiness", description: "Decreases the time to the next turn to move" },
-  efct_debuf_extn: { label: "Debuff Extension", description: "Extend debuff duration by X turns" },
-  efct_def_pen: { label: "Penetrate Defense", description: "Ignores the target's Defense when inflicting damage" },
-  efct_detonate: { label: "Detonate", description: "Inflicts damage by activating any DoT effects inflicted on the enemy. Damage is proportional to the number of turns and number of effects" },
-  efct_dispel: { label: "Dispel", description: "Dispel buff from the target" },
-  efct_dual_att: { label: "Dual Attack", description: "Chance to attack an enemy after an ally has attacked them, unless immobilized" },
-  efct_ex_turn: { label: "Extra Turn", description: "Target will be granted an extra turn" },
-  efct_extinct: { label: "Extinction", description: "The target cannot revive when killed by this skill" },
-  efct_rnd_buf: { label: "Random Buff", description: "Target gets random buff. Can receive Increase Attack, Increase Speed, Increase Critical Hit Chance, Increase Critical Hit Damage, Increase Defense, Barrier, Increase Evasion and Debuff Immunity" },
-  efct_rnd_debuf: { label: "Random Debuff", description: "Target gets random debuff. Can receive Decrease Attack, Decrease Speed, Decrease Critical Hit Chance, Decrease Critical Hit Damage, Decrease Defense, Barrier, Decrease Evasion and Debuff Immunity" },
-  efct_soul_dn: { label: "efct_soul_dn", description: "" },
-  efct_steal: { label: "Buff Stealing", description: "Steals buff from enemy" },
-  efct_trans: { label: "Transfer", description: "Transfers debuffs from the caster to the target" },
-  stic_att_dn: { label: "Decrease Attack", description: "Decreases target's Attack" },
-  stic_att_up: { label: "Increase Attack", description: "Increases target's Attack" },
-  stic_att_up2: { label: "stic_att_up2", description: "" },
-  stic_blaze: { label: "Burn", description: "Target receives huge damage proportional to the caster's Attack at the beginning of the turn" },
-  stic_bless: { label: "Revive", description: "If the target dies, they are revived with some Health" },
-  stic_blind: { label: "Blind", description: "Decreases target's hit chance" },
-  stic_blood: { label: "Bleed", description: "Deals damage over time, based off caster's attack" },
-  stic_bomb: { label: "Bomb", description: "At the end of the debuff duration, the target receives damage proportional to the caster's Attack and becomes unable to move for 1 turn. Debuff duration cannot be extended or decreased" },
-  stic_buf_impossible: { label: "Anti Buff", description: "The target is unable to be buffed" },
-  stic_counter: { label: "Counter Attack", description: "Caster will counter attack upon getting hit" },
-  stic_cri_res_up: { label: "Increase Critical Hit Resistance", description: "Decreases the chance of target suffering a Critical Hit by 50%" },
-  stic_cri_up: { label: "Increase Critical Hit Chance", description: "Increases target's Critical Hit chance by 50%" },
-  stic_cridmg_up: { label: "Increase Critical Hit Damage", description: "Increases the target's Critical Hit Damage by 50%" },
-  stic_curse: { label: "stic_curse", description: "" },
-  stic_debuf_impossible: { label: "Debuff Immunity", description: "The target is unable to be debuffed" },
-  stic_def_dn: { label: "Decrease Defense", description: "Decreases target's Defense" },
-  stic_def_up: { label: "Increase Defense", description: "Increases target's Defense" },
-  stic_dodge_up: { label: "Evasion", description: "Increase evasion chance of the target" },
-  stic_dot: { label: "Poison", description: "Targets suffers damage proportional to max Health at the beginning of the turn" },
-  stic_endure: { label: "Skill Nullifier", description: "Negates damage from skills" },
-  stic_haki: { label: "Vigor", description: "Increases Attack and Defense. This buff cannot be dispelled" },
-  stic_heal: { label: "Continuous Heal", description: "Recovers the target's Health poroportional to max Health at the beginning of the turn" },
-  stic_heal_impossible: { label: "Unhealable", description: "Makes the target unable to be healed" },
-  stic_hide: { label: "Stealth", description: "If there are allies, caster will not be target of attack. Damage received from AoE attacks is decreased. Effect is removed when attacked" },
-  stic_immortality: { label: "Immortality", description: "The target cannot be killed during a certain number of turns" },
-  stic_invincible: { label: "Invincible", description: "Neutralizes all of the damage when attacked" },
-  stic_lovely: { label: "Loveliness", description: "'Server me already, meow!' Cannot be dispelled" },
-  stic_madness: { label: "Enrage", description: "Increases Attack and Speed by 10%" },
-  stic_nail: { label: "Magic Nail", description: "When attacked, damage is received proportional to max Health, with a fixed chance to be stunned for 1 turn" },
-  stic_protect: { label: "Barrier", description: "Neutralizes some of the damage taken when attacked" },
-  stic_provoke: { label: "Provoke", description: "On the target's turn, they will attack the enemy who provoked them with basic skill" },
-  stic_rcv_dmg_dn: { label: "stic_rcv_dmg_dn", description: "" },
-  stic_reflect: { label: "Reflect", description: "Reflects some of the damage taken when attacked. Reflected damage can't be higher than caster's max Health" },
-  stic_share_dmg: { label: "stic_share_dmg", description: "" },
-  stic_showtime: { label: "Idol", description: "'My live show won\u2019t stop until my turn is over!' Cannot be dispelled" },
-  stic_sign: { label: "Target", description: "Increases damage taken by the target, while decreasing Evasion Chance" },
-  stic_silence: { label: "Silence", description: "The target cannot use skills that require cooldowns" },
-  stic_sk_null: { label: "stic_sk_null", description: "" },
-  stic_sleep: { label: "Magic Nail", description: "The target becomes unable to act. Received damage counts as a Critical Hit and effect is dispelled if attacked" },
-  stic_speed_dn: { label: "Decrease Speed", description: "Decreases target's Speed" },
-  stic_speed_up: { label: "Increase Speed", description: "Increases target's Speed" },
-  stic_stun: { label: "Stun", description: "The target becomes unable to act" },
-  stic_vampire: { label: "Vampiric Touch", description: "Recovers 10% of the attacker\u2019s Health when attacking the target" },
-};
-
-function statusEffectIconUrl(slug) {
-  return slug ? `https://epic7db.com/images/status_effects/${slug}.png` : null;
-}
-
 function toStatusEffects(codes) {
   if (!Array.isArray(codes)) return [];
   const seen = new Set();
   const result = [];
-  for (const code of codes) {
-    if (typeof code !== "string" || !code) continue;
-    const slug = EFFECT_SLUG_MAP[code] ?? null;
-    const meta = EFFECT_META[code] || {};
-    const key = slug || code;
-    if (seen.has(key)) continue;
-    seen.add(key);
+  for (const value of codes) {
+    if (typeof value !== "string" || !value) continue;
+    const code = canonicalStatusEffectCode(value);
+    if (seen.has(code)) continue;
+    seen.add(code);
+    const definition = statusEffectDefinition(code);
     result.push({
-      slug: slug || code,
-      label: meta.label || code.replace(/^(efct_|stic_)/, "").replace(/_/g, " "),
-      description: meta.description || null,
-      icon_url: slug ? `https://epic7db.com/images/status_effects/${slug}.png` : null,
+      slug: code,
+      label: definition?.label || "未知效果",
+      description: definition?.description || null,
+      icon_url: chineseStatusEffectIconUrl(code),
     });
   }
   return result;
@@ -1290,27 +1318,112 @@ function skillRows(heroes, details, syncedAt) {
   return rows;
 }
 
-function normalizeSkillEffects(rows, syncedAt) {
+function effectFromCode(code) {
+  const definition = statusEffectDefinition(code);
+  return {
+    slug: code,
+    label: definition?.label || "未知效果",
+    description: definition?.description || null,
+    icon_url: chineseStatusEffectIconUrl(code),
+  };
+}
+
+function mergeEffects(existing, additions) {
+  const bySlug = new Map((existing || []).map((effect) => [
+    canonicalStatusEffectCode(effect?.slug),
+    effect,
+  ]));
+  for (const effect of additions) bySlug.set(effect.slug, effect);
+  bySlug.delete("");
+  return [...bySlug.values()];
+}
+
+function localizeSkillRows(rows, heroes, localizations, syncedAt) {
+  const byKey = new Map(rows.map((row) => [`${row.hero_code}:${row.slot}`, row]));
+  for (const { code } of heroes) {
+    const localization = localizations.get(code);
+    for (const localized of localization?.skills || []) {
+      const key = `${code}:${localized.slot}`;
+      const existing = byKey.get(key) || {
+        hero_code: code,
+        slot: localized.slot,
+        icon_url: null,
+        attack_rate: null,
+        pow: null,
+        values: [],
+        buffs: [],
+        debuffs: [],
+      };
+      const mentionedEffects = mentionedStatusEffectCodes(
+        `${localized.description || ""} ${localized.soulDescription || ""}`,
+      ).map(effectFromCode);
+      const mentionedBuffs = mentionedEffects.filter((effect) => statusEffectKind(effect.slug) === "buff");
+      const mentionedDebuffs = mentionedEffects.filter((effect) => statusEffectKind(effect.slug) === "debuff");
+      byKey.set(key, {
+        ...existing,
+        name: localized.name,
+        description: localized.description,
+        enhanced_description: null,
+        cooldown: localized.cooldown ?? existing.cooldown ?? null,
+        soul_gain: localized.soulGain ?? existing.soul_gain ?? null,
+        soul_requirement: localized.soulRequirement ?? existing.soul_requirement ?? null,
+        soul_description: localized.soulDescription,
+        is_passive: localized.isPassive ?? existing.is_passive ?? false,
+        can_enhance: localized.enhancements.length > 0 || Boolean(existing.can_enhance),
+        enhancements: localized.enhancements,
+        buffs: mergeEffects(existing.buffs, mentionedBuffs),
+        debuffs: mergeEffects(existing.debuffs, mentionedDebuffs),
+        source: `${existing.source || "gamekee"} + gamekee-zh-cn`,
+        source_updated_at: syncedAt,
+        updated_at: syncedAt,
+      });
+    }
+  }
+  return [...byKey.values()].sort((left, right) =>
+    left.hero_code.localeCompare(right.hero_code) || left.slot - right.slot,
+  );
+}
+
+function localizedStatusEffect(effect, gameKeeEffects) {
+  const slug = canonicalStatusEffectCode(effect?.slug);
+  const definition = statusEffectDefinition(slug);
+  const gameKee = definition?.gameKeeLabels
+    .map((label) => gameKeeEffects.get(label))
+    .find(Boolean);
+  const existingLabel = textOrNull(effect?.label);
+  return {
+    slug,
+    label: definition?.label || (existingLabel && /[\u3400-\u9fff]/u.test(existingLabel)
+      ? existingLabel
+      : "未知效果"),
+    description: gameKee?.description || definition?.description || null,
+    icon_url: gameKee?.iconUrl || chineseStatusEffectIconUrl(slug) || effect?.icon_url || null,
+  };
+}
+
+function normalizeSkillEffects(rows, syncedAt, gameKeeEffects = new Map()) {
   const effectBySlug = new Map();
   const skills = rows.map((row) => {
     const { buffs = [], debuffs = [], ...skill } = row;
-    for (const effect of [...buffs, ...debuffs]) {
-      if (!effect?.slug) continue;
+    const localizedBuffs = buffs.map((effect) => localizedStatusEffect(effect, gameKeeEffects));
+    const localizedDebuffs = debuffs.map((effect) => localizedStatusEffect(effect, gameKeeEffects));
+    for (const effect of [...localizedBuffs, ...localizedDebuffs]) {
+      if (!effect.slug) continue;
       const existing = effectBySlug.get(effect.slug);
       effectBySlug.set(effect.slug, {
         slug: effect.slug,
-        label: effect.label || existing?.label || effect.slug,
+        label: effect.label || existing?.label || "未知效果",
         description: effect.description || existing?.description || null,
         icon_url: effect.icon_url || existing?.icon_url || null,
-        source: "gamedatabase",
+        source: "gamekee-zh-cn + gamedatabase",
         source_updated_at: syncedAt,
         updated_at: syncedAt,
       });
     }
     return {
       ...skill,
-      buff_slugs: [...new Set(buffs.map((effect) => effect?.slug).filter(Boolean))],
-      debuff_slugs: [...new Set(debuffs.map((effect) => effect?.slug).filter(Boolean))],
+      buff_slugs: [...new Set(localizedBuffs.map((effect) => effect.slug).filter(Boolean))],
+      debuff_slugs: [...new Set(localizedDebuffs.map((effect) => effect.slug).filter(Boolean))],
     };
   });
   return {
@@ -1835,6 +1948,42 @@ async function loadRestRows(table) {
   return rows;
 }
 
+function rowKey(row, columns) {
+  return columns.map((column) => String(row[column] ?? "")).join(":");
+}
+
+let wikiHeroOverrideCodesPromise = null;
+async function wikiHeroOverrideCodes() {
+  if (!wikiHeroOverrideCodesPromise) {
+    wikiHeroOverrideCodesPromise = loadRestRows("wiki_hero_overrides")
+      .then((rows) => new Set(rows.map((row) => row.hero_code).filter(Boolean)))
+      .catch((error) => {
+        console.warn(`Wiki override markers unavailable (${error.message}); preserving source=wiki rows only.`);
+        return new Set();
+      });
+  }
+  return wikiHeroOverrideCodesPromise;
+}
+
+async function excludeWikiOverrides(table, rows, keyColumns) {
+  if (!rows.length) return rows;
+  const incomingKeys = new Set(rows.map((row) => rowKey(row, keyColumns)));
+  const sourceWikiKeys = new Set(
+    (await loadRestRows(table))
+      .filter((row) => row.source === "wiki")
+      .map((row) => rowKey(row, keyColumns))
+      .filter((key) => incomingKeys.has(key)),
+  );
+  const overrideCodes = await wikiHeroOverrideCodes();
+  const filtered = rows.filter((row) => {
+    const heroCode = table === "hero_catalog" ? row.code : row.hero_code;
+    return !overrideCodes.has(heroCode) && !sourceWikiKeys.has(rowKey(row, keyColumns));
+  });
+  const preserved = rows.length - filtered.length;
+  if (preserved) console.log(`Preserved ${preserved} Wiki override(s) in ${table}`);
+  return filtered;
+}
+
 async function writeGrowthExport(directory, growthRows) {
   const { mkdir, writeFile } = await import("node:fs/promises");
   await mkdir(directory, { recursive: true });
@@ -1857,10 +2006,13 @@ async function upsertGrowthRows(growthRows) {
   );
   const currentHeroes = await loadRestRows("hero_catalog");
   const currentSkills = await loadRestRows("hero_skills");
+  const overrideCodes = await wikiHeroOverrideCodes();
   const heroes = currentHeroes
     .filter((hero) => heroGrowth.has(hero.code))
     .map((hero) => ({ ...hero, ...heroGrowth.get(hero.code) }));
   const skills = currentSkills
+    .filter((skill) => !overrideCodes.has(skill.hero_code))
+    .filter((skill) => skill.source !== "wiki")
     .filter((skill) => skillGrowth.has(`${skill.hero_code}:${skill.slot}`))
     .map((skill) => ({ ...skill, ...skillGrowth.get(`${skill.hero_code}:${skill.slot}`) }));
   if (heroes.length) await upsert("hero_catalog", heroes, "code");
@@ -1932,7 +2084,12 @@ if (exclusiveOnly) {
   if (exportDir) {
     await writeExport(exportDir, [], [], [], [], exclusiveEquipment);
   } else if (exclusiveEquipment.length) {
-    await upsert("hero_exclusive_equipment", exclusiveEquipment, "code");
+    const rows = await excludeWikiOverrides(
+      "hero_exclusive_equipment",
+      exclusiveEquipment,
+      ["code"],
+    );
+    await upsert("hero_exclusive_equipment", rows, "code");
   }
   console.log(
     `Exclusive-equipment sync completed: ${exclusiveEquipment.length} partial records`,
@@ -1953,7 +2110,10 @@ if (heroArtOnly) {
     await writeHeroArtExport(exportDir, exportRows);
   } else {
     const requestedCodes = new Set(codes);
+    const overrideCodes = await wikiHeroOverrideCodes();
     const rows = (await loadRestRows("hero_catalog"))
+      .filter((hero) => !overrideCodes.has(hero.code))
+      .filter((hero) => hero.source !== "wiki")
       .filter((hero) => requestedCodes.has(hero.code));
     assignHeroArtSources(rows, sources);
     await mirrorHeroArtworkRows(rows);
@@ -1964,6 +2124,24 @@ if (heroArtOnly) {
     await upsert("hero_catalog", rows, "code");
   }
   console.log(`Hero artwork sync completed: ${sources.size}/${fribbelsHeroes.length} sources`);
+  process.exit(0);
+}
+
+if (heroNamesOnly) {
+  console.log(`Starting hero-name-only sync for ${fribbelsHeroes.length} heroes...`);
+  const officialByCode = new Map((await officialHeroes()).map((hero) => [hero.code, hero]));
+  const currentHeroes = await loadRestRows("hero_catalog");
+  const localizedRows = currentHeroes
+    .filter((hero) => fribbelsHeroes.some(({ code }) => code === hero.code))
+    .map((hero) => ({
+      ...hero,
+      name: officialByCode.get(hero.code)?.name || hero.name,
+      source_updated_at: syncedAt,
+      updated_at: syncedAt,
+    }));
+  const rows = await excludeWikiOverrides("hero_catalog", localizedRows, ["code"]);
+  if (rows.length) await upsert("hero_catalog", rows, "code");
+  console.log(`Hero name sync completed: ${rows.length}/${fribbelsHeroes.length} heroes`);
   process.exit(0);
 }
 
@@ -1979,21 +2157,36 @@ if (growthOnly) {
   process.exit(0);
 }
 
-const details = await fetchDetails(fribbelsHeroes);
+const [details, chineseLocalizations, chineseEffects] = await Promise.all([
+  fetchDetails(fribbelsHeroes),
+  fetchChineseHeroLocalizations(fribbelsHeroes),
+  fetchChineseEffectMetadata(),
+]);
 if ([...details.values()].every((detail) => !detail?.skills?.length)) {
   const webDetails = await fetchWebSkills(fribbelsHeroes, syncedAt);
   webDetails.forEach((detail, code) => details.set(code, detail));
 }
 const heroRows = fribbelsHeroes
-  .map(({ hero, code }) => toHeroRow({ ...hero, code }, syncedAt, details.get(code)))
+  .map(({ hero, code }) => toHeroRow(
+    { ...hero, code },
+    syncedAt,
+    details.get(code),
+    chineseLocalizations.get(code),
+  ))
   .filter(Boolean);
 if (!skillsOnly) {
   const sources = await heroArtSources(heroRows.map((hero) => hero.code));
   assignHeroArtSources(heroRows, sources);
 }
 const heroes = skillsOnly ? heroRows : await mirrorHeroImages(heroRows);
-const rawSkills = await mirrorSkillImages(skillRows(fribbelsHeroes, details, syncedAt));
-const { skills, effects } = normalizeSkillEffects(rawSkills, syncedAt);
+const localizedSkillRows = localizeSkillRows(
+  skillRows(fribbelsHeroes, details, syncedAt),
+  fribbelsHeroes,
+  chineseLocalizations,
+  syncedAt,
+);
+const rawSkills = await mirrorSkillImages(localizedSkillRows);
+const { skills, effects } = normalizeSkillEffects(rawSkills, syncedAt, chineseEffects);
 let exclusiveEquipment = [];
 if (!skipExclusive && !skillsOnly) {
   try {
@@ -2009,11 +2202,17 @@ if (exportDir) {
 }
 if (!exportDir && !skillsOnly) {
   console.log(`Preparing ${heroes.length} hero rows`);
-  await upsert("hero_catalog", heroes, "code");
+  const rows = await excludeWikiOverrides("hero_catalog", heroes, ["code"]);
+  await upsert("hero_catalog", rows, "code");
 }
 
 if (exclusiveEquipment.length && !exportDir) {
-  await upsert("hero_exclusive_equipment", exclusiveEquipment, "code");
+  const rows = await excludeWikiOverrides(
+    "hero_exclusive_equipment",
+    exclusiveEquipment,
+    ["code"],
+  );
+  await upsert("hero_exclusive_equipment", rows, "code");
 }
 
 if (skills.length && !exportDir) {
@@ -2022,7 +2221,12 @@ if (skills.length && !exportDir) {
   if (effects.length) {
     await upsert("status_effect_catalog", effects, "slug");
   }
-  await upsert("hero_skills", skills, "hero_code,slot");
+  const rows = await excludeWikiOverrides(
+    "hero_skills",
+    skills,
+    ["hero_code", "slot"],
+  );
+  await upsert("hero_skills", rows, "hero_code,slot");
 } else if (!skills.length) {
   console.warn("No skill rows were returned; hero_catalog was not changed in skills-only mode.");
 }

@@ -53,9 +53,9 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 
 装备抓包只保存游戏 `3333/5222` 端口的连接载荷。停止抓包后，载荷会提交至 Fribbels 公开客户端使用的远端解析接口；解析需要联网，结果会保存在应用私有目录。抓包使用本地 VPN 转发，不能与其他 Android VPN 同时运行。
 
-## 英雄数据与 Supabase 维护
+## Wiki 数据与 Supabase 维护
 
-英雄图鉴支持可选的 Supabase 维护源。应用通过 HTTPS PostgREST 只读以下公开表：
+英雄 Wiki 支持可选的 Supabase 维护源。普通用户通过 HTTPS PostgREST 只读以下公开表；应用支持邮箱注册、邮箱确认、登录、退出、重发确认邮件和密码找回。登录账号默认只有读取权限，加入 `wiki_editors` 名单的 Supabase Auth 用户才可以在英雄详情页修改并保存英雄基本信息、专属装备和技能：
 
 - `hero_catalog`：英雄身份、头像/透明立绘、六星满觉基础属性、觉醒节点/材料和阵型/自身刻印
 - `hero_skills`：技能图标、名称、描述、冷却、倍率、强化效果，以及按展示顺序保存的 `buff_slugs`/`debuff_slugs`
@@ -63,13 +63,28 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 - `hero_exclusive_equipment`：按英雄唯一关联的专属装备名称、图标、属性区间和三个强化选项
 - `artifact_catalog`：神器立绘、满级属性、基础/满级效果描述和背景故事
 
+### 中文同步规则
+
+英雄名称按英雄编码覆盖为官方 STOVE `zh-CN` 数据；技能名称、描述、灵魂燃烧和强化文本优先来自 GameKee 简体中文英雄页。技能倍率、基础属性和 GameKee 缺失字段仍保留 Fribbels/Epic7DB 数据。GameKee 页面缺失或解析失败时不会删除原有技能，而是保留现有回退文本。
+
+增益和减益统一写入 `status_effect_catalog`。技能数组使用原始 `efct_*`/`stic_*` 代码作为唯一 slug；GameKee 才有的机制使用独立的 `gamekee_*` slug，不再用图片文件名合并不同效果。名称和说明来自 GameKee 状态效果词条（默认 `content/52652`）并以本地中文定义作回退。没有可靠对应图标的新增机制保留 `icon_url = null`，避免显示错误图标。
+
 没有配置 Supabase，或云端请求失败时，应用仍使用本地缓存以及官方 Stove/Fribbels 公开数据。云端数据成功读取后会缓存 7 天，适合社区源短暂失效时继续使用。
 
 初始化数据库：
 
 1. 在 Supabase SQL Editor 执行 [`supabase/schema.sql`](supabase/schema.sql)。已有包含 `hero_skills.buffs/debuffs` JSONB 列的数据库，应改为执行 [`supabase/migrate-skill-effects.sql`](supabase/migrate-skill-effects.sql)：该脚本会创建效果目录，直接从现有 JSONB 秒级回填技能的 slug 数组，然后删除旧 JSONB 列，无需重新抓取全部英雄技能。
-2. 在本机 `local.properties` 添加 `supabase.url` 和 `supabase.anonKey`。这两个值会进入本地构建的 `BuildConfig`，不会提交到 Git。
-3. 使用 Supabase secret key（`sb_secret_...`，推荐）或旧版 service-role JWT 执行同步脚本。密钥只放在当前终端环境变量中，不要写入工程文件：
+2. 在 Supabase SQL Editor 执行 [`supabase/add-wiki-editing.sql`](supabase/add-wiki-editing.sql)，为现有表增加管理员写入策略和事务保存函数。
+3. 在 Supabase Authentication 的 Providers 中启用 Email，并在 URL Configuration 的 Redirect URLs 中加入 `e7orbit://auth`。应用内可以直接注册普通账号；要授予 Wiki 编辑权限，再将指定用户加入 Wiki 管理员名单：
+
+```sql
+insert into public.wiki_editors (user_id)
+select id from auth.users where email = 'admin@example.com'
+on conflict (user_id) do nothing;
+```
+
+4. 在本机 `local.properties` 添加 `supabase.url` 和 `supabase.anonKey`。这两个值会进入本地构建的 `BuildConfig`，不会提交到 Git。用户密码和会话由 Supabase Auth 处理，不写入工程配置。
+5. 使用 Supabase secret key（`sb_secret_...`，推荐）或旧版 service-role JWT 执行同步脚本。密钥只放在当前终端环境变量中，不要写入工程文件：
 
 ```powershell
 npm install
@@ -77,9 +92,9 @@ $env:SUPABASE_SECRET_KEY = "你的 sb_secret_ key"
 node .\tools\sync-hero-catalog.mjs
 ```
 
-`npm install` 会安装用于按比例缩小透明角色缩略图的 `sharp`。脚本会依次同步英雄、技能、专属装备和神器。专属装备采用唯一的 `hero_exclusive_equipment` 结构，以 GameKee 英雄详情页为主、专属装备总表为回退；只有名称、图标、属性区间和三个强化选项均完整的记录才会写入。只同步专属装备可用 `--exclusive-only`，全量同步时跳过它可用 `--skip-exclusive`。神器数据来自 Fribbels（属性/职业）与 Epic7DB 网页（立绘、基础/满级效果描述、背景故事），以神器编码幂等 upsert 到 `artifact_catalog`。只同步神器可用 `--artifacts-only`，跳过神器可用 `--skip-artifacts`。觉醒、刻印与技能觉醒文本使用 `--growth-only` 单独同步；该模式只抓英雄网页并合并成长字段，不处理图片、神器和 RTA。可用环境变量覆盖默认值：`FRIBBELS_ARTIFACT_URL`、`EPICSEVENDB_ARTIFACTS_WEB`、`GAMEKEE_URL`、`GAMEKEE_HERO_PIDS`。
+`npm install` 会安装用于按比例缩小透明角色缩略图的 `sharp`。脚本会依次同步英雄、技能、专属装备和神器。专属装备采用唯一的 `hero_exclusive_equipment` 结构，以 GameKee 英雄详情页为主、专属装备总表为回退；只有名称、图标、属性区间和三个强化选项均完整的记录才会写入。只同步专属装备可用 `--exclusive-only`，全量同步时跳过它可用 `--skip-exclusive`。神器数据来自 Fribbels（属性/职业）与 Epic7DB 网页（立绘、基础/满级效果描述、背景故事），以神器编码幂等 upsert 到 `artifact_catalog`。只同步神器可用 `--artifacts-only`，跳过神器可用 `--skip-artifacts`。觉醒、刻印与技能觉醒文本使用 `--growth-only` 单独同步；该模式只抓英雄网页并合并成长字段，不处理图片、神器和 RTA。可用环境变量覆盖默认值：`FRIBBELS_ARTIFACT_URL`、`EPICSEVENDB_ARTIFACTS_WEB`、`GAMEKEE_URL`、`GAMEKEE_LANGUAGE`、`GAMEKEE_ALIAS`、`GAMEKEE_HERO_PIDS`、`GAMEKEE_EFFECTS_CONTENT_ID`。
 
-脚本从 Fribbels 获取基础属性，从 EpicSevenDB 获取技能资料，并从 E7 Codex 获取按首页规则维护的英雄素材：优先使用已经紧裁好的 `thumb.png`，缺失时回退到 `pose.png` 或同单位的 face 图。素材只做等比缩小到最长边 1024px，编码为透明 WebP 并保存到 `Epic7/heroes/{code}/art.webp`，不做裁切或拉伸；Fribbels 的 `question_circle.png` 占位图不会写入目录。默认会先尝试技能 API；如果 API 因网络或 TLS 不可用，会回退到 Epic7DB 网页。可用环境变量覆盖默认值：`SUPABASE_URL`、`SUPABASE_SECRET_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`FRIBBELS_HERO_URL`、`EPICSEVENDB_API_URL`、`EPICSEVENDB_WEB`、`EPICSEVENDB_SOURCE`、`EPICSEVENDB_LANGUAGE`、`E7_CODEX_URL`、`E7_CODEX_UNITS_URL`、`HERO_ART_MAX_SIZE`、`HERO_ART_QUALITY`、`SYNC_BATCH_SIZE`、`SYNC_CONCURRENCY`。
+脚本从 Fribbels 获取基础属性和倍率，从官方 STOVE 获取简体中文英雄名，从 GameKee 获取简体中文技能覆盖，并从 E7 Codex 获取按首页规则维护的英雄素材：优先使用已经紧裁好的 `thumb.png`，缺失时回退到 `pose.png` 或同单位的 face 图。素材只做等比缩小到最长边 1024px，编码为透明 WebP 并保存到 `Epic7/heroes/{code}/art.webp`，不做裁切或拉伸；Fribbels 的 `question_circle.png` 占位图不会写入目录。技能数值仍优先使用 Epic7DB API/GitHub Raw，API 因网络或 TLS 不可用时回退到 Epic7DB 网页。可用环境变量覆盖默认值：`SUPABASE_URL`、`SUPABASE_SECRET_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`FRIBBELS_HERO_URL`、`EPICSEVENDB_API_URL`、`EPICSEVENDB_WEB`、`EPICSEVENDB_SOURCE`、`EPICSEVENDB_LANGUAGE`、`OFFICIAL_HERO_URL`、`GAMEKEE_URL`、`GAMEKEE_LANGUAGE`、`GAMEKEE_ALIAS`、`GAMEKEE_HERO_PIDS`、`GAMEKEE_EFFECTS_CONTENT_ID`、`E7_CODEX_URL`、`E7_CODEX_UNITS_URL`、`HERO_ART_MAX_SIZE`、`HERO_ART_QUALITY`、`SYNC_BATCH_SIZE`、`SYNC_CONCURRENCY`。
 
 已有数据库先在 Supabase SQL Editor 执行 [`supabase/add-hero-growth-data.sql`](supabase/add-hero-growth-data.sql)，然后快速同步成长资料：
 
@@ -119,6 +134,24 @@ node .\tools\sync-hero-catalog.mjs --artifacts-only
 Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
 ```
 
+需要先检查中文覆盖而不连接 Supabase 时，可导出本地 JSON：
+
+```powershell
+node .\tools\sync-hero-catalog.mjs --skills-only --skip-image-mirror --export-dir=tmp/catalog-zh
+```
+
+导出目录包含 `hero_catalog.json`、`hero_skills.json` 和 `status_effect_catalog.json`，可重点检查 `source`、技能 `slot` 以及效果 slug。已有数据库从旧图片 slug 迁移到原始效果代码后，旧的 `status_effect_catalog` 孤立行可以在确认没有人工 Wiki 技能引用后再清理；不要直接删除仍被 `buff_slugs`/`debuff_slugs` 引用的行。
+
+如果之前使用 `--skills-only` 只更新了技能和状态效果，英雄中文名不会写入 `hero_catalog`。只补同步官方 STOVE 简体中文英雄名时，使用：
+
+```bash
+export SUPABASE_SECRET_KEY='你的 sb_secret_ 密钥'
+node ./tools/sync-hero-catalog.mjs --hero-names-only
+unset SUPABASE_SECRET_KEY
+```
+
+该模式只更新已有 `hero_catalog` 行的 `name` 和同步时间，保留图片、属性及 Wiki 覆盖内容。
+
 如果只需要补齐已经成功上传的技能表，使用网页源并跳过英雄表：
 
 ```powershell
@@ -135,7 +168,7 @@ Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
 node .\tools\sync-hero-catalog.mjs --skills-only --hero-codes=c1015,c1161,c2015
 ```
 
-不要把 PostgreSQL 连接密码、`sb_secret_...` key 或 service-role key 放进 APK、`local.properties.example`、源码或提交记录。你可以直接在 Supabase Table Editor 维护内容，下一次应用刷新会读取修改后的公开数据。
+不要把 PostgreSQL 连接密码、`sb_secret_...` key 或 service-role key 放进 APK、`local.properties.example`、源码或提交记录。应用只携带可公开的 anon key；数据库通过 Auth 用户、`wiki_editors` 名单和 RLS 校验每次写入。保存事务会写入 `wiki_hero_overrides` 标记，同步脚本据此保留人工新增、修改或删除的英雄资料；也可以继续在 Supabase Table Editor 维护内容，下一次应用刷新会读取修改后的公开数据。
 
 ## 诊断日志
 

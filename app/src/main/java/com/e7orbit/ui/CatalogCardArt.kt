@@ -14,7 +14,7 @@ import androidx.compose.ui.res.painterResource
 import com.e7orbit.R
 
 /**
- * 图鉴卡片的「元素光辉」视觉层。
+ * Wiki 卡片的「元素光辉」视觉层。
  *
  * 设计：E7 是火焰红 / 寒气蓝 / 自然绿 / 光明金 / 黑暗紫的强元素游戏，
  * 卡片不再用纯黑 scrim，而是让英雄属性色从立绘背后「晕」出来——

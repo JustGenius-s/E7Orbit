@@ -59,6 +59,7 @@ internal object GearImportParser {
         return E7ScannedHero(
             id = unit.stableId("id") ?: return null,
             name = name,
+            code = unit.string("code")?.trim()?.takeIf(String::isNotEmpty),
             stars = unit.int("g") ?: unit.int("stars"),
             awaken = unit.int("z") ?: unit.int("awaken"),
         )

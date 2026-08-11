@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 data class E7ScannedHero(
     val id: Long,
     val name: String,
+    val code: String? = null,
     val stars: Int? = null,
     val awaken: Int? = null,
 )

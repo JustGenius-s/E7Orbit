@@ -171,7 +171,7 @@ data class EquippedHeroBuild(
     val stats: OptimizedHeroStats?,
 ) {
     val displayName: String
-        get() = scannedHero?.name ?: hero?.name ?: "英雄 #$instanceId"
+        get() = hero?.name ?: scannedHero?.name ?: "英雄 #$instanceId"
 
     val isComplete: Boolean
         get() = items.map(E7Gear::slot).toSet().containsAll(EQUIPMENT_SLOTS)
@@ -188,7 +188,7 @@ fun buildEquippedHeroes(
     artifactCodes: Map<Long, String> = emptyMap(),
 ): List<EquippedHeroBuild> {
     val scannedById = scannedHeroes.associateBy(E7ScannedHero::id)
-    val catalogByName = catalog.associateBy { normalizeHeroName(it.name) }
+    val catalogByCode = catalog.associateBy { normalizeHeroCode(it.code) }
     val artifactsByCode = artifacts.associateBy(com.e7orbit.data.E7Artifact::code)
     val equippedByHero = gears.asSequence()
         .filter { it.equippedHeroId != null }
@@ -200,7 +200,9 @@ fun buildEquippedHeroes(
     return instanceIds
         .map { instanceId ->
             val scanned = scannedById[instanceId]
-            val hero = scanned?.name?.let { catalogByName[normalizeHeroName(it)] }
+            val hero = scanned?.code
+                ?.let(::normalizeHeroCode)
+                ?.let(catalogByCode::get)
                 ?.withSelfImprint(imprintRanks[instanceId] ?: ImprintRank.DEFAULT)
                 ?.withArtifact(artifactCodes[instanceId]?.let(artifactsByCode::get))
             val items = equippedByHero[instanceId].orEmpty()
@@ -225,9 +227,8 @@ fun buildEquippedHeroes(
 }
 
 fun matchScannedHero(scanned: E7ScannedHero?, catalog: List<E7Hero>): E7Hero? {
-    if (scanned == null) return null
-    val normalized = normalizeHeroName(scanned.name)
-    return catalog.firstOrNull { normalizeHeroName(it.name) == normalized }
+    val code = scanned?.code?.let(::normalizeHeroCode) ?: return null
+    return catalog.firstOrNull { normalizeHeroCode(it.code) == code }
 }
 
 private fun summarizeEquippedSets(items: List<E7Gear>): List<EquippedSetSummary> =
@@ -248,8 +249,7 @@ private fun summarizeEquippedSets(items: List<E7Gear>): List<EquippedSetSummary>
                 .thenBy { it.name },
         )
 
-private fun normalizeHeroName(value: String): String =
-    value.lowercase().filter(Char::isLetterOrDigit)
+private fun normalizeHeroCode(value: String): String = value.trim().lowercase()
 
 private val EQUIPMENT_SLOTS = listOf(
     GearSlot.WEAPON,

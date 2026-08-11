@@ -1,6 +1,7 @@
 package com.e7orbit.data
 
 import android.content.Context
+import android.content.Intent
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -49,7 +50,13 @@ class E7DataRepository(
         explicitNulls = false
     }
 
-    suspend fun load(forceRefresh: Boolean = false): E7DataSnapshot = withContext(Dispatchers.IO) {
+    suspend fun load(forceRefresh: Boolean = false): E7DataSnapshot =
+        loadSnapshot(forceRefresh = forceRefresh)
+
+    private suspend fun loadSnapshot(
+        forceRefresh: Boolean,
+        maintainedCatalogOverride: SupabaseCatalog? = null,
+    ): E7DataSnapshot = withContext(Dispatchers.IO) {
         cacheDir.mkdirs()
         val official = runCatching {
             readSource(
@@ -72,11 +79,11 @@ class E7DataRepository(
                 forceRefresh = forceRefresh,
             )
         }.getOrNull()
-        val maintainedCatalog = runCatching {
+        val maintainedCatalog = maintainedCatalogOverride ?: runCatching {
             supabaseCatalog.load(forceRefresh)
         }.getOrNull()
         if (official == null && fribbelsHeroes == null && maintainedCatalog == null) {
-            throw IllegalStateException("英雄图鉴数据源暂时不可用")
+            throw IllegalStateException("英雄 Wiki 数据源暂时不可用")
         }
 
         val heroes = mergeHeroes(official, fribbelsHeroes, maintainedCatalog)
@@ -84,6 +91,55 @@ class E7DataRepository(
             heroes = heroes,
             artifacts = mergeArtifacts(fribbelsArtifacts, maintainedCatalog),
             fetchedAtEpochMs = System.currentTimeMillis(),
+        )
+    }
+
+    internal val wikiEditingConfigured: Boolean
+        get() = supabaseCatalog.wikiEditingConfigured
+
+    internal suspend fun restoreWikiEditor(): WikiEditorIdentity? = withContext(Dispatchers.IO) {
+        supabaseCatalog.restoreWikiEditor()
+    }
+
+    internal suspend fun signInWikiEditor(email: String, password: String): WikiEditorIdentity =
+        withContext(Dispatchers.IO) {
+            supabaseCatalog.signInWikiEditor(email, password)
+        }
+
+    internal suspend fun registerWikiAccount(
+        email: String,
+        password: String,
+    ): WikiRegistrationResult = withContext(Dispatchers.IO) {
+        supabaseCatalog.registerWikiAccount(email, password)
+    }
+
+    internal suspend fun resendWikiConfirmation(email: String) = withContext(Dispatchers.IO) {
+        supabaseCatalog.resendWikiConfirmation(email)
+    }
+
+    internal suspend fun sendWikiPasswordReset(email: String) = withContext(Dispatchers.IO) {
+        supabaseCatalog.sendWikiPasswordReset(email)
+    }
+
+    internal suspend fun updateWikiPassword(password: String): WikiEditorIdentity =
+        withContext(Dispatchers.IO) {
+            supabaseCatalog.updateWikiPassword(password)
+        }
+
+    internal suspend fun consumeWikiAuthDeepLink(intent: Intent): WikiAuthLinkType? =
+        withContext(Dispatchers.IO) {
+            supabaseCatalog.consumeWikiAuthDeepLink(intent)
+        }
+
+    internal suspend fun signOutWikiEditor() = withContext(Dispatchers.IO) {
+        supabaseCatalog.signOutWikiEditor()
+    }
+
+    internal suspend fun saveWikiHero(hero: E7Hero): E7DataSnapshot = withContext(Dispatchers.IO) {
+        val maintainedCatalog = supabaseCatalog.saveWikiHero(hero)
+        loadSnapshot(
+            forceRefresh = true,
+            maintainedCatalogOverride = maintainedCatalog,
         )
     }
 

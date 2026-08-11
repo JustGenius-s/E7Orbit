@@ -214,8 +214,24 @@ class GearImportRepository(
     private fun loadSavedState(): GearImportState = runCatching {
         if (!storeFile.exists()) return@runCatching GearImportState()
         val saved = json.decodeFromString<SavedGearImport>(storeFile.readText(Charsets.UTF_8))
-        val heroes = saved.heroes.ifEmpty(::restoreHeroesFromExport)
-        if (saved.heroes.isEmpty() && heroes.isNotEmpty()) {
+        val restoredHeroes = if (
+            saved.heroes.isEmpty() || saved.heroes.any { it.code.isNullOrBlank() }
+        ) {
+            restoreHeroesFromExport()
+        } else {
+            emptyList()
+        }
+        val restoredById = restoredHeroes.associateBy(E7ScannedHero::id)
+        val heroes = saved.heroes
+            .map { hero ->
+                if (hero.code.isNullOrBlank()) {
+                    hero.copy(code = restoredById[hero.id]?.code)
+                } else {
+                    hero
+                }
+            }
+            .ifEmpty { restoredHeroes }
+        if (heroes != saved.heroes) {
             writeAtomically(
                 storeFile,
                 json.encodeToString(
@@ -225,7 +241,11 @@ class GearImportRepository(
                     ),
                 ),
             )
-            logger.info("gear.import_heroes_migrated", "heroes" to heroes.size)
+            logger.info(
+                "gear.import_heroes_migrated",
+                "heroes" to heroes.size,
+                "codes" to heroes.count { !it.code.isNullOrBlank() },
+            )
         }
         GearImportState(
             phase = GearImportPhase.READY,

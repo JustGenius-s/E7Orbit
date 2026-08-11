@@ -5,7 +5,7 @@ import com.e7orbit.data.HeroRtaAnalysis
 import java.util.Locale
 
 /**
- * 图鉴/英雄详情共用的标签与数值格式化工具。
+ * Wiki/英雄详情共用的标签与数值格式化工具。
  * （原 DataScreens.kt 尾部私有扩展，抽出让各屏幕文件复用。）
  */
 

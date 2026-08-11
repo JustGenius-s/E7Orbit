@@ -1,6 +1,7 @@
 package com.e7orbit.ui
 
 import android.app.Activity
+import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.widget.Toast
@@ -232,6 +233,15 @@ class MainActivity : ComponentActivity() {
                     onRtaSeasonChanged = viewModel::setRtaSeason,
                     onRtaTierChanged = viewModel::setRtaTier,
                     onRetryHeroRta = viewModel::retryHeroRta,
+                    onSignInWikiEditor = viewModel::signInWikiEditor,
+                    onRegisterWikiAccount = viewModel::registerWikiAccount,
+                    onResendWikiConfirmation = viewModel::resendWikiConfirmation,
+                    onSendWikiPasswordReset = viewModel::sendWikiPasswordReset,
+                    onUpdateWikiPassword = viewModel::updateWikiPassword,
+                    onSignOutWikiEditor = viewModel::signOutWikiEditor,
+                    onSaveWikiHero = viewModel::saveWikiHero,
+                    onClearWikiEditorFeedback = viewModel::clearWikiEditorFeedback,
+                    onClearWikiAuthRecovery = viewModel::clearWikiAuthRecovery,
                     onOptimizerContentChanged = viewModel::setOptimizerContent,
                     onHeroBuildSortChanged = viewModel::setHeroBuildSort,
                     onGearSetToggled = viewModel::toggleGearSetFilter,
@@ -258,6 +268,26 @@ class MainActivity : ComponentActivity() {
                     onStopOptimizer = viewModel::stopOptimizer,
                     onApplyOptimizerResult = viewModel::applyOptimizerResult,
                 )
+            }
+        }
+        handleWikiAuthIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleWikiAuthIntent(intent)
+    }
+
+    private fun handleWikiAuthIntent(intent: Intent) {
+        lifecycleScope.launch {
+            try {
+                AppGraph.e7DataRepository.consumeWikiAuthDeepLink(intent)?.let(
+                    viewModel::handleWikiAuthLink,
+                )
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                viewModel.handleWikiAuthLinkError(error)
             }
         }
     }
@@ -324,7 +354,7 @@ internal enum class OrbitDestination(
 ) {
     HOME("首页", R.drawable.ic_nav_home),
     TASKS("任务", R.drawable.ic_nav_tasks),
-    DATA("图鉴", R.drawable.ic_nav_data),
+    DATA("Wiki", R.drawable.ic_nav_data),
     OPTIMIZER("配装", R.drawable.ic_nav_optimizer),
     SETTINGS("设置", R.drawable.ic_nav_settings),
 }
@@ -336,6 +366,7 @@ private enum class DetailRoute(val title: String) {
     HUNT("讨伐"),
     HERO("英雄详情"),
     ARTIFACT("神器详情"),
+    ACCOUNT("Wiki 账号"),
     OPTIMIZER_HERO("英雄配装"),
 }
 
@@ -380,6 +411,15 @@ private fun OrbitApp(
     onRtaSeasonChanged: (String) -> Unit,
     onRtaTierChanged: (com.e7orbit.data.RtaTier) -> Unit,
     onRetryHeroRta: () -> Unit,
+    onSignInWikiEditor: (String, String) -> Unit,
+    onRegisterWikiAccount: (String, String, String) -> Unit,
+    onResendWikiConfirmation: (String) -> Unit,
+    onSendWikiPasswordReset: (String) -> Unit,
+    onUpdateWikiPassword: (String, String) -> Unit,
+    onSignOutWikiEditor: () -> Unit,
+    onSaveWikiHero: (com.e7orbit.data.E7Hero) -> Unit,
+    onClearWikiEditorFeedback: () -> Unit,
+    onClearWikiAuthRecovery: () -> Unit,
     onOptimizerContentChanged: (com.e7orbit.optimizer.OptimizerContent) -> Unit,
     onHeroBuildSortChanged: (com.e7orbit.optimizer.HeroBuildSort) -> Unit,
     onGearSetToggled: (String) -> Unit,
@@ -415,7 +455,10 @@ private fun OrbitApp(
     val fastSpatialSpec = MaterialTheme.motionScheme.fastSpatialSpec<IntOffset>()
     val effectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
     val topAppBarScrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    BackHandler(enabled = detail != null) { detailName = null }
+    BackHandler(
+        enabled = detail != null &&
+            !(detail == DetailRoute.ACCOUNT && state.data.wikiEditor.authenticating),
+    ) { detailName = null }
     LaunchedEffect(destination) {
         if (destination == OrbitDestination.DATA || destination == OrbitDestination.OPTIMIZER) {
             onLoadData(false)
@@ -423,6 +466,11 @@ private fun OrbitApp(
     }
     LaunchedEffect(route) {
         topAppBarScrollBehavior.state.contentOffset = 0f
+    }
+    LaunchedEffect(state.data.wikiEditor.passwordRecovery) {
+        if (state.data.wikiEditor.passwordRecovery) {
+            detailName = DetailRoute.ACCOUNT.name
+        }
     }
 
     fun openDestination(target: OrbitDestination) {
@@ -444,6 +492,7 @@ private fun OrbitApp(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             if (detail == DetailRoute.HERO ||
+                detail == DetailRoute.ACCOUNT ||
                 (detail == null && destination == OrbitDestination.DATA)
             ) {
                 // Hero detail and the catalog search surface provide their own top affordances.
@@ -561,8 +610,29 @@ private fun OrbitApp(
                         onSeasonChanged = onRtaSeasonChanged,
                         onTierChanged = onRtaTierChanged,
                         onRetryRta = onRetryHeroRta,
+                        wikiEditor = state.data.wikiEditor,
+                        onOpenWikiAuth = { detailName = DetailRoute.ACCOUNT.name },
+                        onSignOutWikiEditor = onSignOutWikiEditor,
+                        onSaveWikiHero = onSaveWikiHero,
+                        onClearWikiEditorFeedback = onClearWikiEditorFeedback,
                         sharedTransitionScope = sharedTransitionScope,
                         animatedVisibilityScope = animatedVisibilityScope,
+                    )
+
+                    DetailRoute.ACCOUNT -> WikiAccountScreen(
+                        state = state.data.wikiEditor,
+                        modifier = fullScreenModifier,
+                        onBack = {
+                            onClearWikiEditorFeedback()
+                            onClearWikiAuthRecovery()
+                            detailName = null
+                        },
+                        onSignIn = onSignInWikiEditor,
+                        onRegister = onRegisterWikiAccount,
+                        onResendConfirmation = onResendWikiConfirmation,
+                        onSendPasswordReset = onSendWikiPasswordReset,
+                        onUpdatePassword = onUpdateWikiPassword,
+                        onSignOut = onSignOutWikiEditor,
                     )
 
                     DetailRoute.ARTIFACT -> ArtifactDetailScreen(

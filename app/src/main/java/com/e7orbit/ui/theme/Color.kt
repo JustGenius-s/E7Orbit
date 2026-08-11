@@ -43,7 +43,7 @@ val OrbitSuccess = Color(0xFF247A52)
 val OrbitWarning = Color(0xFF8A5A00)
 val OrbitArtifactHighlight = Color(0xFFC2410C)
 
-// ── E7 元素色板（仅用于图鉴/英雄相关，是这一页的 accent 体系）────────────
+// ── E7 元素色板（仅用于 Wiki/英雄相关，是这一页的 accent 体系）────────────
 // 主色直接采样自官方元素图标（res/drawable/e7_element_*.png）的高饱和像素，
 // 深色由主色在 HSL 空间降明度推导，保证与游戏内元素色一致。卡片光晕/scrim 用 alpha 叠加。
 object OrbitElementColors {

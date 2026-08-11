@@ -77,7 +77,7 @@ class GearOptimizerTest {
     fun groupsEquippedGearByScannedHeroAndCalculatesFinalStats() {
         val instanceId = 77L
         val scannedHeroes = listOf(
-            E7ScannedHero(id = instanceId, name = "Test-Hero", stars = 6, awaken = 6),
+            E7ScannedHero(id = instanceId, name = "Test-Hero", code = hero.code, stars = 6, awaken = 6),
         )
         val items = listOf(
             gear(1, GearSlot.WEAPON, "set_speed", E7GearStat("Attack", 500.0)),
@@ -91,7 +91,7 @@ class GearOptimizerTest {
         val build = buildEquippedHeroes(scannedHeroes, listOf(hero), items).single()
 
         assertEquals(instanceId, build.instanceId)
-        assertEquals("Test-Hero", build.displayName)
+        assertEquals(hero.name, build.displayName)
         assertEquals(hero.code, build.hero?.code)
         assertTrue(build.isComplete)
         assertEquals(170, build.stats?.speed)
@@ -100,8 +100,46 @@ class GearOptimizerTest {
     }
 
     @Test
+    fun matchesScannedHeroByCodeWhenCatalogNameIsLocalized() {
+        val localizedHero = hero.copy(code = "c1001", name = "测试英雄")
+        val scanned = E7ScannedHero(
+            id = 77L,
+            name = "Test Hero",
+            code = "C1001",
+            stars = 6,
+            awaken = 6,
+        )
+
+        val matched = matchScannedHero(scanned, listOf(localizedHero))
+        val build = buildEquippedHeroes(
+            scannedHeroes = listOf(scanned),
+            catalog = listOf(localizedHero),
+            gears = emptyList(),
+            includeEmptyScannedHeroes = true,
+        ).single()
+
+        assertEquals(localizedHero, matched)
+        assertEquals(localizedHero, build.hero)
+        assertEquals(localizedHero.name, build.displayName)
+        assertEquals(100, build.stats?.speed)
+    }
+
+    @Test
+    fun doesNotMatchScannedHeroByNameWithoutCode() {
+        val scanned = E7ScannedHero(id = 77L, name = "Test Hero")
+
+        assertEquals(null, matchScannedHero(scanned, listOf(hero)))
+    }
+
+    @Test
     fun includesUnequippedScannedHeroesForEditablePlans() {
-        val scanned = E7ScannedHero(id = 99L, name = "Test Hero", stars = 6, awaken = 6)
+        val scanned = E7ScannedHero(
+            id = 99L,
+            name = "Test Hero",
+            code = hero.code,
+            stars = 6,
+            awaken = 6,
+        )
 
         val builds = buildEquippedHeroes(
             scannedHeroes = listOf(scanned),
@@ -132,9 +170,9 @@ class GearOptimizerTest {
         val strongHero = hero.copy(code = "strong", name = "Strong", role = "warrior", rarity = 5)
         val incompleteHero = hero.copy(code = "incomplete", name = "Incomplete", role = "knight", rarity = 3)
         val scanned = listOf(
-            E7ScannedHero(10L, "Fast", stars = 4),
-            E7ScannedHero(20L, "Strong", stars = 5),
-            E7ScannedHero(30L, "Incomplete", stars = 3),
+            E7ScannedHero(10L, "Fast", code = fastHero.code, stars = 4),
+            E7ScannedHero(20L, "Strong", code = strongHero.code, stars = 5),
+            E7ScannedHero(30L, "Incomplete", code = incompleteHero.code, stars = 3),
         )
         val gears = buildList {
             addAll(baseItems.map { it.copy(id = it.id + 100, equippedHeroId = 10L) })

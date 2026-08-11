@@ -61,6 +61,22 @@ internal fun gearStatIconRes(statType: String): Int? = when (statType) {
 }
 
 @DrawableRes
+internal fun exclusiveEquipmentStatIconRes(statType: String, isPercent: Boolean): Int? {
+    val gearStatType = when (statType.lowercase()) {
+        "attack" -> if (isPercent) "AttackPercent" else "Attack"
+        "health" -> if (isPercent) "HealthPercent" else "Health"
+        "defense" -> if (isPercent) "DefensePercent" else "Defense"
+        "speed" -> "Speed"
+        "critical_chance" -> "CriticalHitChancePercent"
+        "critical_damage" -> "CriticalHitDamagePercent"
+        "effectiveness" -> "EffectivenessPercent"
+        "effect_resistance" -> "EffectResistancePercent"
+        else -> return null
+    }
+    return gearStatIconRes(gearStatType)
+}
+
+@DrawableRes
 internal fun growthStatIconRes(label: String): Int? {
     val statType = when (label.lowercase()) {
         "attack" -> "Attack"
