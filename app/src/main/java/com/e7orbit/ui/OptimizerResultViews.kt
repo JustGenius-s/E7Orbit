@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -552,6 +553,28 @@ internal fun OptimizedBuildCard(
                     }
                 }
             }
+        }
+    }
+}
+
+/** M3E indeterminate loading shown while the hero catalog is still loading. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+internal fun OptimizerLoadingState() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            LoadingIndicator(modifier = Modifier.size(64.dp))
+            Text(
+                "正在读取英雄数据",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

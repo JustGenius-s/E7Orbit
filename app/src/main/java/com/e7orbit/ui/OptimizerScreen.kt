@@ -243,21 +243,18 @@ private fun OptimizerHeroesContent(
 ) {
     val itemSpatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
     val itemEffectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
+
+    // 已有装备但英雄目录仍在加载时，面板还算不出来，先显示 M3E loading，避免空面板闪烁。
+    if (state.data.gears.isNotEmpty() && state.data.loadState == DataLoadState.LOADING) {
+        OptimizerLoadingState()
+        return
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (builds.isNotEmpty()) {
-            item(key = "hero-summary") {
-                OptimizerOverviewSummary(
-                    heroCount = builds.size,
-                    completeBuilds = builds.count(EquippedHeroBuild::isComplete),
-                    gearCount = state.data.gears.size,
-                    equippedCount = state.data.gears.count { it.equippedHeroId != null },
-                    content = OptimizerContent.HEROES,
-                )
-            }
             item(key = "hero-sort") {
                 HeroBuildSortControls(
                     sort = state.optimizer.heroSort,
@@ -317,6 +314,12 @@ private fun OptimizerEquipmentContent(
 ) {
     val itemSpatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
     val itemEffectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
+
+    // 装备归属英雄名依赖英雄目录，加载中时先显示 loading。
+    if (displayedGears.isNotEmpty() && state.data.loadState == DataLoadState.LOADING) {
+        OptimizerLoadingState()
+        return
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -386,6 +389,11 @@ private fun OptimizerPowerContent(
     builds: List<EquippedHeroBuild>,
     displayedGears: List<E7Gear>,
 ) {
+    // 战力榜的英雄名依赖英雄目录，加载中时先显示 loading。
+    if (state.data.gears.isNotEmpty() && state.data.loadState == DataLoadState.LOADING) {
+        OptimizerLoadingState()
+        return
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
