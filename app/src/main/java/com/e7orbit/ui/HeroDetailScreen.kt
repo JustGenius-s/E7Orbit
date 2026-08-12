@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.e7orbit.R
@@ -64,8 +66,13 @@ import com.e7orbit.data.E7HeroExclusiveEquipment
 import com.e7orbit.data.E7HeroSkill
 import com.e7orbit.data.E7HeroStats
 import com.e7orbit.data.E7ImprintSection
+import com.e7orbit.data.E7StatusEffect
 import com.e7orbit.data.HeroRtaAnalysis
+import com.e7orbit.data.HeroWikiDraft
 import com.e7orbit.data.RtaTier
+import com.e7orbit.data.emptyHeroSkillWikiDraft
+import com.e7orbit.data.toHero
+import com.e7orbit.data.toWikiDraft
 import java.util.Locale
 
 
@@ -73,6 +80,8 @@ import java.util.Locale
 internal fun HeroDetailScreen(
     hero: E7Hero?,
     rta: HeroRtaUiState,
+    buffStatusEffects: List<E7StatusEffect>,
+    debuffStatusEffects: List<E7StatusEffect>,
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
     onSeasonChanged: (String) -> Unit,
@@ -88,16 +97,27 @@ internal fun HeroDetailScreen(
 ) {
     var selectedTab by rememberSaveable(hero?.code) { mutableIntStateOf(0) }
     var editing by rememberSaveable(hero?.code) { mutableStateOf(false) }
+    var workingDraft by remember(hero?.code) { mutableStateOf(hero?.toWikiDraft()) }
+    var savedDraft by remember(hero?.code) { mutableStateOf<HeroWikiDraft?>(null) }
+    var validationError by remember(hero?.code) { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val hasChanges = workingDraft != null && workingDraft != hero?.toWikiDraft()
+    val editorError = validationError ?: wikiEditor.errorMessage
 
-    BackHandler(enabled = editing) {
-        if (!wikiEditor.saving) editing = false
+    fun exitEditing() {
+        if (wikiEditor.saving) return
+        workingDraft = savedDraft ?: hero?.toWikiDraft()
+        editing = false
     }
+
+    BackHandler(enabled = editing, onBack = ::exitEditing)
     LaunchedEffect(wikiEditor.canEdit) {
         if (!wikiEditor.canEdit) editing = false
     }
     LaunchedEffect(wikiEditor.saveRevision, wikiEditor.savedHeroCode) {
         if (wikiEditor.savedHeroCode == hero?.code && wikiEditor.saveRevision > 0L) {
+            savedDraft = null
+            workingDraft = hero?.toWikiDraft()
             editing = false
         }
     }
@@ -106,17 +126,6 @@ internal fun HeroDetailScreen(
             snackbarHostState.showSnackbar(message)
             onClearWikiEditorFeedback()
         }
-    }
-
-    if (editing && hero != null) {
-        WikiHeroEditorScreen(
-            hero = hero,
-            state = wikiEditor,
-            modifier = modifier,
-            onCancel = { editing = false },
-            onSave = onSaveWikiHero,
-        )
-        return
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -129,11 +138,17 @@ internal fun HeroDetailScreen(
                 item { DataMissingDetail("英雄数据不可用") }
                 return@LazyColumn
             }
+            if (editing && editorError != null) {
+                item { WikiEditorError(editorError) }
+            }
             item {
                 HeroHeader(
                     hero = hero,
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = animatedVisibilityScope,
+                    editing = editing,
+                    draft = workingDraft,
+                    onDraftChange = { workingDraft = it },
                 )
             }
             item {
@@ -146,6 +161,7 @@ internal fun HeroDetailScreen(
                         Tab(
                             selected = selectedTab == index,
                             onClick = { selectedTab = index },
+                            enabled = !editing || index == 0,
                             text = { Text(label) },
                         )
                     }
@@ -153,23 +169,142 @@ internal fun HeroDetailScreen(
             }
             when (selectedTab) {
                 0 -> {
-                    item {
-                        SectionTitle("六星满觉基础属性")
-                        Spacer(Modifier.height(8.dp))
-                        SectionSurface {
-                            MetricRow("星座", hero.zodiac?.takeIf(String::isNotBlank) ?: "—")
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 4.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant,
-                            )
-                            HeroStats(hero.stats)
+                    if (editing && workingDraft != null) {
+                        val draft = requireNotNull(workingDraft)
+                        item {
+                            WikiEditorSection(
+                                title = "六星满觉属性",
+                                supportingText = "只填写游戏面板中的基础数值",
+                            ) {
+                                HeroStatsEditor(
+                                    draft = draft,
+                                    onChange = { workingDraft = it },
+                                )
+                            }
                         }
-                    }
-                    hero.exclusiveEquipment?.let { equipment ->
-                        item { HeroExclusiveEquipment(equipment, hero.skills) }
-                    }
-                    if (hero.skills.isNotEmpty()) {
-                        item { HeroSkills(hero.skills) }
+                        item {
+                            WikiEditorSection(
+                                title = "专属装备",
+                                supportingText = "装备属性及三个强化选项",
+                            ) {
+                                ExclusiveEquipmentEditor(
+                                    equipment = draft.exclusiveEquipment,
+                                    onChange = {
+                                        workingDraft = draft.copy(exclusiveEquipment = it)
+                                    },
+                                )
+                            }
+                        }
+                        item {
+                            WikiEditorSection(
+                                title = "技能",
+                                supportingText = "最多五个技能，栏位不能重复",
+                                action = {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val usedSlots = draft.skills
+                                                .mapNotNull { it.slot.toIntOrNull() }
+                                                .toSet()
+                                            val slot = (1..5).firstOrNull { it !in usedSlots }
+                                                ?: return@OutlinedButton
+                                            workingDraft = draft.copy(
+                                                skills = draft.skills + emptyHeroSkillWikiDraft(slot),
+                                            )
+                                        },
+                                        enabled = draft.skills.size < 5,
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_add),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("添加")
+                                    }
+                                },
+                            ) {
+                                if (draft.skills.isEmpty()) {
+                                    Text(
+                                        "暂无技能",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        itemsIndexed(
+                            items = draft.skills,
+                            key = { index, _ -> index },
+                        ) { index, skill ->
+                            HeroSkillEditor(
+                                index = index,
+                                skill = skill,
+                                buffStatusEffects = buffStatusEffects,
+                                debuffStatusEffects = debuffStatusEffects,
+                                onChange = { updated ->
+                                    workingDraft = draft.copy(
+                                        skills = draft.skills.toMutableList().apply {
+                                            set(index, updated)
+                                        },
+                                    )
+                                },
+                                onDelete = {
+                                    workingDraft = draft.copy(
+                                        skills = draft.skills.filterIndexed { i, _ -> i != index },
+                                    )
+                                },
+                            )
+                        }
+                        item {
+                            WikiEditorSection(
+                                title = "图像资源",
+                                supportingText = "头像、缩略图与立绘地址",
+                            ) {
+                                WikiTextField(
+                                    value = draft.iconUrl,
+                                    onValueChange = {
+                                        workingDraft = draft.copy(iconUrl = it)
+                                    },
+                                    label = "头像 URL",
+                                    keyboardType = KeyboardType.Uri,
+                                )
+                                WikiTextField(
+                                    value = draft.thumbnailUrl,
+                                    onValueChange = {
+                                        workingDraft = draft.copy(thumbnailUrl = it)
+                                    },
+                                    label = "缩略图 URL",
+                                    keyboardType = KeyboardType.Uri,
+                                )
+                                WikiTextField(
+                                    value = draft.imageUrl,
+                                    onValueChange = {
+                                        workingDraft = draft.copy(imageUrl = it)
+                                    },
+                                    label = "立绘 URL",
+                                    keyboardType = KeyboardType.Uri,
+                                )
+                            }
+                        }
+                        item { Spacer(Modifier.height(88.dp)) }
+                    } else {
+                        item {
+                            SectionTitle("六星满觉基础属性")
+                            Spacer(Modifier.height(8.dp))
+                            SectionSurface {
+                                MetricRow("星座", hero.zodiac?.takeIf(String::isNotBlank) ?: "—")
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                )
+                                HeroStats(hero.stats)
+                            }
+                        }
+                        hero.exclusiveEquipment?.let { equipment ->
+                            item { HeroExclusiveEquipment(equipment, hero.skills) }
+                        }
+                        if (hero.skills.isNotEmpty()) {
+                            item { HeroSkills(hero.skills) }
+                        }
                     }
                 }
 
@@ -211,19 +346,45 @@ internal fun HeroDetailScreen(
             }
         }
         WikiHeroManagementMenu(
-            state = wikiEditor,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(8.dp),
+                state = wikiEditor,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                onSignIn = {
+                    onClearWikiEditorFeedback()
+                    onOpenWikiAuth()
+                },
+                onSignOut = onSignOutWikiEditor,
+            )
+        WikiEditingFloatingControls(
+            canEdit = wikiEditor.canEdit && hero != null,
+            editing = editing,
+            saving = wikiEditor.saving,
+            canSaveDraft = hasChanges && savedDraft != workingDraft,
+            canUpdate = hasChanges,
             onEdit = {
+                val currentHero = hero ?: return@WikiEditingFloatingControls
                 onClearWikiEditorFeedback()
+                validationError = null
+                selectedTab = 0
+                workingDraft = savedDraft ?: currentHero.toWikiDraft()
                 editing = true
             },
-            onSignIn = {
-                onClearWikiEditorFeedback()
-                onOpenWikiAuth()
+            onExit = ::exitEditing,
+            onSaveDraft = { savedDraft = workingDraft },
+            onUpdate = {
+                val currentHero = hero ?: return@WikiEditingFloatingControls
+                val candidate = runCatching {
+                    requireNotNull(workingDraft).toHero(currentHero)
+                }.onFailure { error ->
+                    validationError = error.message ?: "资料格式有误"
+                }.getOrNull() ?: return@WikiEditingFloatingControls
+                validationError = null
+                onSaveWikiHero(candidate)
             },
-            onSignOut = onSignOutWikiEditor,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp),
         )
     }
 }
@@ -235,6 +396,9 @@ private fun HeroHeader(
     hero: E7Hero,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
+    editing: Boolean = false,
+    draft: HeroWikiDraft? = null,
+    onDraftChange: (HeroWikiDraft) -> Unit = {},
 ) {
     Box(
         modifier = Modifier
@@ -261,25 +425,88 @@ private fun HeroHeader(
                 .align(Alignment.BottomStart)
                 .padding(20.dp),
         ) {
-            Text(
-                hero.name,
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                heroIdentityOverlay(hero)
-            }
-            hero.description?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.85f),
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
+            if (editing && draft != null) {
+                WikiTextField(
+                    value = draft.name,
+                    onValueChange = { onDraftChange(draft.copy(name = it)) },
+                    label = "英雄名称",
+                    textColor = Color.White,
+                    containerColor = Color.Black.copy(alpha = 0.24f),
                 )
+            } else {
+                Text(
+                    hero.name,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            if (editing && draft != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    WikiTextField(
+                        value = draft.rarity,
+                        onValueChange = { onDraftChange(draft.copy(rarity = it)) },
+                        label = "稀有度",
+                        modifier = Modifier.weight(1f),
+                        keyboardType = KeyboardType.Number,
+                        textColor = Color.White,
+                        containerColor = Color.Black.copy(alpha = 0.24f),
+                    )
+                    WikiTextField(
+                        value = draft.zodiac,
+                        onValueChange = { onDraftChange(draft.copy(zodiac = it)) },
+                        label = "星座",
+                        modifier = Modifier.weight(1f),
+                        textColor = Color.White,
+                        containerColor = Color.Black.copy(alpha = 0.24f),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    EditorDropdown(
+                        value = draft.attribute,
+                        options = AttributeEditorOptions,
+                        label = "属性",
+                        modifier = Modifier.weight(1f),
+                        textColor = Color.White,
+                        containerColor = Color.Black.copy(alpha = 0.24f),
+                        onValueChange = { onDraftChange(draft.copy(attribute = it)) },
+                    )
+                    EditorDropdown(
+                        value = draft.role,
+                        options = RoleEditorOptions,
+                        label = "职业",
+                        modifier = Modifier.weight(1f),
+                        textColor = Color.White,
+                        containerColor = Color.Black.copy(alpha = 0.24f),
+                        onValueChange = { onDraftChange(draft.copy(role = it)) },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                WikiTextField(
+                    value = draft.description,
+                    onValueChange = { onDraftChange(draft.copy(description = it)) },
+                    label = "英雄简介",
+                    singleLine = false,
+                    minLines = 2,
+                    textColor = Color.White,
+                    containerColor = Color.Black.copy(alpha = 0.24f),
+                )
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    heroIdentityOverlay(hero)
+                }
+                hero.description?.cleanSkillText()?.takeIf(String::isNotBlank)?.let { description ->
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.85f),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }

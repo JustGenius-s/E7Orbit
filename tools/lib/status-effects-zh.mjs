@@ -189,7 +189,40 @@ const CODE_BY_ICON_SLUG = {
   "weakness-shared": "gamekee_weakness_shared",
   "willful-flame": "gamekee_willful_flame",
   gamekee_corrosion: "gamekee_corrosion_buff",
+  "stic_acc_up": "stic_eff_up",
+  "stic_allbuff": "efct_cr_up",
+  "stic_restore": "efct_dispel",
+  "stic_restore_keep": "efct_dispel",
+  "stic_ab_up_block": "gamekee_bind",
+  "stic_nocounterattack": "gamekee_cannot_counterattack",
+  "stic_chiron_keep": "gamekee_chain_of_chiron",
+  "stic_deceptive": "gamekee_confusion",
+  "stic_delusion_keep": "gamekee_daydream",
+  "stic_oni_keep": "gamekee_demon_mode",
+  "stic_dragoneye_keep": "gamekee_dragon_eye",
+  "stic_res_inc": "gamekee_effect_resistance",
+  "stic_coop_keep": "gamekee_enhanced_dual_attack",
+  "stic_att_inc": "gamekee_exploiting_weak_points",
+  "stic_fear": "gamekee_fear",
+  "stic_wildeye": "gamekee_minds_eye",
+  "stic_detection_keep": "gamekee_perception",
+  "stic_possession_keep": "gamekee_possession",
+  "stic_provoke_hp": "gamekee_redirected_provoke",
+  "stic_rupture": "gamekee_rupture",
+  "stic_dizzy": "gamekee_seal",
+  "stic_stigma": "gamekee_stigma",
+  "stic_venom": "gamekee_venom",
+  "stic_weakness": "gamekee_weakness_shared",
+  "stic_willflame_keep": "gamekee_willful_flame",
+  "stic_crires_up": "stic_cri_res_up",
+  "stic_guard": "stic_share_dmg",
 };
+
+export const LEGACY_STATUS_EFFECT_ICON_SLUGS = Object.freeze(
+  Object.keys(CODE_BY_ICON_SLUG)
+    .filter((slug) => /^[a-z0-9-]+$/.test(slug))
+    .sort(),
+);
 
 export function canonicalStatusEffectCode(value) {
   const key = String(value || "").toLowerCase();

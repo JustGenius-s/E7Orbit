@@ -18,6 +18,7 @@ import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7ScannedHero
+import com.e7orbit.data.E7StatusEffect
 import com.e7orbit.data.E7DataSnapshot
 import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.HeroRtaAnalysis
@@ -174,6 +175,8 @@ data class DataUiState(
     val scannedHeroes: List<E7ScannedHero> = emptyList(),
     val heroes: List<E7Hero> = emptyList(),
     val artifacts: List<E7Artifact> = emptyList(),
+    val buffStatusEffects: List<E7StatusEffect> = emptyList(),
+    val debuffStatusEffects: List<E7StatusEffect> = emptyList(),
     val section: DataSection = DataSection.HEROES,
     val query: String = "",
     val selectedHeroCode: String? = null,
@@ -196,6 +199,7 @@ data class WikiEditorUiState(
     val passwordRecovery: Boolean = false,
     val saveRevision: Long = 0L,
     val savedHeroCode: String? = null,
+    val savedArtifactCode: String? = null,
 )
 
 private val WikiEmailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
@@ -704,6 +708,7 @@ class MainViewModel(
                         errorMessage = null,
                         saveRevision = currentEditor.saveRevision + 1L,
                         savedHeroCode = hero.code,
+                        savedArtifactCode = null,
                     ),
                 )
             } catch (error: Exception) {
@@ -713,6 +718,48 @@ class MainViewModel(
                     wikiEditor = data.value.wikiEditor.copy(
                         saving = false,
                         errorMessage = "保存失败：${error.message ?: "未知错误"}",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun saveWikiArtifact(artifact: E7Artifact) {
+        val editor = data.value.wikiEditor
+        if (!editor.canEdit || editor.saving) return
+        data.value = data.value.copy(
+            wikiEditor = editor.copy(
+                saving = true,
+                message = null,
+                errorMessage = null,
+            ),
+        )
+        viewModelScope.launch {
+            try {
+                val snapshot = AppGraph.e7DataRepository.saveWikiArtifact(artifact)
+                applyDataSnapshot(snapshot)
+                val currentEditor = data.value.wikiEditor
+                data.value = data.value.copy(
+                    wikiEditor = currentEditor.copy(
+                        saving = false,
+                        message = "已更新 ${artifact.name} 的 Wiki 资料",
+                        errorMessage = null,
+                        saveRevision = currentEditor.saveRevision + 1L,
+                        savedHeroCode = null,
+                        savedArtifactCode = artifact.code,
+                    ),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                AppGraph.logger.error(
+                    "wiki.artifact_save_failed",
+                    error,
+                    "artifact" to artifact.code,
+                )
+                data.value = data.value.copy(
+                    wikiEditor = data.value.wikiEditor.copy(
+                        saving = false,
+                        errorMessage = "更新失败：${error.message ?: "未知错误"}",
                     ),
                 )
             }
@@ -1263,6 +1310,8 @@ class MainViewModel(
             loadState = DataLoadState.READY,
             heroes = snapshot.heroes,
             artifacts = snapshot.artifacts,
+            buffStatusEffects = snapshot.buffStatusEffects,
+            debuffStatusEffects = snapshot.debuffStatusEffects,
             selectedHeroCode = currentHero,
             selectedArtifactCode = currentArtifact,
             fetchedAtEpochMs = snapshot.fetchedAtEpochMs,

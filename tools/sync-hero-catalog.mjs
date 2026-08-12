@@ -15,6 +15,7 @@ import {
   statusEffectKind,
 } from "./lib/status-effects-zh.mjs";
 import { artifactChineseFallback } from "./lib/artifacts-zh.mjs";
+import { officialStatusEffectKey } from "./lib/status-effect-assets.mjs";
 
 const supabaseUrl = (process.env.SUPABASE_URL || "https://biayslzufpixsyuitjus.supabase.co").replace(/\/$/, "");
 const serviceRoleKey = (
@@ -1524,8 +1525,10 @@ function localizeSkillRows(rows, heroes, localizations, syncedAt) {
 }
 
 function localizedStatusEffect(effect, gameKeeEffects) {
-  const slug = canonicalStatusEffectCode(effect?.slug);
-  const definition = statusEffectDefinition(slug);
+  const canonicalCode = canonicalStatusEffectCode(effect?.slug);
+  const slug = officialStatusEffectKey(canonicalCode);
+  const definitionCode = slug ? canonicalStatusEffectCode(slug) : canonicalCode;
+  const definition = statusEffectDefinition(definitionCode);
   const gameKee = definition?.gameKeeLabels
     .map((label) => gameKeeEffects.get(label))
     .find(Boolean);
@@ -1536,7 +1539,7 @@ function localizedStatusEffect(effect, gameKeeEffects) {
       ? existingLabel
       : "未知效果"),
     description: gameKee?.description || definition?.description || null,
-    icon_url: gameKee?.iconUrl || chineseStatusEffectIconUrl(slug) || effect?.icon_url || null,
+    icon_url: gameKee?.iconUrl || chineseStatusEffectIconUrl(definitionCode) || effect?.icon_url || null,
   };
 }
 
@@ -2029,34 +2032,7 @@ async function mirrorSkillImages(skills) {
       console.log(`Mirrored skill images ${done}/${skills.length}`);
     }
   }
-  await mirrorStatusEffectImages(skills);
   return skills;
-}
-
-// Buff/debuff icons are shared across heroes; mirror each unique slug once.
-async function mirrorStatusEffectImages(skills) {
-  const allEffects = skills.flatMap((skill) => [...(skill.buffs || []), ...(skill.debuffs || [])]);
-  const unique = new Map();
-  for (const effect of allEffects) {
-    if (effect?.slug && effect.icon_url && !unique.has(effect.slug)) {
-      unique.set(effect.slug, effect.icon_url);
-    }
-  }
-  if (!unique.size) return;
-  console.log(`Mirroring ${unique.size} shared status-effect icons...`);
-  const mirrored = new Map();
-  for (const [slug, url] of unique) {
-    mirrored.set(slug, await mirrorImage(url, `status-effects/${slug}.png`));
-  }
-  for (const skill of skills) {
-    for (const listName of ["buffs", "debuffs"]) {
-      for (const effect of skill[listName] || []) {
-        if (effect?.slug && mirrored.has(effect.slug)) {
-          effect.icon_url = mirrored.get(effect.slug);
-        }
-      }
-    }
-  }
 }
 
 async function mirrorArtifactImages(artifacts) {
@@ -2123,6 +2099,18 @@ async function loadRestRows(table) {
   return rows;
 }
 
+async function preserveManagedStatusEffectIcons(rows) {
+  if (!serviceRoleKey || !rows.length) return rows;
+  const existingBySlug = new Map(
+    (await loadRestRows("status_effect_catalog")).map((row) => [row.slug, row]),
+  );
+  return rows.map((row) => {
+    const existing = existingBySlug.get(row.slug);
+    if (existing) return { ...row, icon_url: existing.icon_url || null };
+    return { ...row, icon_url: null };
+  });
+}
+
 async function mergeExistingArtifactRows(rows) {
   if (!serviceRoleKey || !rows.length) return rows;
   const existingByCode = new Map(
@@ -2176,6 +2164,35 @@ async function wikiHeroOverrideCodes() {
       });
   }
   return wikiHeroOverrideCodesPromise;
+}
+
+let wikiArtifactOverrideCodesPromise = null;
+async function wikiArtifactOverrideCodes() {
+  if (!wikiArtifactOverrideCodesPromise) {
+    wikiArtifactOverrideCodesPromise = loadRestRows("wiki_artifact_overrides")
+      .then((rows) => new Set(rows.map((row) => row.artifact_code).filter(Boolean)))
+      .catch((error) => {
+        console.warn(`Artifact Wiki override markers unavailable (${error.message}); preserving source=wiki rows only.`);
+        return new Set();
+      });
+  }
+  return wikiArtifactOverrideCodesPromise;
+}
+
+async function excludeWikiArtifactOverrides(rows) {
+  if (!rows.length) return rows;
+  const overrideCodes = await wikiArtifactOverrideCodes();
+  const existingWikiCodes = new Set(
+    (await loadRestRows("artifact_catalog"))
+      .filter((row) => row.source === "wiki")
+      .map((row) => row.code),
+  );
+  const filtered = rows.filter(
+    (row) => !overrideCodes.has(row.code) && !existingWikiCodes.has(row.code),
+  );
+  const preserved = rows.length - filtered.length;
+  if (preserved) console.log(`Preserved ${preserved} Wiki override(s) in artifact_catalog`);
+  return filtered;
 }
 
 async function excludeWikiOverrides(table, rows, keyColumns) {
@@ -2270,7 +2287,8 @@ if (artifactsOnly) {
   }
   if (!exportDir && artifacts.length) {
     console.log(`Preparing ${artifacts.length} artifact rows`);
-    await upsert("artifact_catalog", artifacts, "code");
+    const rows = await excludeWikiArtifactOverrides(artifacts);
+    await upsert("artifact_catalog", rows, "code");
   }
   console.log(`Artifact catalog sync completed: ${artifacts.length} artifacts`);
   process.exit(0);
@@ -2434,7 +2452,8 @@ if (skills.length && !exportDir) {
   const syncedHeroCodes = [...new Set(skills.map((skill) => skill.hero_code))];
   console.log(`Preparing ${skills.length} skill rows for ${syncedHeroCodes.length} heroes`);
   if (effects.length) {
-    await upsert("status_effect_catalog", effects, "slug");
+    const rows = await preserveManagedStatusEffectIcons(effects);
+    await upsert("status_effect_catalog", rows, "slug");
   }
   const rows = await excludeWikiOverrides(
     "hero_skills",
@@ -2455,7 +2474,8 @@ if (!skipArtifacts && !skillsOnly && !exportDir) {
 
     if (artifacts.length) {
       console.log(`Preparing ${artifacts.length} artifact rows`);
-      await upsert("artifact_catalog", artifacts, "code");
+      const rows = await excludeWikiArtifactOverrides(artifacts);
+      await upsert("artifact_catalog", rows, "code");
     }
     console.log(`Artifact sync completed: ${artifacts.length} artifacts`);
   } catch (error) {

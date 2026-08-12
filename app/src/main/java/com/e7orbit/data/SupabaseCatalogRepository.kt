@@ -238,6 +238,26 @@ class SupabaseCatalogRepository(
         ) { "Wiki 保存成功，但无法重新读取云端资料" }
     }
 
+    internal suspend fun saveWikiArtifact(artifact: E7Artifact): SupabaseCatalog {
+        val configuredClient = requireNotNull(client) { "Supabase 尚未配置" }
+        configuredClient.auth.awaitInitialization()
+        checkNotNull(configuredClient.auth.currentUserOrNull()) { "请先登录 Wiki 管理员账号" }
+        val parameters = buildJsonObject {
+            put("p_artifact_code", artifact.code)
+            put("p_artifact", json.encodeToJsonElement(WikiArtifactWriteRow.from(artifact)))
+        }
+        configuredClient.postgrest.rpc(
+            function = "save_wiki_artifact",
+            parameters = parameters,
+        )
+        return checkNotNull(
+            load(
+                forceRefresh = true,
+                allowStaleFallback = false,
+            ),
+        ) { "Wiki 保存成功，但无法重新读取云端资料" }
+    }
+
     private suspend inline fun <reified Row> loadAllRows(
         table: String,
         orderColumns: List<String>,
@@ -399,6 +419,41 @@ private data class WikiExclusiveEquipmentWriteRow(
                     description = it.description,
                 )
             },
+        )
+    }
+}
+
+@Serializable
+private data class WikiArtifactWriteRow(
+    val name: String,
+    val rarity: Int?,
+    val role: String?,
+    val description: String?,
+    @SerialName("max_description") val maxDescription: String?,
+    val lore: String?,
+    @SerialName("image_url") val imageUrl: String?,
+    @SerialName("icon_url") val iconUrl: String?,
+    @SerialName("stats_attack") val attack: Int?,
+    @SerialName("stats_health") val health: Int?,
+    @SerialName("stats_defense") val defense: Int?,
+    @SerialName("base_attack") val baseAttack: Int?,
+    @SerialName("base_health") val baseHealth: Int?,
+) {
+    companion object {
+        fun from(artifact: E7Artifact) = WikiArtifactWriteRow(
+            name = artifact.name,
+            rarity = artifact.rarity,
+            role = artifact.role,
+            description = artifact.description,
+            maxDescription = artifact.maxDescription,
+            lore = artifact.lore,
+            imageUrl = artifact.imageUrl,
+            iconUrl = artifact.iconUrl,
+            attack = artifact.attack,
+            health = artifact.health,
+            defense = artifact.defense,
+            baseAttack = artifact.baseAttack,
+            baseHealth = artifact.baseHealth,
         )
     }
 }
@@ -657,7 +712,7 @@ internal fun SupabaseExclusiveEquipmentRow.toDomain(): E7HeroExclusiveEquipment 
     },
 )
 
-private fun SupabaseStatusEffectRow.toDomain(): E7StatusEffect = E7StatusEffect(
+internal fun SupabaseStatusEffectRow.toDomain(): E7StatusEffect = E7StatusEffect(
     slug = slug,
     label = label.ifBlank { slug },
     description = description,

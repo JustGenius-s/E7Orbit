@@ -18,6 +18,15 @@ create table if not exists public.wiki_hero_overrides (
 alter table public.wiki_hero_overrides enable row level security;
 revoke all on table public.wiki_hero_overrides from anon, authenticated;
 
+create table if not exists public.wiki_artifact_overrides (
+    artifact_code text primary key references public.artifact_catalog(code) on delete cascade,
+    updated_by uuid not null references auth.users(id) on delete restrict,
+    updated_at timestamptz not null default now()
+);
+
+alter table public.wiki_artifact_overrides enable row level security;
+revoke all on table public.wiki_artifact_overrides from anon, authenticated;
+
 create or replace function public.is_wiki_editor()
 returns boolean
 language sql
@@ -64,6 +73,34 @@ create policy "Wiki editors can update override markers"
         and updated_by = auth.uid()
     );
 
+drop policy if exists "Wiki editors can read artifact override markers"
+    on public.wiki_artifact_overrides;
+create policy "Wiki editors can read artifact override markers"
+    on public.wiki_artifact_overrides for select
+    to authenticated
+    using (public.is_wiki_editor());
+
+drop policy if exists "Wiki editors can insert artifact override markers"
+    on public.wiki_artifact_overrides;
+create policy "Wiki editors can insert artifact override markers"
+    on public.wiki_artifact_overrides for insert
+    to authenticated
+    with check (
+        public.is_wiki_editor()
+        and updated_by = auth.uid()
+    );
+
+drop policy if exists "Wiki editors can update artifact override markers"
+    on public.wiki_artifact_overrides;
+create policy "Wiki editors can update artifact override markers"
+    on public.wiki_artifact_overrides for update
+    to authenticated
+    using (public.is_wiki_editor())
+    with check (
+        public.is_wiki_editor()
+        and updated_by = auth.uid()
+    );
+
 drop policy if exists "Wiki editors can insert heroes" on public.hero_catalog;
 create policy "Wiki editors can insert heroes"
     on public.hero_catalog for insert
@@ -73,6 +110,19 @@ create policy "Wiki editors can insert heroes"
 drop policy if exists "Wiki editors can update heroes" on public.hero_catalog;
 create policy "Wiki editors can update heroes"
     on public.hero_catalog for update
+    to authenticated
+    using (public.is_wiki_editor())
+    with check (public.is_wiki_editor());
+
+drop policy if exists "Wiki editors can insert artifacts" on public.artifact_catalog;
+create policy "Wiki editors can insert artifacts"
+    on public.artifact_catalog for insert
+    to authenticated
+    with check (public.is_wiki_editor());
+
+drop policy if exists "Wiki editors can update artifacts" on public.artifact_catalog;
+create policy "Wiki editors can update artifacts"
+    on public.artifact_catalog for update
     to authenticated
     using (public.is_wiki_editor())
     with check (public.is_wiki_editor());
@@ -121,8 +171,11 @@ create policy "Wiki editors can delete exclusive equipment"
 revoke insert, update, delete on table public.hero_catalog from anon;
 revoke insert, update, delete on table public.hero_skills from anon;
 revoke insert, update, delete on table public.hero_exclusive_equipment from anon;
+revoke insert, update, delete on table public.artifact_catalog from anon;
 grant insert, update on table public.hero_catalog to authenticated;
+grant insert, update on table public.artifact_catalog to authenticated;
 grant select, insert, update on table public.wiki_hero_overrides to authenticated;
+grant select, insert, update on table public.wiki_artifact_overrides to authenticated;
 grant insert, update, delete on table public.hero_skills to authenticated;
 grant insert, update, delete on table public.hero_exclusive_equipment to authenticated;
 
@@ -359,6 +412,101 @@ $$;
 revoke all on function public.save_wiki_hero(text, jsonb, jsonb, jsonb)
     from public, anon;
 grant execute on function public.save_wiki_hero(text, jsonb, jsonb, jsonb)
+    to authenticated;
+
+create or replace function public.save_wiki_artifact(
+    p_artifact_code text,
+    p_artifact jsonb
+)
+returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+    if not public.is_wiki_editor() then
+        raise exception 'Wiki editor permission required' using errcode = '42501';
+    end if;
+    if nullif(trim(p_artifact_code), '') is null then
+        raise exception 'Artifact code is required' using errcode = '22023';
+    end if;
+    if jsonb_typeof(p_artifact) <> 'object' then
+        raise exception 'Artifact payload must be an object' using errcode = '22023';
+    end if;
+    if nullif(trim(p_artifact ->> 'name'), '') is null then
+        raise exception 'Artifact name is required' using errcode = '22023';
+    end if;
+
+    insert into public.artifact_catalog (
+        code,
+        name,
+        rarity,
+        role,
+        description,
+        max_description,
+        lore,
+        image_url,
+        icon_url,
+        stats_attack,
+        stats_health,
+        stats_defense,
+        base_attack,
+        base_health,
+        source,
+        updated_at
+    ) values (
+        p_artifact_code,
+        trim(p_artifact ->> 'name'),
+        (p_artifact ->> 'rarity')::integer,
+        coalesce(trim(p_artifact ->> 'role'), ''),
+        nullif(trim(p_artifact ->> 'description'), ''),
+        nullif(trim(p_artifact ->> 'max_description'), ''),
+        nullif(trim(p_artifact ->> 'lore'), ''),
+        nullif(trim(p_artifact ->> 'image_url'), ''),
+        nullif(trim(p_artifact ->> 'icon_url'), ''),
+        (p_artifact ->> 'stats_attack')::integer,
+        (p_artifact ->> 'stats_health')::integer,
+        (p_artifact ->> 'stats_defense')::integer,
+        (p_artifact ->> 'base_attack')::integer,
+        (p_artifact ->> 'base_health')::integer,
+        'wiki',
+        now()
+    )
+    on conflict (code) do update
+    set name = excluded.name,
+        rarity = excluded.rarity,
+        role = excluded.role,
+        description = excluded.description,
+        max_description = excluded.max_description,
+        lore = excluded.lore,
+        image_url = excluded.image_url,
+        icon_url = excluded.icon_url,
+        stats_attack = excluded.stats_attack,
+        stats_health = excluded.stats_health,
+        stats_defense = excluded.stats_defense,
+        base_attack = excluded.base_attack,
+        base_health = excluded.base_health,
+        source = excluded.source,
+        updated_at = excluded.updated_at;
+
+    insert into public.wiki_artifact_overrides (
+        artifact_code,
+        updated_by,
+        updated_at
+    ) values (
+        p_artifact_code,
+        auth.uid(),
+        now()
+    )
+    on conflict (artifact_code) do update
+    set updated_by = excluded.updated_by,
+        updated_at = excluded.updated_at;
+end;
+$$;
+
+revoke all on function public.save_wiki_artifact(text, jsonb)
+    from public, anon;
+grant execute on function public.save_wiki_artifact(text, jsonb)
     to authenticated;
 
 -- Bootstrap an editor after creating the user in Supabase Authentication:

@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sync:catalog": "node tools/sync-hero-catalog.mjs"
+    "sync:catalog": "node tools/sync-hero-catalog.mjs",
+    "sync:buff-icons": "node tools/sync-status-effect-icons.mjs"
   },
   "dependencies": {
     "sharp": "0.34.5"

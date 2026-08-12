@@ -2,38 +2,46 @@ package com.e7orbit.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.runtime.Composable
@@ -46,11 +54,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.e7orbit.R
 import com.e7orbit.data.E7Hero
+import com.e7orbit.data.E7StatusEffect
 import com.e7orbit.data.ExclusiveEquipmentWikiDraft
 import com.e7orbit.data.HeroSkillWikiDraft
 import com.e7orbit.data.HeroWikiDraft
@@ -59,12 +69,12 @@ import com.e7orbit.data.emptyHeroSkillWikiDraft
 import com.e7orbit.data.toHero
 import com.e7orbit.data.toWikiDraft
 
-private data class EditorOption(
+internal data class EditorOption(
     val value: String,
     val label: String,
 )
 
-private val AttributeEditorOptions = listOf(
+internal val AttributeEditorOptions = listOf(
     EditorOption("fire", "火焰"),
     EditorOption("ice", "寒气"),
     EditorOption("earth", "自然"),
@@ -72,7 +82,7 @@ private val AttributeEditorOptions = listOf(
     EditorOption("dark", "黑暗"),
 )
 
-private val RoleEditorOptions = listOf(
+internal val RoleEditorOptions = listOf(
     EditorOption("knight", "骑士"),
     EditorOption("warrior", "战士"),
     EditorOption("ranger", "射手"),
@@ -96,7 +106,6 @@ private val ExclusiveStatEditorOptions = listOf(
 internal fun WikiHeroManagementMenu(
     state: WikiEditorUiState,
     modifier: Modifier = Modifier,
-    onEdit: () -> Unit,
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
 ) {
@@ -123,13 +132,6 @@ internal fun WikiHeroManagementMenu(
         ) {
             when {
                 state.canEdit -> {
-                    DropdownMenuItem(
-                        text = { Text("编辑资料") },
-                        onClick = {
-                            expanded = false
-                            onEdit()
-                        },
-                    )
                     state.email?.takeIf(String::isNotBlank)?.let { email ->
                         DropdownMenuItem(
                             text = { Text(email) },
@@ -139,6 +141,12 @@ internal fun WikiHeroManagementMenu(
                     }
                     DropdownMenuItem(
                         text = { Text("退出账号") },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_logout),
+                                contentDescription = null,
+                            )
+                        },
                         onClick = {
                             expanded = false
                             onSignOut()
@@ -155,6 +163,12 @@ internal fun WikiHeroManagementMenu(
                     )
                     DropdownMenuItem(
                         text = { Text("退出账号") },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_logout),
+                                contentDescription = null,
+                            )
+                        },
                         onClick = {
                             expanded = false
                             onSignOut()
@@ -390,159 +404,6 @@ internal fun WikiEditorAuthDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun WikiHeroEditorScreen(
-    hero: E7Hero,
-    state: WikiEditorUiState,
-    modifier: Modifier = Modifier,
-    onCancel: () -> Unit,
-    onSave: (E7Hero) -> Unit,
-) {
-    var draft by remember(hero.code) { mutableStateOf(hero.toWikiDraft()) }
-    var validationError by remember(hero.code) { mutableStateOf<String?>(null) }
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("编辑 Wiki 资料")
-                        Text(
-                            text = hero.code,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onCancel,
-                        enabled = !state.saving,
-                    ) {
-                        Icon(
-                            painter = painterResource(android.R.drawable.ic_menu_close_clear_cancel),
-                            contentDescription = "取消编辑",
-                        )
-                    }
-                },
-                actions = {
-                    Button(
-                        onClick = {
-                            val candidate = runCatching { draft.toHero(hero) }
-                                .onFailure { validationError = it.message ?: "资料格式有误" }
-                                .getOrNull()
-                                ?: return@Button
-                            validationError = null
-                            onSave(candidate)
-                        },
-                        enabled = !state.saving,
-                    ) {
-                        if (state.saving) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text("保存")
-                    }
-                },
-            )
-        },
-    ) { contentPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .imePadding(),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                top = contentPadding.calculateTopPadding() + 12.dp,
-                end = 16.dp,
-                bottom = contentPadding.calculateBottomPadding() + 32.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            val error = validationError ?: state.errorMessage
-            if (error != null) {
-                item {
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                        shape = MaterialTheme.shapes.small,
-                    ) {
-                        Text(
-                            text = error,
-                            modifier = Modifier.padding(12.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-            }
-            item { EditorSectionTitle("基本信息") }
-            item {
-                BasicInfoEditor(
-                    draft = draft,
-                    onChange = { draft = it },
-                )
-            }
-            item { EditorDivider() }
-            item { EditorSectionTitle("六星满觉基础属性") }
-            item {
-                HeroStatsEditor(
-                    draft = draft,
-                    onChange = { draft = it },
-                )
-            }
-            item { EditorDivider() }
-            item { EditorSectionTitle("专属装备") }
-            item {
-                ExclusiveEquipmentEditor(
-                    equipment = draft.exclusiveEquipment,
-                    onChange = { draft = draft.copy(exclusiveEquipment = it) },
-                )
-            }
-            item { EditorDivider() }
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    EditorSectionTitle("技能")
-                    OutlinedButton(
-                        onClick = {
-                            val usedSlots = draft.skills.mapNotNull { it.slot.toIntOrNull() }.toSet()
-                            val slot = (1..5).firstOrNull { it !in usedSlots } ?: return@OutlinedButton
-                            draft = draft.copy(skills = draft.skills + emptyHeroSkillWikiDraft(slot))
-                        },
-                        enabled = draft.skills.size < 5,
-                    ) {
-                        Text("添加技能")
-                    }
-                }
-            }
-            itemsIndexed(
-                items = draft.skills,
-                key = { index, _ -> index },
-            ) { index, skill ->
-                HeroSkillEditor(
-                    index = index,
-                    skill = skill,
-                    onChange = { updated ->
-                        draft = draft.copy(
-                            skills = draft.skills.toMutableList().apply { set(index, updated) },
-                        )
-                    },
-                    onDelete = {
-                        draft = draft.copy(skills = draft.skills.filterIndexed { i, _ -> i != index })
-                    },
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 private fun BasicInfoEditor(
     draft: HeroWikiDraft,
     onChange: (HeroWikiDraft) -> Unit,
@@ -553,37 +414,45 @@ private fun BasicInfoEditor(
             onValueChange = { onChange(draft.copy(name = it)) },
             label = "英雄名称",
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WikiTextField(
-                value = draft.rarity,
-                onValueChange = { onChange(draft.copy(rarity = it)) },
-                label = "稀有度",
-                modifier = Modifier.weight(1f),
-                keyboardType = KeyboardType.Number,
-            )
-            WikiTextField(
-                value = draft.zodiac,
-                onValueChange = { onChange(draft.copy(zodiac = it)) },
-                label = "星座",
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            EditorDropdown(
-                value = draft.attribute,
-                options = AttributeEditorOptions,
-                label = "属性",
-                modifier = Modifier.weight(1f),
-                onValueChange = { onChange(draft.copy(attribute = it)) },
-            )
-            EditorDropdown(
-                value = draft.role,
-                options = RoleEditorOptions,
-                label = "职业",
-                modifier = Modifier.weight(1f),
-                onValueChange = { onChange(draft.copy(role = it)) },
-            )
-        }
+        EditorFieldPair(
+            first = { fieldModifier ->
+                WikiTextField(
+                    value = draft.rarity,
+                    onValueChange = { onChange(draft.copy(rarity = it)) },
+                    label = "稀有度",
+                    modifier = fieldModifier,
+                    keyboardType = KeyboardType.Number,
+                )
+            },
+            second = { fieldModifier ->
+                WikiTextField(
+                    value = draft.zodiac,
+                    onValueChange = { onChange(draft.copy(zodiac = it)) },
+                    label = "星座",
+                    modifier = fieldModifier,
+                )
+            },
+        )
+        EditorFieldPair(
+            first = { fieldModifier ->
+                EditorDropdown(
+                    value = draft.attribute,
+                    options = AttributeEditorOptions,
+                    label = "属性",
+                    modifier = fieldModifier,
+                    onValueChange = { onChange(draft.copy(attribute = it)) },
+                )
+            },
+            second = { fieldModifier ->
+                EditorDropdown(
+                    value = draft.role,
+                    options = RoleEditorOptions,
+                    label = "职业",
+                    modifier = fieldModifier,
+                    onValueChange = { onChange(draft.copy(role = it)) },
+                )
+            },
+        )
         WikiTextField(
             value = draft.description,
             onValueChange = { onChange(draft.copy(description = it)) },
@@ -613,7 +482,7 @@ private fun BasicInfoEditor(
 }
 
 @Composable
-private fun HeroStatsEditor(
+internal fun HeroStatsEditor(
     draft: HeroWikiDraft,
     onChange: (HeroWikiDraft) -> Unit,
 ) {
@@ -661,7 +530,7 @@ private fun HeroStatsEditor(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ExclusiveEquipmentEditor(
+internal fun ExclusiveEquipmentEditor(
     equipment: ExclusiveEquipmentWikiDraft?,
     onChange: (ExclusiveEquipmentWikiDraft?) -> Unit,
 ) {
@@ -698,22 +567,26 @@ private fun ExclusiveEquipmentEditor(
                 label = "属性类型",
                 onValueChange = { onChange(current.copy(statType = it)) },
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                WikiTextField(
-                    value = current.statMin,
-                    onValueChange = { onChange(current.copy(statMin = it)) },
-                    label = "属性下限",
-                    modifier = Modifier.weight(1f),
-                    keyboardType = KeyboardType.Decimal,
-                )
-                WikiTextField(
-                    value = current.statMax,
-                    onValueChange = { onChange(current.copy(statMax = it)) },
-                    label = "属性上限",
-                    modifier = Modifier.weight(1f),
-                    keyboardType = KeyboardType.Decimal,
-                )
-            }
+            EditorFieldPair(
+                first = { fieldModifier ->
+                    WikiTextField(
+                        value = current.statMin,
+                        onValueChange = { onChange(current.copy(statMin = it)) },
+                        label = "属性下限",
+                        modifier = fieldModifier,
+                        keyboardType = KeyboardType.Decimal,
+                    )
+                },
+                second = { fieldModifier ->
+                    WikiTextField(
+                        value = current.statMax,
+                        onValueChange = { onChange(current.copy(statMax = it)) },
+                        label = "属性上限",
+                        modifier = fieldModifier,
+                        keyboardType = KeyboardType.Decimal,
+                    )
+                },
+            )
             EditorSwitchRow(
                 label = "百分比属性",
                 checked = current.statPercent,
@@ -760,9 +633,11 @@ private fun ExclusiveEquipmentEditor(
 }
 
 @Composable
-private fun HeroSkillEditor(
+internal fun HeroSkillEditor(
     index: Int,
     skill: HeroSkillWikiDraft,
+    buffStatusEffects: List<E7StatusEffect>,
+    debuffStatusEffects: List<E7StatusEffect>,
     onChange: (HeroSkillWikiDraft) -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -784,23 +659,35 @@ private fun HeroSkillEditor(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
-                TextButton(onClick = onDelete) { Text("删除") }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_delete),
+                        contentDescription = "删除技能",
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                WikiTextField(
-                    value = skill.slot,
-                    onValueChange = { onChange(skill.copy(slot = it)) },
-                    label = "栏位",
-                    modifier = Modifier.weight(0.35f),
-                    keyboardType = KeyboardType.Number,
-                )
-                WikiTextField(
-                    value = skill.name,
-                    onValueChange = { onChange(skill.copy(name = it)) },
-                    label = "技能名称",
-                    modifier = Modifier.weight(0.65f),
-                )
-            }
+            EditorFieldPair(
+                firstWeight = 0.35f,
+                secondWeight = 0.65f,
+                first = { fieldModifier ->
+                    WikiTextField(
+                        value = skill.slot,
+                        onValueChange = { onChange(skill.copy(slot = it)) },
+                        label = "栏位",
+                        modifier = fieldModifier,
+                        keyboardType = KeyboardType.Number,
+                    )
+                },
+                second = { fieldModifier ->
+                    WikiTextField(
+                        value = skill.name,
+                        onValueChange = { onChange(skill.copy(name = it)) },
+                        label = "技能名称",
+                        modifier = fieldModifier,
+                    )
+                },
+            )
             WikiTextField(
                 value = skill.iconUrl,
                 onValueChange = { onChange(skill.copy(iconUrl = it)) },
@@ -842,22 +729,26 @@ private fun HeroSkillEditor(
                 singleLine = false,
                 minLines = 2,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                WikiTextField(
-                    value = skill.attackRate,
-                    onValueChange = { onChange(skill.copy(attackRate = it)) },
-                    label = "攻击倍率",
-                    modifier = Modifier.weight(1f),
-                    keyboardType = KeyboardType.Decimal,
-                )
-                WikiTextField(
-                    value = skill.pow,
-                    onValueChange = { onChange(skill.copy(pow = it)) },
-                    label = "POW",
-                    modifier = Modifier.weight(1f),
-                    keyboardType = KeyboardType.Decimal,
-                )
-            }
+            EditorFieldPair(
+                first = { fieldModifier ->
+                    WikiTextField(
+                        value = skill.attackRate,
+                        onValueChange = { onChange(skill.copy(attackRate = it)) },
+                        label = "攻击倍率",
+                        modifier = fieldModifier,
+                        keyboardType = KeyboardType.Decimal,
+                    )
+                },
+                second = { fieldModifier ->
+                    WikiTextField(
+                        value = skill.pow,
+                        onValueChange = { onChange(skill.copy(pow = it)) },
+                        label = "POW",
+                        modifier = fieldModifier,
+                        keyboardType = KeyboardType.Decimal,
+                    )
+                },
+            )
             EditorSwitchRow(
                 label = "被动技能",
                 checked = skill.isPassive,
@@ -875,43 +766,237 @@ private fun HeroSkillEditor(
                 singleLine = false,
                 minLines = 3,
             )
-            WikiTextField(
-                value = skill.buffSlugs,
-                onValueChange = { onChange(skill.copy(buffSlugs = it)) },
-                label = "增益 Slug",
-                singleLine = false,
-                minLines = 2,
+            StatusEffectSelector(
+                label = "增益效果",
+                selectedSlugs = skill.buffSlugs,
+                options = buffStatusEffects,
+                onSelectionChange = { onChange(skill.copy(buffSlugs = it)) },
             )
-            WikiTextField(
-                value = skill.debuffSlugs,
-                onValueChange = { onChange(skill.copy(debuffSlugs = it)) },
-                label = "减益 Slug",
-                singleLine = false,
-                minLines = 2,
+            StatusEffectSelector(
+                label = "减益效果",
+                selectedSlugs = skill.debuffSlugs,
+                options = debuffStatusEffects,
+                onSelectionChange = { onChange(skill.copy(debuffSlugs = it)) },
             )
         }
     }
 }
 
 @Composable
-private fun EditorSectionTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleLarge,
-        fontWeight = FontWeight.Bold,
-    )
+private fun StatusEffectSelector(
+    label: String,
+    selectedSlugs: List<String>,
+    options: List<E7StatusEffect>,
+    onSelectionChange: (List<String>) -> Unit,
+) {
+    var dialogOpen by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var pendingSlugs by remember { mutableStateOf(selectedSlugs.distinct()) }
+    val effectsBySlug = remember(options) { options.associateBy(E7StatusEffect::slug) }
+    val selectedEffects = selectedSlugs.distinct().map { slug ->
+        effectsBySlug[slug] ?: E7StatusEffect(slug = slug, label = slug)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (selectedEffects.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(selectedEffects, key = E7StatusEffect::slug) { effect ->
+                    InputChip(
+                        selected = true,
+                        onClick = {
+                            onSelectionChange(selectedSlugs.filterNot { it == effect.slug })
+                        },
+                        label = {
+                            Text(
+                                text = effect.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        avatar = effect.iconUrl?.let { iconUrl ->
+                            {
+                                RemoteImage(
+                                    url = iconUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                            }
+                        },
+                        trailingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_close),
+                                contentDescription = "移除${effect.label}",
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                    )
+                }
+            }
+        } else {
+            Text(
+                text = "未选择",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedButton(
+            onClick = {
+                pendingSlugs = selectedSlugs.distinct()
+                query = ""
+                dialogOpen = true
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = options.isNotEmpty(),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_add),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(if (options.isEmpty()) "暂无可选$label" else "选择$label")
+        }
+    }
+
+    if (dialogOpen) {
+        val normalizedQuery = query.trim()
+        val filteredOptions = options.filter { effect ->
+            normalizedQuery.isEmpty() ||
+                effect.label.contains(normalizedQuery, ignoreCase = true) ||
+                effect.slug.contains(normalizedQuery, ignoreCase = true) ||
+                effect.description.orEmpty().contains(normalizedQuery, ignoreCase = true)
+        }
+        AlertDialog(
+            onDismissRequest = { dialogOpen = false },
+            title = { Text("选择$label") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("搜索状态效果") },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_search),
+                                contentDescription = null,
+                            )
+                        },
+                        singleLine = true,
+                    )
+                    if (filteredOptions.isEmpty()) {
+                        Text(
+                            text = "没有匹配的状态效果",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 16.dp),
+                        )
+                    } else {
+                        LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                            items(filteredOptions, key = E7StatusEffect::slug) { effect ->
+                                val selected = effect.slug in pendingSlugs
+                                ListItem(
+                                    headlineContent = {
+                                        Text(
+                                            text = effect.label,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Column {
+                                            Text(
+                                                text = effect.slug,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            effect.description?.takeIf(String::isNotBlank)?.let { description ->
+                                                Text(
+                                                    text = description,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                        }
+                                    },
+                                    leadingContent = {
+                                        RemoteImage(
+                                            url = effect.iconUrl,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(36.dp),
+                                        )
+                                    },
+                                    trailingContent = {
+                                        Checkbox(
+                                            checked = selected,
+                                            onCheckedChange = null,
+                                        )
+                                    },
+                                    colors = ListItemDefaults.colors(
+                                        containerColor = Color.Transparent,
+                                    ),
+                                    modifier = Modifier.clickable {
+                                        pendingSlugs = if (selected) {
+                                            pendingSlugs.filterNot { it == effect.slug }
+                                        } else {
+                                            pendingSlugs + effect.slug
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSelectionChange(pendingSlugs)
+                        dialogOpen = false
+                    },
+                ) {
+                    Text("完成")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { dialogOpen = false }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
 }
 
 @Composable
-private fun EditorDivider() {
-    HorizontalDivider(
-        modifier = Modifier.padding(vertical = 8.dp),
-        color = MaterialTheme.colorScheme.outlineVariant,
-    )
+internal fun EditorFieldPair(
+    first: @Composable (Modifier) -> Unit,
+    second: @Composable (Modifier) -> Unit,
+    modifier: Modifier = Modifier,
+    firstWeight: Float = 1f,
+    secondWeight: Float = 1f,
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        if (maxWidth < 420.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                first(Modifier.fillMaxWidth())
+                second(Modifier.fillMaxWidth())
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                first(Modifier.weight(firstWeight))
+                second(Modifier.weight(secondWeight))
+            }
+        }
+    }
 }
 
 @Composable
-private fun EditorNumberPair(
+internal fun EditorNumberPair(
     firstValue: String,
     firstLabel: String,
     onFirstChange: (String) -> Unit,
@@ -919,22 +1004,26 @@ private fun EditorNumberPair(
     secondLabel: String,
     onSecondChange: (String) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        WikiTextField(
-            value = firstValue,
-            onValueChange = onFirstChange,
-            label = firstLabel,
-            modifier = Modifier.weight(1f),
-            keyboardType = KeyboardType.Number,
-        )
-        WikiTextField(
-            value = secondValue,
-            onValueChange = onSecondChange,
-            label = secondLabel,
-            modifier = Modifier.weight(1f),
-            keyboardType = KeyboardType.Number,
-        )
-    }
+    EditorFieldPair(
+        first = { fieldModifier ->
+            WikiTextField(
+                value = firstValue,
+                onValueChange = onFirstChange,
+                label = firstLabel,
+                modifier = fieldModifier,
+                keyboardType = KeyboardType.Number,
+            )
+        },
+        second = { fieldModifier ->
+            WikiTextField(
+                value = secondValue,
+                onValueChange = onSecondChange,
+                label = secondLabel,
+                modifier = fieldModifier,
+                keyboardType = KeyboardType.Number,
+            )
+        },
+    )
 }
 
 @Composable
@@ -957,7 +1046,7 @@ private fun EditorSwitchRow(
 }
 
 @Composable
-private fun WikiTextField(
+internal fun WikiTextField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
@@ -965,6 +1054,8 @@ private fun WikiTextField(
     keyboardType: KeyboardType = KeyboardType.Text,
     singleLine: Boolean = true,
     minLines: Int = 1,
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+    containerColor: Color = Color.Transparent,
 ) {
     OutlinedTextField(
         value = value,
@@ -974,16 +1065,28 @@ private fun WikiTextField(
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         singleLine = singleLine,
         minLines = minLines,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = textColor,
+            unfocusedTextColor = textColor,
+            focusedContainerColor = containerColor,
+            unfocusedContainerColor = containerColor,
+            focusedLabelColor = textColor,
+            unfocusedLabelColor = textColor.copy(alpha = 0.76f),
+            focusedBorderColor = textColor,
+            unfocusedBorderColor = textColor.copy(alpha = 0.62f),
+        ),
     )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EditorDropdown(
+internal fun EditorDropdown(
     value: String,
     options: List<EditorOption>,
     label: String,
     modifier: Modifier = Modifier,
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+    containerColor: Color = Color.Transparent,
     onValueChange: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -1007,6 +1110,18 @@ private fun EditorDropdown(
                 )
             },
             singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = textColor,
+                unfocusedTextColor = textColor,
+                focusedContainerColor = containerColor,
+                unfocusedContainerColor = containerColor,
+                focusedLabelColor = textColor,
+                unfocusedLabelColor = textColor.copy(alpha = 0.76f),
+                focusedBorderColor = textColor,
+                unfocusedBorderColor = textColor.copy(alpha = 0.62f),
+                focusedTrailingIconColor = textColor,
+                unfocusedTrailingIconColor = textColor,
+            ),
         )
         ExposedDropdownMenu(
             expanded = expanded,

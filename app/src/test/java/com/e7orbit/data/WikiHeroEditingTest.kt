@@ -19,8 +19,8 @@ class WikiHeroEditingTest {
             skills = listOf(
                 baseDraft.skills.single().copy(
                     enhancements = "伤害提升 5%\n伤害提升 10%",
-                    buffSlugs = "attack_up, speed_up",
-                    debuffSlugs = "defense_down",
+                    buffSlugs = listOf("attack_up", "speed_up"),
+                    debuffSlugs = listOf("defense_down"),
                 ),
             ),
         ).toHero(original)
@@ -33,6 +33,24 @@ class WikiHeroEditingTest {
         assertEquals(listOf("attack_up", "speed_up"), updated.skills.single().buffs.map { it.slug })
         assertEquals(listOf("defense_down"), updated.skills.single().debuffs.map { it.slug })
         assertEquals(listOf(JsonPrimitive(1.0)), updated.skills.single().values)
+    }
+
+    @Test
+    fun selectedStatusEffectsKeepOrderAndRemoveDuplicates() {
+        val original = sampleHero()
+        val baseDraft = original.toWikiDraft()
+
+        val updated = baseDraft.copy(
+            skills = listOf(
+                baseDraft.skills.single().copy(
+                    buffSlugs = listOf("speed_up", "attack_up", "speed_up"),
+                    debuffSlugs = listOf("defense_down", "defense_down"),
+                ),
+            ),
+        ).toHero(original)
+
+        assertEquals(listOf("speed_up", "attack_up"), updated.skills.single().buffs.map { it.slug })
+        assertEquals(listOf("defense_down"), updated.skills.single().debuffs.map { it.slug })
     }
 
     @Test

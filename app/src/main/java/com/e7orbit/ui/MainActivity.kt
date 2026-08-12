@@ -240,6 +240,7 @@ class MainActivity : ComponentActivity() {
                     onUpdateWikiPassword = viewModel::updateWikiPassword,
                     onSignOutWikiEditor = viewModel::signOutWikiEditor,
                     onSaveWikiHero = viewModel::saveWikiHero,
+                    onSaveWikiArtifact = viewModel::saveWikiArtifact,
                     onClearWikiEditorFeedback = viewModel::clearWikiEditorFeedback,
                     onClearWikiAuthRecovery = viewModel::clearWikiAuthRecovery,
                     onOptimizerContentChanged = viewModel::setOptimizerContent,
@@ -418,6 +419,7 @@ private fun OrbitApp(
     onUpdateWikiPassword: (String, String) -> Unit,
     onSignOutWikiEditor: () -> Unit,
     onSaveWikiHero: (com.e7orbit.data.E7Hero) -> Unit,
+    onSaveWikiArtifact: (com.e7orbit.data.E7Artifact) -> Unit,
     onClearWikiEditorFeedback: () -> Unit,
     onClearWikiAuthRecovery: () -> Unit,
     onOptimizerContentChanged: (com.e7orbit.optimizer.OptimizerContent) -> Unit,
@@ -605,6 +607,8 @@ private fun OrbitApp(
                             it.code == state.data.selectedHeroCode
                         },
                         rta = state.data.rta,
+                        buffStatusEffects = state.data.buffStatusEffects,
+                        debuffStatusEffects = state.data.debuffStatusEffects,
                         modifier = fullScreenModifier,
                         onBack = { detailName = null },
                         onSeasonChanged = onRtaSeasonChanged,
@@ -640,6 +644,11 @@ private fun OrbitApp(
                             it.code == state.data.selectedArtifactCode
                         },
                         modifier = screenModifier,
+                        wikiEditor = state.data.wikiEditor,
+                        onOpenWikiAuth = { detailName = DetailRoute.ACCOUNT.name },
+                        onSignOutWikiEditor = onSignOutWikiEditor,
+                        onSaveWikiArtifact = onSaveWikiArtifact,
+                        onClearWikiEditorFeedback = onClearWikiEditorFeedback,
                         sharedTransitionScope = sharedTransitionScope,
                         animatedVisibilityScope = animatedVisibilityScope,
                     )

@@ -87,9 +87,24 @@ class E7DataRepository(
         }
 
         val heroes = mergeHeroes(official, fribbelsHeroes, maintainedCatalog)
+        val statusEffectsBySlug = maintainedCatalog?.effects.orEmpty()
+            .map(SupabaseStatusEffectRow::toDomain)
+            .filter { it.slug.isNotBlank() }
+            .associateBy(E7StatusEffect::slug)
+        val buffSlugs = maintainedCatalog?.skills.orEmpty()
+            .flatMap(SupabaseSkillRow::buffSlugs)
+            .toSet()
+        val debuffSlugs = maintainedCatalog?.skills.orEmpty()
+            .flatMap(SupabaseSkillRow::debuffSlugs)
+            .toSet()
+        fun effectsFor(slugs: Set<String>): List<E7StatusEffect> = slugs
+            .map { slug -> statusEffectsBySlug[slug] ?: E7StatusEffect(slug, slug) }
+            .sortedWith(compareBy(E7StatusEffect::label, E7StatusEffect::slug))
         E7DataSnapshot(
             heroes = heroes,
             artifacts = mergeArtifacts(fribbelsArtifacts, maintainedCatalog),
+            buffStatusEffects = effectsFor(buffSlugs),
+            debuffStatusEffects = effectsFor(debuffSlugs),
             fetchedAtEpochMs = System.currentTimeMillis(),
         )
     }
@@ -142,6 +157,15 @@ class E7DataRepository(
             maintainedCatalogOverride = maintainedCatalog,
         )
     }
+
+    internal suspend fun saveWikiArtifact(artifact: E7Artifact): E7DataSnapshot =
+        withContext(Dispatchers.IO) {
+            val maintainedCatalog = supabaseCatalog.saveWikiArtifact(artifact)
+            loadSnapshot(
+                forceRefresh = true,
+                maintainedCatalogOverride = maintainedCatalog,
+            )
+        }
 
     suspend fun loadRtaSeasons(forceRefresh: Boolean = false): List<RtaSeason> =
         withContext(Dispatchers.IO) {
