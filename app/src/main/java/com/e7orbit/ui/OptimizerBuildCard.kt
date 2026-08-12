@@ -2,12 +2,12 @@ package com.e7orbit.ui
 
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,16 +20,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
@@ -44,78 +42,88 @@ import com.e7orbit.R
 import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7HeroExclusiveEquipment
+import com.e7orbit.data.GearSetNames
 import com.e7orbit.data.GearSlot
 import com.e7orbit.optimizer.EquippedHeroBuild
+import com.e7orbit.optimizer.EquippedSetSummary
 import java.util.Locale
 
-private val OptimizerCardBackground = Color(0xFF080D14)
-private val OptimizerCardBorder = Color(0xFF46515E)
-private val OptimizerCardConfiguredBorder = Color(0xFF8D744C)
 private val OptimizerCardText = Color(0xFFF1F3F6)
 private val OptimizerCardMutedText = Color(0xFFB4BBC4)
-private val OptimizerCardLevel = Color(0xFFEBCB63)
 private val OptimizerHeroLevel = Color(0xFFFF850F)
 private val GameTextShadow = Shadow(color = Color.Black, blurRadius = 3f)
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun EquippedHeroCard(
     build: EquippedHeroBuild,
-    preferenceConfigured: Boolean,
     onClick: () -> Unit,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        onClick = onClick,
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
+            .aspectRatio(375f / 320f)
+            .clip(RoundedCornerShape(22.dp))
             .optimizerSharedBounds(
                 key = "optimizer-hero-${build.instanceId}",
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope,
-            ),
-        shape = MaterialTheme.shapes.small,
-        colors = CardDefaults.cardColors(containerColor = OptimizerCardBackground),
-        border = BorderStroke(
-            1.dp,
-            if (preferenceConfigured) OptimizerCardConfiguredBorder else OptimizerCardBorder,
-        ),
+            )
+            .clickable(onClick = onClick),
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val horizontalPadding = 6.dp
+            Image(
+                painter = painterResource(R.drawable.e7_optimizer_build_background),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+            )
+
+            val horizontalPadding = maxWidth * (8f / 375f)
+            val verticalPadding = maxHeight * (8f / 320f)
             val identityGap = 5.dp
+            val statsHeight = (maxHeight * 0.32f).coerceIn(92.dp, 110.dp)
+            val mainHeight = maxHeight - verticalPadding * 2 - statsHeight
             val identityWidth = (maxWidth * 0.20f).coerceIn(72.dp, 116.dp)
             val equipmentWidth = maxWidth - horizontalPadding * 2 - identityGap - identityWidth
-            val slotWidth = ((equipmentWidth - 6.dp) / 4).coerceAtLeast(52.dp)
-            val rowHeight = (slotWidth * 107f / 88f).coerceIn(76.dp, 104.dp)
-            val contentHeight = rowHeight * 2 + 4.dp
+            val slotWidth = ((equipmentWidth - 6.dp) / 4).coerceAtLeast(48.dp)
+            val rowHeight = ((mainHeight - 4.dp) / 2).coerceAtMost(slotWidth * 107f / 88f)
 
-            Row(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(contentHeight + 12.dp)
-                    .padding(horizontal = horizontalPadding, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(identityGap),
-                verticalAlignment = Alignment.CenterVertically,
+                    .fillMaxSize()
+                    .padding(horizontal = horizontalPadding, vertical = verticalPadding),
             ) {
-                OptimizerHeroIdentity(
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(mainHeight),
+                    horizontalArrangement = Arrangement.spacedBy(identityGap),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OptimizerHeroIdentity(
+                        build = build,
+                        modifier = Modifier
+                            .width(identityWidth)
+                            .fillMaxHeight(),
+                    )
+                    OptimizerEquipmentGrid(
+                        build = build,
+                        rowHeight = rowHeight,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    )
+                }
+                OptimizerBuildStats(
                     build = build,
                     modifier = Modifier
-                        .width(identityWidth)
-                        .fillMaxHeight(),
-                )
-                OptimizerEquipmentGrid(
-                    build = build,
-                    rowHeight = rowHeight,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
+                        .fillMaxWidth()
+                        .height(statsHeight),
                 )
             }
         }
-    }
 }
 
 @Composable
@@ -194,16 +202,6 @@ private fun OptimizerHeroIdentity(
             if (rarity != null) {
                 HeroStars(stars = rarity, iconSize = 10.dp)
             }
-            build.stats?.combatPower?.let { combatPower ->
-                Text(
-                    text = "战力 ${formatNumber(combatPower)}",
-                    color = OptimizerCardMutedText,
-                    fontSize = 9.sp,
-                    lineHeight = 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
     }
 }
@@ -217,7 +215,7 @@ private fun OptimizerEquipmentGrid(
     val gearBySlot = build.items.associateBy(E7Gear::slot)
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
         Row(
             modifier = Modifier
@@ -252,6 +250,160 @@ private fun OptimizerEquipmentGrid(
 }
 
 @Composable
+private fun OptimizerBuildStats(
+    build: EquippedHeroBuild,
+    modifier: Modifier = Modifier,
+) {
+    val stats = build.stats
+    if (stats == null) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text(
+                text = "暂无面板属性",
+                color = OptimizerCardMutedText,
+                fontSize = 10.sp,
+                lineHeight = 11.sp,
+            )
+        }
+        return
+    }
+    val values = listOf(
+        "Attack" to formatNumber(stats.attack),
+        "Health" to formatNumber(stats.health),
+        "Defense" to formatNumber(stats.defense),
+        "Speed" to stats.speed.toString(),
+        "CriticalHitChancePercent" to "${stats.critChance}%",
+        "CriticalHitDamagePercent" to "${stats.critDamage}%",
+        "EffectivenessPercent" to "${stats.effectiveness}%",
+        "EffectResistancePercent" to "${stats.resistance}%",
+        "DualAttackChancePercent" to "${stats.dualAttackChance}%",
+    )
+    val completedSetSlots = build.sets
+        .flatMap { set -> List(set.completedCount) { set } }
+        .take(3)
+    Column(
+        modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.e7_combat_power),
+                contentDescription = "战力",
+                tint = OptimizerCardText,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = formatNumber(stats.combatPower),
+                color = OptimizerCardText,
+                fontSize = 18.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Black,
+                style = MaterialTheme.typography.titleMedium.copy(shadow = GameTextShadow),
+                maxLines = 1,
+            )
+        }
+        OptimizerStatAndSetRows(
+            values = values,
+            sets = completedSetSlots,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun OptimizerStatAndSetRows(
+    values: List<Pair<String, String>>,
+    sets: List<EquippedSetSummary>,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        values.chunked(3).forEachIndexed { index, rowValues ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    rowValues.forEach { (type, value) ->
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            gearStatIconRes(type)?.let { statIcon ->
+                                GearAssetIcon(
+                                    resId = statIcon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(2.dp))
+                            }
+                            Text(
+                                text = value,
+                                color = OptimizerCardText,
+                                fontSize = 10.sp,
+                                lineHeight = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelSmall.copy(shadow = GameTextShadow),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.width(5.dp))
+                OptimizerCompletedSetRow(
+                    set = sets.getOrNull(index),
+                    modifier = Modifier.width(91.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptimizerCompletedSetRow(
+    set: EquippedSetSummary?,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(17.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            GearAssetIcon(
+                resId = set?.code?.let(::gearSetIconRes) ?: R.drawable.e7_no_set_effect,
+                contentDescription = null,
+                modifier = Modifier.size(if (set == null) 14.dp else 17.dp),
+            )
+        }
+        Spacer(Modifier.width(3.dp))
+        Text(
+            text = set?.let { GearSetNames.fullName(it.code, it.name) }
+                ?: "没有套装效果",
+            modifier = Modifier.weight(1f),
+            color = if (set == null) OptimizerCardMutedText else OptimizerCardText,
+            fontSize = 9.sp,
+            lineHeight = 10.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.End,
+            style = MaterialTheme.typography.labelSmall.copy(shadow = GameTextShadow),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
 private fun OptimizerGearSlot(
     gear: E7Gear?,
     slot: GearSlot,
@@ -281,9 +433,8 @@ private fun OptimizerGearSlot(
                     contentScale = ContentScale.FillBounds,
                 )
                 gear?.let {
-                    OptimizerGearItem(
+                    GearItemDisplay(
                         gear = it,
-                        slot = slot,
                         size = iconSize,
                         modifier = Modifier.offset(x = (-2).dp, y = (-2).dp),
                     )
@@ -298,65 +449,6 @@ private fun OptimizerGearSlot(
                         .height((slotHeight - iconSize).coerceAtLeast(14.dp)),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun OptimizerGearItem(
-    gear: E7Gear,
-    slot: GearSlot,
-    size: Dp,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier.size(size),
-        contentAlignment = Alignment.Center,
-    ) {
-        GearAssetIcon(
-            resId = gearItemBackgroundRes(gear.rank, hasGear = true),
-            contentDescription = null,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(2.dp),
-        )
-        val itemIcon = gearItemIconRes(gear.code, slot) ?: gearSlotIconRes(slot)
-        itemIcon?.let { resId ->
-            GearAssetIcon(
-                resId = resId,
-                contentDescription = slot.label,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(7.dp),
-            )
-        }
-        Text(
-            text = gear.level.toString(),
-            color = OptimizerCardLevel,
-            fontSize = 10.sp,
-            lineHeight = 10.sp,
-            fontWeight = FontWeight.Black,
-            style = MaterialTheme.typography.labelSmall.copy(shadow = GameTextShadow),
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = size * 0.10f + 6.dp, top = 9.dp),
-        )
-        OptimizerGearEnhanceBadge(
-            enhance = gear.enhance,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .offset(x = (-1).dp, y = 1.dp),
-        )
-        gearSetIconRes(gear.setCode)?.let { setIcon ->
-            GearAssetIcon(
-                resId = setIcon,
-                contentDescription = gear.setName,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(x = 2.dp)
-                    .padding(end = 1.dp, bottom = 1.dp)
-                    .size(size * 0.40f),
-            )
         }
     }
 }
@@ -470,22 +562,6 @@ private fun FramedSpecialSlot(
 }
 
 @Composable
-private fun OptimizerGearEnhanceBadge(
-    enhance: Int,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .shadow(elevation = 3.dp, shape = CircleShape, clip = false)
-            .background(Color(0xFFD63A40), CircleShape)
-            .padding(horizontal = 2.dp, vertical = 1.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        OptimizerEnhanceText(enhance = enhance)
-    }
-}
-
-@Composable
 private fun OptimizerEnhanceText(
     enhance: Int,
     modifier: Modifier = Modifier,
@@ -518,7 +594,7 @@ private fun SlotStatFooter(
             GearAssetIcon(
                 resId = statIcon,
                 contentDescription = null,
-                modifier = Modifier.size(11.dp),
+                modifier = Modifier.size(14.dp),
             )
             Spacer(Modifier.width(2.dp))
         }

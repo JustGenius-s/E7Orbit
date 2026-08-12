@@ -110,6 +110,7 @@ internal fun gearStatIconRes(statType: String): Int? = when (statType) {
     "CriticalHitDamagePercent" -> R.drawable.e7_stat_crit_damage
     "EffectivenessPercent" -> R.drawable.e7_stat_effectiveness
     "EffectResistancePercent" -> R.drawable.e7_stat_resistance
+    "DualAttackChancePercent" -> R.drawable.e7_stat_dual_attack
     else -> null
 }
 

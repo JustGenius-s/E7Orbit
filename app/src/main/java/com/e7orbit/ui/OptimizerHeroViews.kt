@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.e7orbit.data.E7HeroExclusiveEquipment
 import com.e7orbit.optimizer.EquippedHeroBuild
 import com.e7orbit.optimizer.OptimizedHeroStats
 import com.e7orbit.optimizer.OptimizerStat
@@ -114,6 +115,7 @@ internal fun CompactStatsGrid(stats: OptimizedHeroStats) {
         StatDisplay("CriticalHitDamagePercent", "暴伤", "${stats.critDamage}%"),
         StatDisplay("EffectivenessPercent", "命中", "${stats.effectiveness}%"),
         StatDisplay("EffectResistancePercent", "抗性", "${stats.resistance}%"),
+        StatDisplay("DualAttackChancePercent", "夹攻", "${stats.dualAttackChance}%"),
     )
     values.chunked(4).forEachIndexed { rowIndex, row ->
         Row(
@@ -147,6 +149,7 @@ internal fun HeroStatsGrid(stats: OptimizedHeroStats) {
             breakdown = stats.breakdowns[OptimizerStat.EFFECTIVENESS]),
         StatDisplay("EffectResistancePercent", "效果抗性", "${stats.resistance}%",
             breakdown = stats.breakdowns[OptimizerStat.RESISTANCE]),
+        StatDisplay("DualAttackChancePercent", "夹攻率", "${stats.dualAttackChance}%"),
         StatDisplay(null, "战斗力", formatNumber(stats.combatPower)),
         StatDisplay(null, "有效生命", formatNumber(stats.effectiveHealth)),
         StatDisplay(null, "伤害", formatNumber(stats.damage)),
@@ -177,6 +180,7 @@ internal data class StatDisplay(
 private val BreakdownPercentColor = Color(0xFFF5A623) // 橙：装备百分比
 private val BreakdownFlatColor = Color(0xFF3D8BFF)    // 蓝：装备固定
 private val BreakdownSetColor = Color(0xFFE53935)     // 红：套装
+private val BreakdownExclusiveColor = Color(0xFF00A67A) // 绿：专属装备
 
 private fun breakdownText(breakdown: StatBreakdown): AnnotatedString? {
     data class Part(val text: String, val color: Color)
@@ -192,6 +196,16 @@ private fun breakdownText(breakdown: StatBreakdown): AnnotatedString? {
             val sign = if (breakdown.setBonus > 0) "+" else ""
             add(Part("$sign${formatBreakdownValue(breakdown.setBonus)}$suffix", BreakdownSetColor))
         }
+        if (breakdown.exclusiveEquipmentBonus != 0.0) {
+            val suffix = if (breakdown.exclusiveEquipmentIsPercent) "%" else ""
+            val sign = if (breakdown.exclusiveEquipmentBonus > 0) "+" else ""
+            add(
+                Part(
+                    "专武 $sign${formatBreakdownValue(breakdown.exclusiveEquipmentBonus)}$suffix",
+                    BreakdownExclusiveColor,
+                ),
+            )
+        }
     }
     if (parts.isEmpty()) return null
     return buildAnnotatedString {
@@ -206,6 +220,71 @@ private fun breakdownText(breakdown: StatBreakdown): AnnotatedString? {
 
 private fun formatBreakdownValue(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
+
+@Composable
+internal fun ExclusiveEquipmentDetail(equipment: E7HeroExclusiveEquipment) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RemoteImage(
+            url = equipment.iconUrl,
+            contentDescription = equipment.name,
+            modifier = Modifier.size(56.dp),
+            contentScale = ContentScale.Fit,
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = equipment.name,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                exclusiveEquipmentStatIconRes(
+                    equipment.statType,
+                    equipment.statPercent,
+                )?.let { resId ->
+                    GearAssetIcon(
+                        resId = resId,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    text = "${equipment.statLabel()} ${equipment.statRange()} · 计算采用 +${equipment.statMaximum()}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+private fun E7HeroExclusiveEquipment.statLabel(): String = when (statType.lowercase()) {
+    "attack" -> "攻击"
+    "health" -> "生命"
+    "defense" -> "防御"
+    "speed" -> "速度"
+    "critical_chance" -> "暴击率"
+    "critical_damage" -> "暴击伤害"
+    "effectiveness" -> "效果命中"
+    "effect_resistance" -> "效果抗性"
+    else -> statType
+}
+
+private fun E7HeroExclusiveEquipment.statRange(): String {
+    val suffix = if (statPercent) "%" else ""
+    return "${formatBreakdownValue(statMin)}-${formatBreakdownValue(statMax)}$suffix"
+}
+
+private fun E7HeroExclusiveEquipment.statMaximum(): String =
+    "${formatBreakdownValue(statMax)}${if (statPercent) "%" else ""}"
 
 @Composable
 internal fun StatCell(stat: StatDisplay, modifier: Modifier, compact: Boolean) {

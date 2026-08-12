@@ -5,6 +5,7 @@ import com.e7orbit.data.E7DataSource
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7GearStat
 import com.e7orbit.data.E7Hero
+import com.e7orbit.data.E7HeroExclusiveEquipment
 import com.e7orbit.data.E7HeroStats
 import com.e7orbit.data.E7ScannedHero
 import com.e7orbit.data.GearSlot
@@ -54,6 +55,7 @@ class GearOptimizerTest {
         assertEquals(170, stats.speed)
         assertEquals(27, stats.critChance)
         assertEquals(220, stats.critDamage)
+        assertEquals(3, stats.dualAttackChance)
         // Fribbels WSS only scores substats; these fixtures only have main stats.
         assertEquals(0, items.sumOf(GearOptimizer::gearScore))
         assertTrue(GearOptimizer.hasOnlyCompleteSets(items.groupingBy(E7Gear::setCode).eachCount()))
@@ -72,6 +74,139 @@ class GearOptimizerTest {
         val crit = stats.breakdowns.getValue(OptimizerStat.CRIT_CHANCE)
         assertEquals(0.0, crit.gearFlat, 0.001)
         assertEquals(12.0, crit.setBonus, 0.001)
+    }
+
+    @Test
+    fun calculatesDualAttackChanceFromBaseGearAndUnitySet() {
+        val items = listOf(
+            gear(
+                id = 91,
+                slot = GearSlot.WEAPON,
+                set = "set_coop",
+                main = E7GearStat("Attack", 100.0),
+                substats = listOf(E7GearStat("DualAttackChancePercent", 2.0)),
+            ),
+            gear(
+                id = 92,
+                slot = GearSlot.HELMET,
+                set = "set_coop",
+                main = E7GearStat("Health", 100.0),
+            ),
+        )
+
+        val stats = GearOptimizer().calculateStats(hero, items)
+
+        assertEquals(9, stats.dualAttackChance)
+    }
+
+    @Test
+    fun appliesExclusiveEquipmentMaxStatToFinalPanel() {
+        val attackEquipment = exclusiveEquipment(
+            statType = "attack",
+            statMin = 7.0,
+            statMax = 14.0,
+            statPercent = true,
+        )
+        val attackStats = GearOptimizer().calculateStats(
+            hero.copy(exclusiveEquipment = attackEquipment),
+            emptyList(),
+        )
+        assertEquals(1_140, attackStats.attack)
+        assertEquals(
+            14.0,
+            attackStats.breakdowns.getValue(OptimizerStat.ATTACK).exclusiveEquipmentBonus,
+            0.001,
+        )
+        assertTrue(
+            attackStats.breakdowns.getValue(OptimizerStat.ATTACK).exclusiveEquipmentIsPercent,
+        )
+        val attackWithPercentGear = GearOptimizer().calculateStats(
+            hero.copy(exclusiveEquipment = attackEquipment),
+            listOf(
+                gear(
+                    id = 99,
+                    slot = GearSlot.RING,
+                    set = "set_speed",
+                    main = E7GearStat("AttackPercent", 65.0),
+                ),
+            ),
+        )
+        assertEquals(1_790, attackWithPercentGear.attack)
+        val heroWithArtifact = hero.withArtifact(testArtifact())
+        val attackWithArtifact = GearOptimizer().calculateStats(
+            hero = heroWithArtifact.copy(exclusiveEquipment = attackEquipment),
+            items = listOf(
+                gear(
+                    id = 100,
+                    slot = GearSlot.RING,
+                    set = "set_speed",
+                    main = E7GearStat("AttackPercent", 65.0),
+                ),
+            ),
+            percentageBaseStats = hero.stats,
+        )
+        assertEquals(1_890, attackWithArtifact.attack)
+
+        val speedStats = GearOptimizer().calculateStats(
+            hero.copy(
+                exclusiveEquipment = exclusiveEquipment(
+                    statType = "speed",
+                    statMin = 5.0,
+                    statMax = 10.0,
+                    statPercent = false,
+                ),
+            ),
+            emptyList(),
+        )
+        assertEquals(110, speedStats.speed)
+        assertEquals(
+            10.0,
+            speedStats.breakdowns.getValue(OptimizerStat.SPEED).exclusiveEquipmentBonus,
+            0.001,
+        )
+
+        val effectivenessStats = GearOptimizer().calculateStats(
+            hero.copy(
+                exclusiveEquipment = exclusiveEquipment(
+                    statType = "effectiveness",
+                    statMin = 8.0,
+                    statMax = 16.0,
+                    statPercent = true,
+                ),
+            ),
+            emptyList(),
+        )
+        assertEquals(16, effectivenessStats.effectiveness)
+    }
+
+    @Test
+    fun equippedBuildIncludesExclusiveEquipmentInFinalStats() {
+        val instanceId = 78L
+        val heroWithEquipment = hero.copy(
+            exclusiveEquipment = exclusiveEquipment(
+                statType = "speed",
+                statMin = 5.0,
+                statMax = 10.0,
+                statPercent = false,
+            ),
+        )
+        val build = buildEquippedHeroes(
+            scannedHeroes = listOf(
+                E7ScannedHero(
+                    id = instanceId,
+                    name = hero.name,
+                    code = hero.code,
+                    stars = 6,
+                    awaken = 6,
+                ),
+            ),
+            catalog = listOf(heroWithEquipment),
+            gears = emptyList(),
+            includeEmptyScannedHeroes = true,
+        ).single()
+
+        assertEquals(110, build.stats?.speed)
+        assertEquals(heroWithEquipment.exclusiveEquipment, build.hero?.exclusiveEquipment)
     }
 
     @Test
@@ -444,6 +579,44 @@ class GearOptimizerTest {
     }
 
     @Test
+    fun optimizerResultsIncludeExclusiveEquipmentBonus() {
+        val speedHero = hero.copy(
+            exclusiveEquipment = exclusiveEquipment(
+                statType = "speed",
+                statMin = 5.0,
+                statMax = 10.0,
+                statPercent = false,
+            ),
+        )
+        val inventory = GearSlot.entries
+            .filter { it != GearSlot.UNKNOWN }
+            .mapIndexed { index, slot ->
+                gear(
+                    id = index.toLong() + 1,
+                    slot = slot,
+                    set = "set_max_hp",
+                    main = E7GearStat("Speed", 8.0),
+                )
+            }
+        val result = GearOptimizer(candidatesPerSlot = 10, beamWidth = 100).optimize(
+            hero = speedHero,
+            inventory = inventory,
+            config = GearOptimizationConfig(
+                metric = OptimizerMetric.SPEED,
+                constraints = OptimizerConstraints(speed = 158),
+            ),
+            percentageBaseStats = hero.stats,
+        ).builds.single()
+
+        assertEquals(158, result.stats.speed)
+        assertEquals(
+            10.0,
+            result.stats.breakdowns.getValue(OptimizerStat.SPEED).exclusiveEquipmentBonus,
+            0.001,
+        )
+    }
+
+    @Test
     fun handlesRealisticInventorySizeWithinInteractiveTime() {
         val sets = listOf("set_speed", "set_cri", "set_max_hp", "set_att", "set_def", "set_res")
         var nextId = 1L
@@ -525,6 +698,22 @@ class GearOptimizerTest {
         assertTrue(result.items.none { it.equippedHeroId != null })
         assertTrue(result.items.all { it.enhance == 15 })
     }
+
+    private fun exclusiveEquipment(
+        statType: String,
+        statMin: Double,
+        statMax: Double,
+        statPercent: Boolean,
+    ) = E7HeroExclusiveEquipment(
+        code = "ee-${hero.code}",
+        heroCode = hero.code,
+        name = "Test Exclusive Equipment",
+        iconUrl = "https://example.com/exclusive.png",
+        statType = statType,
+        statMin = statMin,
+        statMax = statMax,
+        statPercent = statPercent,
+    )
 
     private fun testArtifact(
         code: String = "ef-test",

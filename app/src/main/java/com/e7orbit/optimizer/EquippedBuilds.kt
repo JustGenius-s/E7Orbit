@@ -218,9 +218,10 @@ fun buildEquippedHeroes(
                 ?: scanned?.artifactName
                     ?.let(::normalizeArtifactName)
                     ?.let(artifactsByName::get)
-            val hero = scanned?.code
+            val catalogHero = scanned?.code
                 ?.let(::normalizeHeroCode)
                 ?.let(catalogByCode::get)
+            val hero = catalogHero
                 ?.withSelfImprint(imprintRanks[instanceId] ?: ImprintRank.DEFAULT)
                 ?.withArtifact(artifact)
             val items = equippedByHero[instanceId].orEmpty()
@@ -228,7 +229,15 @@ fun buildEquippedHeroes(
                 .distinctBy(E7Gear::slot)
                 .sortedBy { EQUIPMENT_SLOTS.indexOf(it.slot) }
             val stats = hero
-                ?.let { runCatching { calculator.calculateStats(it, items) }.getOrNull() }
+                ?.let {
+                    runCatching {
+                        calculator.calculateStats(
+                            hero = it,
+                            items = items,
+                            percentageBaseStats = catalogHero.stats,
+                        )
+                    }.getOrNull()
+                }
             EquippedHeroBuild(
                 instanceId = instanceId,
                 scannedHero = scanned,

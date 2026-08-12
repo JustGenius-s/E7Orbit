@@ -1043,6 +1043,7 @@ class MainViewModel(
                             .withSelfImprint(current.imprintRank)
                             .withArtifact(artifact),
                         inventory = inventory,
+                        percentageBaseStats = hero.stats,
                         config = config,
                         isCancelled = { requestId != optimizerRequestId || !isActive },
                     )

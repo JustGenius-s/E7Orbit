@@ -279,8 +279,6 @@ private fun OptimizerHeroesContent(
             else -> items(sortedBuilds, key = EquippedHeroBuild::instanceId) { build ->
                 EquippedHeroCard(
                     build = build,
-                    preferenceConfigured = state.optimizer.heroPreferences[build.instanceId]
-                        ?.isConfigured == true,
                     onClick = { onHeroSelected(build.instanceId) },
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = animatedVisibilityScope,
@@ -553,6 +551,18 @@ internal fun OptimizerHeroDetailScreen(
                         "缺少可匹配的英雄基础属性",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+            }
+        }
+
+        build.hero?.exclusiveEquipment?.let { equipment ->
+            item(key = "exclusive-equipment") {
+                SectionSurface(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    SectionTitle(title = "专属装备", detail = "按属性最大值计入面板")
+                    Spacer(Modifier.height(10.dp))
+                    ExclusiveEquipmentDetail(equipment)
+                }
             }
         }
 
