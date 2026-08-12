@@ -13,7 +13,6 @@ CARD_ASSETS = {
     "e7_optimizer_gear_frame.png": "img/cm_item_slot.png",
     "e7_optimizer_artifact_frame.png": "img/cm_item_slot_arti.png",
     "e7_optimizer_exclusive_frame.png": "img/cm_item_slot_private.png",
-    "e7_optimizer_gear_footer.png": "img/_box_equip_bottom.png",
 }
 
 

@@ -41,6 +41,19 @@ FALLBACK_GEAR_ASSETS = {
     "e7_fallback_gear_ring.png": "icon_eq_ring_arena002.png",
     "e7_fallback_gear_boots.png": "icon_eq_boot_arena002.png",
 }
+STAT_ASSETS = {
+    "e7_stat_attack.png": "icon_stat_att.png",
+    "e7_stat_attack_percent.png": "icon_stat_att.png",
+    "e7_stat_defense.png": "icon_stat_def.png",
+    "e7_stat_defense_percent.png": "icon_stat_def.png",
+    "e7_stat_health.png": "icon_stat_max_hp.png",
+    "e7_stat_health_percent.png": "icon_stat_max_hp.png",
+    "e7_stat_speed.png": "icon_stat_speed.png",
+    "e7_stat_crit_chance.png": "icon_stat_cri.png",
+    "e7_stat_crit_damage.png": "icon_stat_cri_dmg.png",
+    "e7_stat_effectiveness.png": "icon_stat_acc.png",
+    "e7_stat_resistance.png": "icon_stat_res.png",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -154,11 +167,14 @@ def main() -> None:
     arguments = parse_args()
     resource_dir = arguments.project_root / "app/src/main/res-gear-icons/drawable-nodpi"
     legacy_resource_dir = arguments.project_root / "app/src/main/res/drawable-nodpi"
+    night_resource_dir = arguments.project_root / "app/src/main/res/drawable-night-nodpi"
     kotlin_path = (
         arguments.project_root
         / "app/src/main/java/com/e7orbit/ui/GearItemIconAssets.generated.kt"
     )
     resource_dir.mkdir(parents=True, exist_ok=True)
+    legacy_resource_dir.mkdir(parents=True, exist_ok=True)
+    night_resource_dir.mkdir(parents=True, exist_ok=True)
     kotlin_path.parent.mkdir(parents=True, exist_ok=True)
 
     mappings, icons = read_mappings(arguments.equip_export, arguments.item_dir)
@@ -189,6 +205,12 @@ def main() -> None:
         if not source.is_file():
             raise FileNotFoundError(source)
         shutil.copyfile(source, resource_dir / destination_name)
+    for destination_name, source_name in STAT_ASSETS.items():
+        source = source_img_dir / source_name
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        for destination_dir in (legacy_resource_dir, night_resource_dir):
+            shutil.copyfile(source, destination_dir / destination_name)
     for icon in sorted(icons):
         shutil.copyfile(
             arguments.item_dir / f"{icon}.png",

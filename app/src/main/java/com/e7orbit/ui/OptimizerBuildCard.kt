@@ -270,12 +270,6 @@ private fun OptimizerGearSlot(
                 .fillMaxHeight(),
             contentAlignment = Alignment.TopCenter,
         ) {
-            Image(
-                painter = painterResource(R.drawable.e7_optimizer_gear_footer),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.FillBounds,
-            )
             Box(
                 modifier = Modifier.size(iconSize),
                 contentAlignment = Alignment.Center,
@@ -283,7 +277,7 @@ private fun OptimizerGearSlot(
                 Image(
                     painter = painterResource(R.drawable.e7_optimizer_gear_frame),
                     contentDescription = if (gear == null) "未装备${slot.label}" else null,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.size(iconSize * 0.92f),
                     contentScale = ContentScale.FillBounds,
                 )
                 gear?.let {
@@ -291,7 +285,7 @@ private fun OptimizerGearSlot(
                         gear = it,
                         slot = slot,
                         size = iconSize,
-                        modifier = Modifier.offset(x = (-4).dp),
+                        modifier = Modifier.offset(x = (-2).dp, y = (-2).dp),
                     )
                 }
             }
@@ -388,8 +382,8 @@ private fun OptimizerArtifactSlot(
                 url = artifact.iconUrl ?: artifact.imageUrl,
                 contentDescription = artifact.name,
                 modifier = Modifier
-                    .size(frameSize * 0.72f)
-                    .offset(x = (-1).dp),
+                    .size(frameSize * 0.92f)
+                    .offset(x = (-1).dp, y = (-1).dp),
                 contentScale = ContentScale.Fit,
             )
             artifactLevel?.let { level ->
@@ -429,7 +423,7 @@ private fun OptimizerExclusiveEquipmentSlot(
                 contentDescription = equipment.name,
                 modifier = Modifier
                     .size(frameSize * 0.92f)
-                    .offset(x = (-1).dp),
+                    .offset(x = (-1).dp, y = (-1).dp),
                 contentScale = ContentScale.Fit,
             )
         }
