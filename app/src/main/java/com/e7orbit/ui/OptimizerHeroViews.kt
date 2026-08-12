@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -47,92 +45,6 @@ internal fun EquippedHeroBuild.combatSummaryText(): String = listOfNotNull(
     stats?.combatPower?.let { "战力 ${formatNumber(it)}" },
     stats?.speed?.let { "速度 $it" },
 ).joinToString(" · ").ifBlank { "暂无最终面板" }
-
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-internal fun EquippedHeroCard(
-    build: EquippedHeroBuild,
-    preferenceConfigured: Boolean,
-    onClick: () -> Unit,
-    sharedTransitionScope: SharedTransitionScope,
-    animatedVisibilityScope: AnimatedVisibilityScope,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        onClick = onClick,
-        modifier = modifier
-            .fillMaxWidth()
-            .optimizerSharedBounds(
-                key = "optimizer-hero-${build.instanceId}",
-                sharedTransitionScope = sharedTransitionScope,
-                animatedVisibilityScope = animatedVisibilityScope,
-            ),
-        shape = MaterialTheme.shapes.small,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RemoteImage(
-                    url = build.hero?.assets?.iconUrl ?: build.hero?.assets?.thumbnailUrl,
-                    contentDescription = build.displayName,
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(OrbitPolygonShapes.HeroAvatar.asShape),
-                    contentScale = ContentScale.Crop,
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = build.displayName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    GearSetSummaryRow(build.sets)
-                    HeroIdentityIcons(
-                        attribute = build.hero?.attribute,
-                        role = build.hero?.role,
-                        rarity = build.scannedHero?.stars ?: build.hero?.rarity,
-                        iconSize = 17.dp,
-                    )
-                    Text(
-                        text = build.combatSummaryText(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "${build.items.size}/6",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = if (preferenceConfigured) "已设置偏好" else "查看详情",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (preferenceConfigured) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            build.stats?.let { CompactStatsGrid(it) }
-                ?: Text(
-                    text = if (!build.isComplete) "装备不完整，无法计算最终属性" else "未匹配到英雄基础属性",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable

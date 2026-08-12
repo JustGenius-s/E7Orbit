@@ -1,6 +1,7 @@
 package com.e7orbit.optimizer
 
 import android.content.Context
+import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.GearSetNames
 import com.e7orbit.data.E7Hero
@@ -167,6 +168,7 @@ data class EquippedHeroBuild(
     val instanceId: Long,
     val scannedHero: E7ScannedHero?,
     val hero: E7Hero?,
+    val artifact: E7Artifact?,
     val items: List<E7Gear>,
     val sets: List<EquippedSetSummary>,
     val stats: OptimizedHeroStats?,
@@ -185,12 +187,18 @@ fun buildEquippedHeroes(
     calculator: GearOptimizer = GearOptimizer(),
     includeEmptyScannedHeroes: Boolean = false,
     imprintRanks: Map<Long, ImprintRank> = emptyMap(),
-    artifacts: List<com.e7orbit.data.E7Artifact> = emptyList(),
+    artifacts: List<E7Artifact> = emptyList(),
     artifactCodes: Map<Long, String> = emptyMap(),
 ): List<EquippedHeroBuild> {
     val scannedById = scannedHeroes.associateBy(E7ScannedHero::id)
     val catalogByCode = catalog.associateBy { normalizeHeroCode(it.code) }
-    val artifactsByCode = artifacts.associateBy(com.e7orbit.data.E7Artifact::code)
+    val artifactsByCode = artifacts.associateBy { it.code.lowercase() }
+    val artifactsByName = buildMap {
+        artifacts.forEach { artifact ->
+            put(normalizeArtifactName(artifact.name), artifact)
+            artifact.aliases.forEach { alias -> put(normalizeArtifactName(alias), artifact) }
+        }
+    }
     val equippedByHero = gears.asSequence()
         .filter { it.equippedHeroId != null }
         .groupBy { requireNotNull(it.equippedHeroId) }
@@ -201,11 +209,20 @@ fun buildEquippedHeroes(
     return instanceIds
         .map { instanceId ->
             val scanned = scannedById[instanceId]
+            val artifact = artifactCodes[instanceId]
+                ?.lowercase()
+                ?.let(artifactsByCode::get)
+                ?: scanned?.artifactCode
+                    ?.lowercase()
+                    ?.let(artifactsByCode::get)
+                ?: scanned?.artifactName
+                    ?.let(::normalizeArtifactName)
+                    ?.let(artifactsByName::get)
             val hero = scanned?.code
                 ?.let(::normalizeHeroCode)
                 ?.let(catalogByCode::get)
                 ?.withSelfImprint(imprintRanks[instanceId] ?: ImprintRank.DEFAULT)
-                ?.withArtifact(artifactCodes[instanceId]?.let(artifactsByCode::get))
+                ?.withArtifact(artifact)
             val items = equippedByHero[instanceId].orEmpty()
                 .filter { it.slot in EQUIPMENT_SLOTS }
                 .distinctBy(E7Gear::slot)
@@ -216,6 +233,7 @@ fun buildEquippedHeroes(
                 instanceId = instanceId,
                 scannedHero = scanned,
                 hero = hero,
+                artifact = artifact,
                 items = items,
                 sets = summarizeEquippedSets(items),
                 stats = stats,
@@ -251,6 +269,11 @@ private fun summarizeEquippedSets(items: List<E7Gear>): List<EquippedSetSummary>
         )
 
 private fun normalizeHeroCode(value: String): String = value.trim().lowercase()
+
+private fun normalizeArtifactName(value: String): String = value
+    .trim()
+    .lowercase()
+    .filter(Char::isLetterOrDigit)
 
 private val EQUIPMENT_SLOTS = listOf(
     GearSlot.WEAPON,

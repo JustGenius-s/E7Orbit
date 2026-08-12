@@ -63,6 +63,11 @@ internal object GearImportParser {
             code = unit.string("code")?.trim()?.takeIf(String::isNotEmpty),
             stars = unit.int("g") ?: unit.int("stars"),
             awaken = unit.int("z") ?: unit.int("awaken"),
+            artifactCode = unit.firstString("artifactCode", "artifact_code", "artifactId")
+                ?.takeUnless(::isEmptyEquipmentValue),
+            artifactName = unit.firstString("artifactName", "artifact_name")
+                ?.takeUnless(::isEmptyEquipmentValue),
+            artifactLevel = unit.firstInt("artifactLevel", "artifact_level"),
         )
     }
 
@@ -214,6 +219,13 @@ internal object GearImportParser {
         (this as? JsonPrimitive)?.takeUnless { it is JsonNull }
 
     private fun JsonObject.string(key: String): String? = this[key].primitive()?.contentOrNull
+    private fun JsonObject.firstString(vararg keys: String): String? =
+        keys.firstNotNullOfOrNull { key -> string(key) }
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+    private fun JsonObject.firstInt(vararg keys: String): Int? = keys.firstNotNullOfOrNull { key ->
+        int(key) ?: string(key)?.toIntOrNull()
+    }
     private fun JsonObject.stableId(key: String): Long? = string(key)
         ?.takeUnless { it == "undefined" || it == "null" }
         ?.let { it.toLongOrNull() ?: stableLongId(it) }
@@ -223,6 +235,11 @@ internal object GearImportParser {
     private fun JsonObject.boolean(key: String): Boolean? = this[key].primitive()?.booleanOrNull
 
     private data class Operation(val type: String, val value: Double, val annotation: String?)
+
+    private fun isEmptyEquipmentValue(value: String): Boolean =
+        value.equals("none", ignoreCase = true) ||
+            value.equals("undefined", ignoreCase = true) ||
+            value.equals("null", ignoreCase = true)
 
     private val FLAT_STATS = setOf("max_hp", "speed", "att", "def")
     private val RANKS = listOf("未知", "普通", "优秀", "稀有", "英雄", "传说")

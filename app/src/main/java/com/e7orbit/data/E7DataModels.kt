@@ -140,6 +140,7 @@ data class E7Artifact(
     val iconUrl: String? = null,
     val baseAttack: Int? = null,
     val baseHealth: Int? = null,
+    val aliases: List<String> = emptyList(),
 )
 
 enum class E7DataSource {

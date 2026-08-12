@@ -200,6 +200,7 @@ class GearImportRepository(
             heroes = heroes,
             heroCount = heroes.size,
             importedAtEpochMs = importedAt,
+            formatVersion = SAVED_FORMAT_VERSION,
         )
         writeAtomically(storeFile, json.encodeToString(saved))
         writeAtomically(exportFile, export)
@@ -216,7 +217,9 @@ class GearImportRepository(
         if (!storeFile.exists()) return@runCatching GearImportState()
         val saved = json.decodeFromString<SavedGearImport>(storeFile.readText(Charsets.UTF_8))
         val restoredHeroes = if (
-            saved.heroes.isEmpty() || saved.heroes.any { it.code.isNullOrBlank() }
+            saved.heroes.isEmpty() ||
+            saved.formatVersion < SAVED_FORMAT_VERSION ||
+            saved.heroes.any { it.code.isNullOrBlank() }
         ) {
             restoreHeroesFromExport()
         } else {
@@ -225,18 +228,24 @@ class GearImportRepository(
         val restoredById = restoredHeroes.associateBy(E7ScannedHero::id)
         val heroes = saved.heroes
             .map { hero ->
-                if (hero.code.isNullOrBlank()) {
-                    hero.copy(code = restoredById[hero.id]?.code)
-                } else {
-                    hero
-                }
+                val restored = restoredById[hero.id] ?: return@map hero
+                hero.copy(
+                    code = hero.code?.takeIf(String::isNotBlank) ?: restored.code,
+                    artifactCode = hero.artifactCode ?: restored.artifactCode,
+                    artifactName = hero.artifactName ?: restored.artifactName,
+                    artifactLevel = hero.artifactLevel ?: restored.artifactLevel,
+                )
             }
             .ifEmpty { restoredHeroes }
         val gears = saved.gears.map { gear ->
             val normalized = gear.copy(setName = gear.cnSetName())
             if (normalized != gear) normalized else gear
         }
-        if (heroes != saved.heroes || gears != saved.gears) {
+        if (
+            heroes != saved.heroes ||
+            gears != saved.gears ||
+            saved.formatVersion < SAVED_FORMAT_VERSION
+        ) {
             writeAtomically(
                 storeFile,
                 json.encodeToString(
@@ -244,6 +253,7 @@ class GearImportRepository(
                         gears = gears,
                         heroes = heroes,
                         heroCount = heroes.size,
+                        formatVersion = SAVED_FORMAT_VERSION,
                     ),
                 ),
             )
@@ -299,9 +309,11 @@ class GearImportRepository(
         val heroes: List<E7ScannedHero> = emptyList(),
         val heroCount: Int = heroes.size,
         val importedAtEpochMs: Long,
+        val formatVersion: Int = 1,
     )
 
     private companion object {
+        const val SAVED_FORMAT_VERSION = 2
         const val API_URL = "https://krivpfvxi0.execute-api.us-west-2.amazonaws.com/dev/getItems"
         const val CONNECT_TIMEOUT_MS = 20_000
         const val READ_TIMEOUT_MS = 120_000

@@ -1,5 +1,6 @@
 package com.e7orbit.optimizer
 
+import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7DataSource
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7GearStat
@@ -154,6 +155,72 @@ class GearOptimizerTest {
         // 无装备时仍然能算出基础面板
         assertEquals(100, builds.single().stats?.speed)
         assertEquals(1000, builds.single().stats?.attack)
+    }
+
+    @Test
+    fun resolvesScannedArtifactByNameForBuildPresentation() {
+        val artifact = testArtifact(code = "ef-test", name = "Rod of Amaryllis")
+        val scanned = E7ScannedHero(
+            id = 98L,
+            name = "Test Hero",
+            code = hero.code,
+            artifactName = "rod-of amaryllis",
+            artifactLevel = 27,
+        )
+
+        val build = buildEquippedHeroes(
+            scannedHeroes = listOf(scanned),
+            catalog = listOf(hero),
+            gears = emptyList(),
+            includeEmptyScannedHeroes = true,
+            artifacts = listOf(artifact),
+        ).single()
+
+        assertEquals(artifact, build.artifact)
+    }
+
+    @Test
+    fun selectedArtifactCodeOverridesScannedArtifact() {
+        val scannedArtifact = testArtifact(code = "ef-scan", name = "Scanned Artifact")
+        val selectedArtifact = testArtifact(code = "ef-selected", name = "Selected Artifact")
+        val scanned = E7ScannedHero(
+            id = 99L,
+            name = "Test Hero",
+            code = hero.code,
+            artifactCode = scannedArtifact.code,
+        )
+
+        val build = buildEquippedHeroes(
+            scannedHeroes = listOf(scanned),
+            catalog = listOf(hero),
+            gears = emptyList(),
+            includeEmptyScannedHeroes = true,
+            artifacts = listOf(scannedArtifact, selectedArtifact),
+            artifactCodes = mapOf(scanned.id to selectedArtifact.code),
+        ).single()
+
+        assertEquals(selectedArtifact, build.artifact)
+    }
+
+    @Test
+    fun retainsSelectedArtifactForBuildPresentation() {
+        val scanned = E7ScannedHero(
+            id = 99L,
+            name = "Test Hero",
+            code = hero.code,
+        )
+        val artifact = testArtifact()
+
+        val build = buildEquippedHeroes(
+            scannedHeroes = listOf(scanned),
+            catalog = listOf(hero),
+            gears = emptyList(),
+            includeEmptyScannedHeroes = true,
+            artifacts = listOf(artifact),
+            artifactCodes = mapOf(scanned.id to artifact.code),
+        ).single()
+
+        assertEquals(artifact, build.artifact)
     }
 
     @Test
@@ -458,6 +525,21 @@ class GearOptimizerTest {
         assertTrue(result.items.none { it.equippedHeroId != null })
         assertTrue(result.items.all { it.enhance == 15 })
     }
+
+    private fun testArtifact(
+        code: String = "ef-test",
+        name: String = "Test Artifact",
+    ) = E7Artifact(
+        code = code,
+        name = name,
+        rarity = 5,
+        role = "warrior",
+        attack = 100,
+        health = 200,
+        defense = null,
+        description = null,
+        iconUrl = "https://example.com/artifact.png",
+    )
 
     private fun gear(
         id: Long,

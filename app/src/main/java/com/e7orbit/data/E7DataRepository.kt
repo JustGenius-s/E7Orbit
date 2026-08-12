@@ -448,6 +448,10 @@ class E7DataRepository(
                 iconUrl = maintained?.iconUrl ?: maintained?.imageUrl,
                 baseAttack = maintained?.baseAttack,
                 baseHealth = maintained?.baseHealth,
+                aliases = buildList {
+                    addAll(fribbels?.aliases.orEmpty())
+                    fribbels?.name?.takeIf { !it.equals(name, ignoreCase = true) }?.let(::add)
+                }.distinct(),
             )
         }.sortedBy { it.name.lowercase() }
     }

@@ -26,6 +26,7 @@ android {
     sourceSets {
         getByName("main") {
             res.directories.add("src/main/res-gear-icons")
+            res.directories.add("src/main/res-optimizer-assets")
         }
     }
 
