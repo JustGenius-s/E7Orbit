@@ -1659,7 +1659,7 @@ function parseArtifactDetailPage(html, slug, fribbels, syncedAt) {
     max_description: maxDescription,
     lore,
     image_url: imageUrl,
-    icon_url: imageUrl,
+    icon_url: null,
     stats_attack: maxStats.attack ?? baseStats.attack ?? integerOrNull(fribbels?.stats?.attack),
     stats_health: maxStats.health ?? baseStats.health ?? integerOrNull(fribbels?.stats?.health),
     stats_defense: integerOrNull(fribbels?.stats?.defense),
@@ -1713,7 +1713,7 @@ async function artifactRowFallback(code, name, fribbels, syncedAt) {
     max_description: null,
     lore: null,
     image_url: imageUrl,
-    icon_url: imageUrl,
+    icon_url: null,
     stats_attack: integerOrNull(fribbels?.stats?.attack),
     stats_health: integerOrNull(fribbels?.stats?.health),
     stats_defense: integerOrNull(fribbels?.stats?.defense),
@@ -2042,9 +2042,13 @@ async function mirrorArtifactImages(artifacts) {
   for (const artifact of artifacts) {
     if (artifact.image_url) {
       const ext = extensionFromUrl(artifact.image_url);
-      const path = `artifacts/${artifact.code}${ext}`;
+      const path = `artifacts/${artifact.code}/image${ext}`;
       artifact.image_url = await mirrorImage(artifact.image_url, path);
-      artifact.icon_url = artifact.image_url;
+    }
+    if (artifact.icon_url) {
+      const ext = extensionFromUrl(artifact.icon_url);
+      const path = `artifacts/${artifact.code}/icon${ext}`;
+      artifact.icon_url = await mirrorImage(artifact.icon_url, path);
     }
     done += 1;
     if (done % 50 === 0 || done === artifacts.length) {
@@ -2111,6 +2115,11 @@ async function preserveManagedStatusEffectIcons(rows) {
   });
 }
 
+function managedArtifactAssetUrl(url, code, filename) {
+  const prefix = storagePublicUrl(`artifacts/${code}/${filename}`);
+  return String(url || "").startsWith(`${prefix}.`) ? url : null;
+}
+
 async function mergeExistingArtifactRows(rows) {
   if (!serviceRoleKey || !rows.length) return rows;
   const existingByCode = new Map(
@@ -2130,9 +2139,20 @@ async function mergeExistingArtifactRows(rows) {
     const lore = usesLocalFallback
       ? existing.lore || row.lore
       : row.lore || existing.lore;
+    const imageUrl = managedArtifactAssetUrl(existing.image_url, row.code, "image") ||
+      row.image_url || null;
+    const iconUrl = managedArtifactAssetUrl(existing.icon_url, row.code, "icon") ||
+      row.icon_url || null;
 
     if (!artifactLocalizationOnly) {
-      return { ...row, description, max_description: maxDescription, lore };
+      return {
+        ...row,
+        description,
+        max_description: maxDescription,
+        lore,
+        image_url: imageUrl,
+        icon_url: iconUrl,
+      };
     }
 
     return {
@@ -2278,8 +2298,8 @@ if (!exportDir) await validateSupabaseAdminAccess();
 
 if (artifactsOnly) {
   console.log("Starting artifact-only sync...");
-  const artifacts = await mergeExistingArtifactRows(
-    await mirrorArtifactImages(await syncArtifacts(syncedAt)),
+  const artifacts = await mirrorArtifactImages(
+    await mergeExistingArtifactRows(await syncArtifacts(syncedAt)),
   );
 
   if (exportDir) {
@@ -2468,8 +2488,8 @@ if (skills.length && !exportDir) {
 if (!skipArtifacts && !skillsOnly && !exportDir) {
   try {
     console.log("Starting artifact sync (inline)...");
-    const artifacts = await mergeExistingArtifactRows(
-      await mirrorArtifactImages(await syncArtifacts(syncedAt)),
+    const artifacts = await mirrorArtifactImages(
+      await mergeExistingArtifactRows(await syncArtifacts(syncedAt)),
     );
 
     if (artifacts.length) {

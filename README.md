@@ -61,7 +61,7 @@ Debug APK 位于 `app\build\outputs\apk\debug\`。
 - `hero_skills`：技能图标、名称、描述、冷却、倍率、强化效果，以及按展示顺序保存的 `buff_slugs`/`debuff_slugs`
 - `status_effect_catalog`：全局唯一的增益/减益名称、说明和图标
 - `hero_exclusive_equipment`：按英雄唯一关联的专属装备名称、图标、属性区间和三个强化选项
-- `artifact_catalog`：神器立绘、满级属性、基础/满级效果描述和背景故事
+- `artifact_catalog`：神器列表 icon、详情立绘、满级属性、基础/满级效果描述和背景故事
 
 ### 中文同步规则
 
@@ -135,6 +135,20 @@ $env:SUPABASE_SERVICE_ROLE_KEY = "你的 service-role key"
 node .\tools\sync-hero-catalog.mjs --artifacts-only
 Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
 ```
+
+神器立绘与列表 icon 使用独立的分层 Storage 对象：`Epic7/artifacts/{code}/image.png` 和 `Epic7/artifacts/{code}/icon.png`。首次从旧的 `Epic7/artifacts/{code}.png` 平铺结构迁移时，先用公开 anon key 做只读映射检查，再使用 secret key 上传、校验并更新 `artifact_catalog.image_url/icon_url`：
+
+```bash
+export SUPABASE_ANON_KEY='你的 anon key'
+python3 ./tools/upload-artifact-images.py --dry-run
+unset SUPABASE_ANON_KEY
+
+export SUPABASE_SECRET_KEY='你的 sb_secret_ 密钥'
+python3 ./tools/upload-artifact-images.py
+unset SUPABASE_SECRET_KEY
+```
+
+脚本从 `/Users/morisi/Temp/E7Data_curated/item_arti` 读取 `art*_fu.png` 立绘和 `icon_art*.png` icon，通过旧立绘 SHA-256 绑定数据库 code，并使用 `tools/artifact-asset-overrides.json` 补齐旧 URL 为空的记录。全部新对象上传、CDN 清理和 SHA-256 校验完成后才更新数据库；默认保留旧平铺对象。确认迁移后，使用 `python3 ./tools/upload-artifact-images.py --cleanup-legacy-only` 校验数据库和全部新对象，再删除 `.png`、`.webp`、`.jpg`、`.jpeg` 的旧平铺对象、清理 CDN 并确认旧 URL 不再可访问。
 
 需要先检查中文覆盖而不连接 Supabase 时，可导出本地 JSON：
 
