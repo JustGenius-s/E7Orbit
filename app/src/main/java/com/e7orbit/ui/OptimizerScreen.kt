@@ -322,7 +322,7 @@ private fun OptimizerEquipmentContent(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         if (displayedGears.isNotEmpty()) {
             item(key = "gear-summary") {

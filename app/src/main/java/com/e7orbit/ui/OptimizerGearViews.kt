@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,8 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import com.e7orbit.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -115,46 +115,131 @@ internal fun InventoryGearCard(
     equippedHero: EquippedHeroBuild?,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                GearItemDisplay(gear = gear, size = 56.dp)
-                Spacer(Modifier.width(8.dp))
-                Column(modifier = Modifier.weight(1f)) {
+        // 背景图保持原始宽高比，与卡片等宽（FillWidth），高度按比例，不变形。
+        Image(
+            painter = painterResource(R.drawable.e7_gear_item_frame_equip),
+            contentDescription = null,
+            modifier = Modifier.fillMaxWidth(),
+            contentScale = ContentScale.FillWidth,
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 42.dp, vertical = 30.dp),
+        ) {
+            // 顶部固定高度：装备、套装/部位和英雄身份信息始终占同一行。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(GearCardHeaderHeight),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GearItemDisplay(gear = gear, size = GearCardItemIconSize)
+                Spacer(Modifier.width(18.dp))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center,
+                ) {
                     Text(
-                        GearSetNames.shortName(gear.setCode, gear.setName),
+                        GearSetNames.fullName(gear.setCode, gear.setName),
                         fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    GearStatInline(stat = gear.mainStat, showModified = false)
-                }
-                Column(horizontalAlignment = Alignment.End) {
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        GearOptimizer.gearScore(gear).toString(),
-                        fontWeight = FontWeight.Bold,
+                        gear.slot.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    equippedHero?.let { build ->
-                        EquippedHeroAvatar(
-                            build = build,
-                            modifier = Modifier.size(30.dp),
+                    Spacer(Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "装备分数",
+                            color = GearItemLevelColor,
+                            fontSize = 13.sp,
+                            maxLines = 1,
                         )
-                    } ?: Text(
-                        "库存",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        Spacer(Modifier.width(4.dp))
+                        GearScoreDigits(
+                            score = GearOptimizer.gearScore(gear),
+                            modifier = Modifier.offset(y = 1.dp),
+                            digitHeight = 16.dp,
+                        )
+                    }
+                }
+                equippedHero?.let { build ->
+                    Spacer(Modifier.width(8.dp))
+                    OptimizerHeroIdentity(
+                        build = build,
+                        modifier = Modifier
+                            .width(74.dp)
+                            .fillMaxHeight(),
+                        showLevelAndStars = false,
                     )
                 }
             }
+            Spacer(Modifier.height(GearCardHeaderToMainStatSpacing))
+            // 主属性行：图标 + 标签（左） / 数值（右）。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                gearStatIconRes(gear.mainStat.type)?.let { resId ->
+                    GearAssetIcon(
+                        resId = resId,
+                        contentDescription = gear.mainStat.label,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    gear.mainStat.label,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    gear.mainStat.displayValue(),
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            }
+            // 副属性：每条一行，标签左 / 数值右。
             if (gear.substats.isNotEmpty()) {
-                Spacer(Modifier.height(7.dp))
-                GearSubstatsRow(substats = gear.substats)
+                Spacer(Modifier.height(GearCardMainToSubstatsSpacing))
+                gear.substats.forEach { stat ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = GearCardSubstatHorizontalInset),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            stat.label,
+                            color = GearCardSubstatTextColor,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            stat.displayValue(),
+                            color = GearCardSubstatTextColor,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
         }
     }
@@ -173,6 +258,12 @@ internal fun EquippedHeroAvatar(
     )
 }
 
+private val GearCardHeaderHeight = 110.dp
+private val GearCardItemIconSize = 84.dp
+private val GearCardHeaderToMainStatSpacing = 8.dp
+private val GearCardMainToSubstatsSpacing = 10.dp
+private val GearCardSubstatHorizontalInset = 6.dp
+private val GearCardSubstatTextColor = Color(0xFFE6E6E6)
 private val GearItemLevelColor = Color(0xFFEBCB63)
 private val GearItemTextShadow = Shadow(color = Color.Black, blurRadius = 3f)
 
@@ -311,11 +402,37 @@ internal fun GearSetSummaryRow(sets: List<EquippedSetSummary>) {
     }
 }
 
+/** 装等（gear score）用 game_eff_exp 数字图片逐位渲染。 */
+@Composable
+internal fun GearScoreDigits(
+    score: Int,
+    modifier: Modifier = Modifier,
+    digitHeight: Dp = 18.dp,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        score.coerceAtLeast(0).toString().forEach { digit ->
+            gearScoreDigitRes(digit)?.let { resId ->
+                GearAssetIcon(
+                    resId = resId,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .height(digitHeight)
+                        .width(digitHeight * gearScoreDigitAspectRatio(digit)),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun GearStatInline(
     stat: E7GearStat,
     modifier: Modifier = Modifier,
     showModified: Boolean = true,
+    textColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
     Row(
         modifier = modifier,
@@ -332,7 +449,7 @@ internal fun GearStatInline(
         Text(
             text = "${stat.label} ${stat.displayValue()}${if (showModified && stat.modified) "*" else ""}",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = textColor,
             maxLines = 1,
         )
     }
@@ -342,13 +459,14 @@ internal fun GearStatInline(
 internal fun GearSubstatsRow(
     substats: List<E7GearStat>,
     modifier: Modifier = Modifier,
+    textColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
     LazyRow(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(substats, key = E7GearStat::type) { stat ->
-            GearStatInline(stat)
+            GearStatInline(stat, textColor = textColor)
         }
     }
 }

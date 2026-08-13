@@ -127,9 +127,10 @@ internal fun EquippedHeroCard(
 }
 
 @Composable
-private fun OptimizerHeroIdentity(
+internal fun OptimizerHeroIdentity(
     build: EquippedHeroBuild,
     modifier: Modifier = Modifier,
+    showLevelAndStars: Boolean = true,
 ) {
     BoxWithConstraints(modifier = modifier) {
         val avatarSize = (maxWidth - 4.dp).coerceIn(54.dp, 82.dp)
@@ -138,16 +139,18 @@ private fun OptimizerHeroIdentity(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Text(
-                text = "Lv. Max",
-                color = OptimizerHeroLevel,
-                fontSize = 12.sp,
-                lineHeight = 13.sp,
-                fontWeight = FontWeight.Black,
-                style = MaterialTheme.typography.labelLarge.copy(shadow = GameTextShadow),
-                maxLines = 1,
-            )
-            Spacer(Modifier.height(2.dp))
+            if (showLevelAndStars) {
+                Text(
+                    text = "Lv. Max",
+                    color = OptimizerHeroLevel,
+                    fontSize = 12.sp,
+                    lineHeight = 13.sp,
+                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.labelLarge.copy(shadow = GameTextShadow),
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(2.dp))
+            }
             Box(
                 modifier = Modifier.size(avatarSize),
                 contentAlignment = Alignment.Center,
@@ -198,9 +201,11 @@ private fun OptimizerHeroIdentity(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
             )
-            val rarity = build.scannedHero?.stars ?: build.hero?.rarity
-            if (rarity != null) {
-                HeroStars(stars = rarity, iconSize = 10.dp)
+            if (showLevelAndStars) {
+                val rarity = build.scannedHero?.stars ?: build.hero?.rarity
+                if (rarity != null) {
+                    HeroStars(stars = rarity, iconSize = 10.dp)
+                }
             }
         }
     }

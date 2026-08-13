@@ -64,6 +64,26 @@ internal fun powerDigitRes(digit: Char): Int? = when (digit) {
 
 internal fun powerDigitWidth(digit: Char): Int = if (digit == '1') 24 else 46
 
+/** 装等（gear score）数字字形，game_eff_exp 系列，高 34，数字 1 较窄。 */
+@DrawableRes
+internal fun gearScoreDigitRes(digit: Char): Int? = when (digit) {
+    '0' -> R.drawable.e7_gear_score_0
+    '1' -> R.drawable.e7_gear_score_1
+    '2' -> R.drawable.e7_gear_score_2
+    '3' -> R.drawable.e7_gear_score_3
+    '4' -> R.drawable.e7_gear_score_4
+    '5' -> R.drawable.e7_gear_score_5
+    '6' -> R.drawable.e7_gear_score_6
+    '7' -> R.drawable.e7_gear_score_7
+    '8' -> R.drawable.e7_gear_score_8
+    '9' -> R.drawable.e7_gear_score_9
+    else -> null
+}
+
+/** digit 宽度 / 高度(34) 的纵横比，用于按高度推导宽度。 */
+internal fun gearScoreDigitAspectRatio(digit: Char): Float =
+    (if (digit == '1') 18f else 24f) / 34f
+
 @DrawableRes
 internal fun speedBadgeRes(@Suppress("UNUSED_PARAMETER") speed25Count: Int): Int =
     R.drawable.e7_speed_badge_25_5
