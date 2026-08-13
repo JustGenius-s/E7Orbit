@@ -91,6 +91,7 @@ internal fun HeroDetailScreen(
     onOpenWikiAuth: () -> Unit,
     onSignOutWikiEditor: () -> Unit,
     onSaveWikiHero: (E7Hero) -> Unit,
+    onUploadWikiImage: (String, ByteArray, (String?) -> Unit) -> Unit,
     onClearWikiEditorFeedback: () -> Unit,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
@@ -189,6 +190,8 @@ internal fun HeroDetailScreen(
                             ) {
                                 ExclusiveEquipmentEditor(
                                     equipment = draft.exclusiveEquipment,
+                                    heroCode = hero.code,
+                                    onUpload = onUploadWikiImage,
                                     onChange = {
                                         workingDraft = draft.copy(exclusiveEquipment = it)
                                     },
@@ -238,8 +241,10 @@ internal fun HeroDetailScreen(
                             HeroSkillEditor(
                                 index = index,
                                 skill = skill,
+                                heroCode = hero.code,
                                 buffStatusEffects = buffStatusEffects,
                                 debuffStatusEffects = debuffStatusEffects,
+                                onUpload = onUploadWikiImage,
                                 onChange = { updated ->
                                     workingDraft = draft.copy(
                                         skills = draft.skills.toMutableList().apply {
@@ -259,29 +264,26 @@ internal fun HeroDetailScreen(
                                 title = "图像资源",
                                 supportingText = "头像、缩略图与立绘地址",
                             ) {
-                                WikiTextField(
+                                WikiImageField(
                                     value = draft.iconUrl,
-                                    onValueChange = {
-                                        workingDraft = draft.copy(iconUrl = it)
-                                    },
+                                    onValueChange = { workingDraft = draft.copy(iconUrl = it) },
                                     label = "头像 URL",
-                                    keyboardType = KeyboardType.Uri,
+                                    uploadPath = "heroes/${hero.code}/icon.png",
+                                    onUpload = onUploadWikiImage,
                                 )
-                                WikiTextField(
+                                WikiImageField(
                                     value = draft.thumbnailUrl,
-                                    onValueChange = {
-                                        workingDraft = draft.copy(thumbnailUrl = it)
-                                    },
+                                    onValueChange = { workingDraft = draft.copy(thumbnailUrl = it) },
                                     label = "缩略图 URL",
-                                    keyboardType = KeyboardType.Uri,
+                                    uploadPath = "heroes/${hero.code}/thumbnail.png",
+                                    onUpload = onUploadWikiImage,
                                 )
-                                WikiTextField(
+                                WikiImageField(
                                     value = draft.imageUrl,
-                                    onValueChange = {
-                                        workingDraft = draft.copy(imageUrl = it)
-                                    },
+                                    onValueChange = { workingDraft = draft.copy(imageUrl = it) },
                                     label = "立绘 URL",
-                                    keyboardType = KeyboardType.Uri,
+                                    uploadPath = "heroes/${hero.code}/art.webp",
+                                    onUpload = onUploadWikiImage,
                                 )
                             }
                         }

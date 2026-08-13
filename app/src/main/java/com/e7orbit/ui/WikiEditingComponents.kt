@@ -35,7 +35,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import com.e7orbit.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -228,5 +241,74 @@ internal fun WikiEditorError(
             modifier = Modifier.padding(16.dp),
             style = MaterialTheme.typography.bodyMedium,
         )
+    }
+}
+
+@Composable
+internal fun WikiImageField(
+    value: String,
+    label: String,
+    uploadPath: String,
+    onValueChange: (String) -> Unit,
+    onUpload: (path: String, bytes: ByteArray, onResult: (String?) -> Unit) -> Unit,
+) {
+    val context = LocalContext.current
+    var uploading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    val pickImage = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        uploading = true
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }.getOrNull()
+            }
+            if (bytes == null) {
+                uploading = false
+            } else {
+                onUpload(uploadPath, bytes) { url ->
+                    uploading = false
+                    url?.let(onValueChange)
+                }
+            }
+        }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        WikiTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = label,
+            modifier = Modifier.weight(1f),
+            keyboardType = KeyboardType.Uri,
+        )
+        IconButton(
+            onClick = {
+                pickImage.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            enabled = !uploading,
+        ) {
+            if (uploading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.ic_upload),
+                    contentDescription = "上传$label",
+                )
+            }
+        }
     }
 }

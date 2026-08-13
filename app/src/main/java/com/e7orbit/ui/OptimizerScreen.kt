@@ -364,7 +364,10 @@ private fun OptimizerEquipmentContent(
                 )
             }
         } else {
-            items(filteredGears, key = E7Gear::id) { gear ->
+            // Key by index too: imported gear ids can collide across sources, and a
+            // duplicate LazyColumn key crashes the whole list.
+            items(filteredGears.size, key = { index -> "${filteredGears[index].id}#$index" }) { index ->
+                val gear = filteredGears[index]
                 InventoryGearCard(
                     gear = gear,
                     equippedHero = builds.firstOrNull {

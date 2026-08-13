@@ -63,6 +63,7 @@ internal fun ArtifactDetailScreen(
     onOpenWikiAuth: () -> Unit,
     onSignOutWikiEditor: () -> Unit,
     onSaveWikiArtifact: (E7Artifact) -> Unit,
+    onUploadWikiImage: (String, ByteArray, (String?) -> Unit) -> Unit,
     onClearWikiEditorFeedback: () -> Unit,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
@@ -196,6 +197,7 @@ internal fun ArtifactDetailScreen(
                     editing = editing,
                     draft = workingDraft,
                     onDraftChange = { workingDraft = it },
+                    onUploadWikiImage = onUploadWikiImage,
                 )
             }
         } else {
@@ -233,6 +235,7 @@ internal fun ArtifactDetailScreen(
                     editing = editing,
                     draft = workingDraft,
                     onDraftChange = { workingDraft = it },
+                    onUploadWikiImage = onUploadWikiImage,
                 )
             }
         }
@@ -359,6 +362,7 @@ private fun ArtifactDetailLevels(
     editing: Boolean = false,
     draft: ArtifactWikiDraft = artifact.toWikiDraft(),
     onDraftChange: (ArtifactWikiDraft) -> Unit = {},
+    onUploadWikiImage: (String, ByteArray, (String?) -> Unit) -> Unit = { _, _, _ -> },
 ) {
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -415,17 +419,19 @@ private fun ArtifactDetailLevels(
                     title = "图像资源",
                     supportingText = "卡面与图标地址",
                 ) {
-                    WikiTextField(
+                    WikiImageField(
                         value = draft.imageUrl,
                         onValueChange = { onDraftChange(draft.copy(imageUrl = it)) },
                         label = "卡面 URL",
-                        keyboardType = KeyboardType.Uri,
+                        uploadPath = "artifacts/${artifact.code}/image.png",
+                        onUpload = onUploadWikiImage,
                     )
-                    WikiTextField(
+                    WikiImageField(
                         value = draft.iconUrl,
                         onValueChange = { onDraftChange(draft.copy(iconUrl = it)) },
                         label = "图标 URL",
-                        keyboardType = KeyboardType.Uri,
+                        uploadPath = "artifacts/${artifact.code}/icon.png",
+                        onUpload = onUploadWikiImage,
                     )
                 }
             }

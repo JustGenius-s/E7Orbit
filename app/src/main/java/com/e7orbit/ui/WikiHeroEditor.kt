@@ -532,6 +532,8 @@ internal fun HeroStatsEditor(
 @Composable
 internal fun ExclusiveEquipmentEditor(
     equipment: ExclusiveEquipmentWikiDraft?,
+    heroCode: String,
+    onUpload: (String, ByteArray, (String?) -> Unit) -> Unit,
     onChange: (ExclusiveEquipmentWikiDraft?) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -555,11 +557,12 @@ internal fun ExclusiveEquipmentEditor(
                 singleLine = false,
                 minLines = 2,
             )
-            WikiTextField(
+            WikiImageField(
                 value = current.iconUrl,
                 onValueChange = { onChange(current.copy(iconUrl = it)) },
                 label = "图标 URL",
-                keyboardType = KeyboardType.Uri,
+                uploadPath = "exclusive-equipment/$heroCode/icon.png",
+                onUpload = onUpload,
             )
             EditorDropdown(
                 value = current.statType,
@@ -636,9 +639,11 @@ internal fun ExclusiveEquipmentEditor(
 internal fun HeroSkillEditor(
     index: Int,
     skill: HeroSkillWikiDraft,
+    heroCode: String,
     buffStatusEffects: List<E7StatusEffect>,
     debuffStatusEffects: List<E7StatusEffect>,
     onChange: (HeroSkillWikiDraft) -> Unit,
+    onUpload: (String, ByteArray, (String?) -> Unit) -> Unit,
     onDelete: () -> Unit,
 ) {
     Surface(
@@ -688,11 +693,12 @@ internal fun HeroSkillEditor(
                     )
                 },
             )
-            WikiTextField(
+            WikiImageField(
                 value = skill.iconUrl,
                 onValueChange = { onChange(skill.copy(iconUrl = it)) },
                 label = "图标 URL",
-                keyboardType = KeyboardType.Uri,
+                uploadPath = "skills/$heroCode/skill_${skill.slot.toIntOrNull() ?: (index + 1)}.webp",
+                onUpload = onUpload,
             )
             WikiTextField(
                 value = skill.description,

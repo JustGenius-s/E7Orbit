@@ -118,6 +118,16 @@ Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
 
 切换到 Codex 缩略图源后首次运行需要增加 `--force-hero-art` 覆盖之前的 pose 版本；之后已存在的 `art.webp` 会跳过下载。可结合 `--hero-codes=c2099` 先验证指定英雄，或结合 `--export-dir=tmp/art` 在不连接 Supabase 的情况下导出 WebP 和 `hero_art.json`。
 
+如果 `Epic7/heroes/{code}/` 已经包含完整的自维护素材，只统一更新数据库中的英雄立绘、icon 和 thumbnail URL，不重新抓取第三方图片，使用：
+
+```bash
+export SUPABASE_SECRET_KEY='你的 sb_secret_ 密钥'
+node ./tools/sync-hero-catalog.mjs --hero-assets-only
+unset SUPABASE_SECRET_KEY
+```
+
+该模式先验证每个英雄的 `art.webp`、`icon.png` 和 `thumbnail.png`，缺少 `art.webp` 但存在 `image.png` 时会生成标准 WebP；任一素材仍缺失则停止数据库更新。验证通过后只 PATCH `hero_catalog.image_url/icon_url/thumbnail_url`，并重新读取数据库确认全部 URL 都指向对应的 Storage 对象。可结合 `--hero-codes=c2099` 只处理指定英雄。
+
 如果只同步专属装备，已有数据库需要先执行 [`supabase/add-hero-exclusive-equipment.sql`](supabase/add-hero-exclusive-equipment.sql)：
 
 ```powershell

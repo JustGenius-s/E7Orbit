@@ -62,6 +62,7 @@ const skillsOnly = process.argv.includes("--skills-only");
 const heroNamesOnly = process.argv.includes("--hero-names-only");
 const growthOnly = process.argv.includes("--growth-only");
 const heroArtOnly = process.argv.includes("--hero-art-only");
+const heroAssetsOnly = process.argv.includes("--hero-assets-only");
 const forceHeroArt = process.argv.includes("--force-hero-art");
 const artifactsOnly = process.argv.includes("--artifacts-only");
 const artifactLocalizationOnly = process.argv.includes("--artifact-localization-only");
@@ -1834,12 +1835,18 @@ function contentTypeForExtension(ext) {
 }
 
 async function storageObjectExists(path) {
-  try {
-    const response = await fetch(storagePublicUrl(path), { method: "HEAD" });
-    return response.ok;
-  } catch (_error) {
-    return false;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(storagePublicUrl(path), { method: "HEAD" });
+      if (response.ok) return true;
+    } catch (_error) {
+      // Retry transient Storage or network failures before treating an object as missing.
+    }
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 200));
+    }
   }
+  return false;
 }
 
 async function downloadImage(url) {
@@ -1989,6 +1996,95 @@ async function mirrorHeroImages(heroes) {
     }
   }
   return mirrorHeroArtworkRows(heroes);
+}
+
+async function managedHeroAssetRows(heroes) {
+  console.log(`Validating managed assets for ${heroes.length} heroes...`);
+  let done = 0;
+  const rows = [];
+  for (let start = 0; start < heroes.length; start += concurrency) {
+    const group = heroes.slice(start, start + concurrency);
+    const resolved = await Promise.all(group.map(async (hero) => {
+      const root = `heroes/${hero.code}`;
+      const artPath = `${root}/art.webp`;
+      if (!(await storageObjectExists(artPath))) {
+        const sourcePath = `${root}/image.png`;
+        if (!(await storageObjectExists(sourcePath))) {
+          throw new Error(`${hero.code} is missing both art.webp and image.png`);
+        }
+        const body = await transformHeroArtwork(storagePublicUrl(sourcePath));
+        await uploadToStorage(artPath, body, "image/webp");
+        console.log(`Generated ${artPath} from image.png`);
+      }
+
+      const paths = {
+        image_url: artPath,
+        icon_url: `${root}/icon.png`,
+        thumbnail_url: `${root}/thumbnail.png`,
+      };
+      const missing = [];
+      for (const path of Object.values(paths)) {
+        if (!(await storageObjectExists(path))) missing.push(path);
+      }
+      if (missing.length) {
+        throw new Error(`${hero.code} is missing managed assets: ${missing.join(", ")}`);
+      }
+
+      done += 1;
+      if (done % 50 === 0 || done === heroes.length) {
+        console.log(`Validated hero assets ${done}/${heroes.length}`);
+      }
+      return {
+        code: hero.code,
+        image_url: storagePublicUrl(paths.image_url),
+        icon_url: storagePublicUrl(paths.icon_url),
+        thumbnail_url: storagePublicUrl(paths.thumbnail_url),
+      };
+    }));
+    rows.push(...resolved);
+  }
+  return rows;
+}
+
+async function updateHeroAssetUrls(rows) {
+  let done = 0;
+  for (let start = 0; start < rows.length; start += concurrency) {
+    const group = rows.slice(start, start + concurrency);
+    await Promise.all(group.map(async ({ code, ...assets }) => {
+      const response = await fetch(
+        `${supabaseUrl}/rest/v1/hero_catalog?code=eq.${encodeURIComponent(code)}`,
+        {
+          method: "PATCH",
+          headers: supabaseAdminHeaders({
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          }),
+          body: JSON.stringify(assets),
+        },
+      );
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Supabase hero asset update failed for ${code} (${response.status}): ${text.slice(0, 500)}`);
+      }
+      done += 1;
+      if (done % 50 === 0 || done === rows.length) {
+        console.log(`Updated hero asset URLs ${done}/${rows.length}`);
+      }
+    }));
+  }
+}
+
+function assertHeroAssetUrls(actualRows, expectedRows) {
+  const actualByCode = new Map(actualRows.map((row) => [row.code, row]));
+  const mismatches = expectedRows.filter((expected) => {
+    const actual = actualByCode.get(expected.code);
+    return !actual || actual.image_url !== expected.image_url ||
+      actual.icon_url !== expected.icon_url ||
+      actual.thumbnail_url !== expected.thumbnail_url;
+  });
+  if (mismatches.length) {
+    throw new Error(`Hero asset URL verification failed for: ${mismatches.map((row) => row.code).join(", ")}`);
+  }
 }
 
 async function writeHeroArtExport(directory, heroes) {
@@ -2311,6 +2407,26 @@ if (artifactsOnly) {
     await upsert("artifact_catalog", rows, "code");
   }
   console.log(`Artifact catalog sync completed: ${artifacts.length} artifacts`);
+  process.exit(0);
+}
+
+if (heroAssetsOnly) {
+  if (exportDir) throw new Error("--hero-assets-only updates Supabase and cannot be exported");
+  console.log("Starting managed hero-asset URL sync...");
+  const allHeroes = await loadRestRows("hero_catalog");
+  const heroes = requestedHeroCodes.size
+    ? allHeroes.filter((hero) => requestedHeroCodes.has(hero.code))
+    : allHeroes;
+  const matchedCodes = new Set(heroes.map((hero) => hero.code));
+  const missingCodes = [...requestedHeroCodes].filter((code) => !matchedCodes.has(code));
+  if (missingCodes.length) throw new Error(`Unknown hero codes: ${missingCodes.join(", ")}`);
+  if (!heroes.length) throw new Error("hero_catalog was empty");
+
+  const assetRows = await managedHeroAssetRows(heroes);
+  await updateHeroAssetUrls(assetRows);
+  const persistedRows = await loadRestRows("hero_catalog");
+  assertHeroAssetUrls(persistedRows, assetRows);
+  console.log(`Managed hero-asset URL sync completed: ${assetRows.length} heroes`);
   process.exit(0);
 }
 

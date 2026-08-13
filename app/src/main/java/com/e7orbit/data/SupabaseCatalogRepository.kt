@@ -14,6 +14,8 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.storage.Storage
+import io.github.jan.supabase.storage.storage
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -61,6 +63,7 @@ class SupabaseCatalogRepository(
                         flowType = FlowType.PKCE
                     }
                     install(Postgrest)
+                    install(Storage)
                 }
             }
         }
@@ -236,6 +239,15 @@ class SupabaseCatalogRepository(
                 allowStaleFallback = false,
             ),
         ) { "Wiki 保存成功，但无法重新读取云端资料" }
+    }
+
+    internal suspend fun uploadWikiImage(storagePath: String, bytes: ByteArray): String {
+        val configuredClient = requireNotNull(client) { "Supabase 尚未配置" }
+        configuredClient.auth.awaitInitialization()
+        checkNotNull(configuredClient.auth.currentUserOrNull()) { "请先登录 Wiki 管理员账号" }
+        configuredClient.storage.from("Epic7").upload(storagePath, bytes) { upsert = true }
+        val base = configuredClient.storage.from("Epic7").publicUrl(storagePath)
+        return "$base?v=${System.currentTimeMillis()}"
     }
 
     internal suspend fun saveWikiArtifact(artifact: E7Artifact): SupabaseCatalog {
