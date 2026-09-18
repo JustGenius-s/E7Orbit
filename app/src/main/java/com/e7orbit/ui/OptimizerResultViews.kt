@@ -281,7 +281,7 @@ internal fun ArtifactSelector(
                 )
             }
         }
-        if (selectedMismatch && selected != null) {
+        if (selectedMismatch) {
             Spacer(Modifier.height(6.dp))
             Text(
                 "「${selected.name}」与当前英雄职业不符，未生效。",
