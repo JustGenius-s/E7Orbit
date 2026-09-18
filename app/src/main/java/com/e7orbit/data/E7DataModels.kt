@@ -140,6 +140,7 @@ data class E7Artifact(
     val iconUrl: String? = null,
     val baseAttack: Int? = null,
     val baseHealth: Int? = null,
+    val aliases: List<String> = emptyList(),
 )
 
 enum class E7DataSource {
@@ -149,6 +150,8 @@ enum class E7DataSource {
 data class E7DataSnapshot(
     val heroes: List<E7Hero> = emptyList(),
     val artifacts: List<E7Artifact> = emptyList(),
+    val buffStatusEffects: List<E7StatusEffect> = emptyList(),
+    val debuffStatusEffects: List<E7StatusEffect> = emptyList(),
     val fetchedAtEpochMs: Long = 0L,
 )
 

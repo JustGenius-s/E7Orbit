@@ -26,6 +26,7 @@ android {
     sourceSets {
         getByName("main") {
             res.directories.add("src/main/res-gear-icons")
+            res.directories.add("src/main/res-optimizer-assets")
         }
     }
 
@@ -121,6 +122,7 @@ dependencies {
     implementation(platform(libs.supabase.bom))
     implementation(libs.supabase.auth)
     implementation(libs.supabase.postgrest)
+    implementation(libs.supabase.storage)
     implementation(libs.ktor.client.android)
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)

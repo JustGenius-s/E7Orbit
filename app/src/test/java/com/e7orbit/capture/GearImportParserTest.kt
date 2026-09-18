@@ -89,7 +89,7 @@ class GearImportParserTest {
     @Test
     fun parsesScannedHeroIdentity() {
         val unit = Json.parseToJsonElement(
-            """{"id":987654321,"code":"c1001","name":"Ruele of Light","g":6,"z":6}""",
+            """{"id":987654321,"code":"c1001","name":"Ruele of Light","g":6,"z":6,"artifactName":"Rod of Amaryllis","artifactLevel":"27"}""",
         ).jsonObject
 
         val hero = GearImportParser.parseHero(unit)
@@ -100,6 +100,23 @@ class GearImportParserTest {
         assertEquals("Ruele of Light", hero?.name)
         assertEquals(6, hero?.stars)
         assertEquals(6, hero?.awaken)
+        assertEquals("Rod of Amaryllis", hero?.artifactName)
+        assertEquals(27, hero?.artifactLevel)
+    }
+
+    @Test
+    fun parsesScannedArtifactCodeAndIgnoresNoneValues() {
+        val withCode = Json.parseToJsonElement(
+            """{"id":1,"name":"Hero","artifactCode":"efh01","artifactName":"None"}""",
+        ).jsonObject
+        val withoutArtifact = Json.parseToJsonElement(
+            """{"id":2,"name":"Hero","artifactCode":"undefined","artifactLevel":"None"}""",
+        ).jsonObject
+
+        assertEquals("efh01", GearImportParser.parseHero(withCode)?.artifactCode)
+        assertEquals(null, GearImportParser.parseHero(withCode)?.artifactName)
+        assertEquals(null, GearImportParser.parseHero(withoutArtifact)?.artifactCode)
+        assertEquals(null, GearImportParser.parseHero(withoutArtifact)?.artifactLevel)
     }
 
     @Test

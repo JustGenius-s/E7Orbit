@@ -10,32 +10,32 @@ class SupabaseCatalogRepositoryTest {
             heroCode = "c1067",
             slot = 3,
             name = "Shining Star",
-            buffSlugs = listOf("extra-turn", "cleanse"),
-            debuffSlugs = listOf("stun"),
+            buffSlugs = listOf("efct_ex_turn", "efct_cleanse"),
+            debuffSlugs = listOf("stic_stun"),
         )
         val effects = listOf(
             SupabaseStatusEffectRow(
-                slug = "cleanse",
+                slug = "efct_cleanse",
                 label = "Cleanse",
                 description = "Removes debuffs",
-                iconUrl = "https://example.com/cleanse.png",
+                iconUrl = null,
             ),
             SupabaseStatusEffectRow(
-                slug = "extra-turn",
+                slug = "efct_ex_turn",
                 label = "Extra Turn",
             ),
             SupabaseStatusEffectRow(
-                slug = "stun",
+                slug = "stic_stun",
                 label = "Stun",
             ),
         ).associateBy(SupabaseStatusEffectRow::slug)
 
         val domain = skill.toDomain(effects)
 
-        assertEquals(listOf("extra-turn", "cleanse"), domain.buffs.map(E7StatusEffect::slug))
-        assertEquals(listOf("stun"), domain.debuffs.map(E7StatusEffect::slug))
+        assertEquals(listOf("efct_ex_turn", "efct_cleanse"), domain.buffs.map(E7StatusEffect::slug))
+        assertEquals(listOf("stic_stun"), domain.debuffs.map(E7StatusEffect::slug))
         assertEquals("Removes debuffs", domain.buffs.last().description)
-        assertEquals("https://example.com/cleanse.png", domain.buffs.last().iconUrl)
+        assertEquals(null, domain.buffs.last().iconUrl)
     }
 
     @Test

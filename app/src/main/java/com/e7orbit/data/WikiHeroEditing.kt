@@ -58,8 +58,8 @@ data class HeroSkillWikiDraft(
     val canEnhance: Boolean,
     val values: List<JsonElement>,
     val enhancements: String,
-    val buffSlugs: String,
-    val debuffSlugs: String,
+    val buffSlugs: List<String>,
+    val debuffSlugs: List<String>,
 )
 
 fun E7Hero.toWikiDraft(): HeroWikiDraft = HeroWikiDraft(
@@ -174,8 +174,8 @@ fun emptyHeroSkillWikiDraft(slot: Int): HeroSkillWikiDraft = HeroSkillWikiDraft(
     canEnhance = false,
     values = emptyList(),
     enhancements = "",
-    buffSlugs = "",
-    debuffSlugs = "",
+    buffSlugs = emptyList(),
+    debuffSlugs = emptyList(),
 )
 
 private fun E7HeroExclusiveEquipment.toWikiDraft(): ExclusiveEquipmentWikiDraft {
@@ -215,8 +215,8 @@ private fun E7HeroSkill.toWikiDraft(): HeroSkillWikiDraft = HeroSkillWikiDraft(
     canEnhance = canEnhance,
     values = values,
     enhancements = enhancements.joinToString("\n"),
-    buffSlugs = buffs.joinToString(", ", transform = E7StatusEffect::slug),
-    debuffSlugs = debuffs.joinToString(", ", transform = E7StatusEffect::slug),
+    buffSlugs = buffs.map(E7StatusEffect::slug).distinct(),
+    debuffSlugs = debuffs.map(E7StatusEffect::slug).distinct(),
 )
 
 private fun ExclusiveEquipmentWikiDraft.toEquipment(original: E7Hero): E7HeroExclusiveEquipment {
@@ -276,10 +276,10 @@ private fun HeroSkillWikiDraft.toSkill(originalSkills: List<E7HeroSkill>): E7Her
         canEnhance = canEnhance,
         values = values,
         enhancements = enhancements.toListValues(),
-        buffs = buffSlugs.toSlugValues().map { slug ->
+        buffs = buffSlugs.distinct().map { slug ->
             original?.buffs?.firstOrNull { it.slug == slug } ?: E7StatusEffect(slug, slug)
         },
-        debuffs = debuffSlugs.toSlugValues().map { slug ->
+        debuffs = debuffSlugs.distinct().map { slug ->
             original?.debuffs?.firstOrNull { it.slug == slug } ?: E7StatusEffect(slug, slug)
         },
     )
@@ -307,11 +307,6 @@ private fun String.toListValues(): List<String> = lineSequence()
     .map(String::trim)
     .filter(String::isNotEmpty)
     .toList()
-
-private fun String.toSlugValues(): List<String> = split(Regex("[,\\n]"))
-    .map(String::trim)
-    .filter(String::isNotEmpty)
-    .distinct()
 
 private fun String.requireNotEmpty(message: String): String = also {
     require(it.isNotEmpty()) { message }

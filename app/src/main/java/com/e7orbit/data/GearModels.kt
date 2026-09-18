@@ -9,6 +9,9 @@ data class E7ScannedHero(
     val code: String? = null,
     val stars: Int? = null,
     val awaken: Int? = null,
+    val artifactCode: String? = null,
+    val artifactName: String? = null,
+    val artifactLevel: Int? = null,
 )
 
 @Serializable

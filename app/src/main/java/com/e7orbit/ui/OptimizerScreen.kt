@@ -279,8 +279,6 @@ private fun OptimizerHeroesContent(
             else -> items(sortedBuilds, key = EquippedHeroBuild::instanceId) { build ->
                 EquippedHeroCard(
                     build = build,
-                    preferenceConfigured = state.optimizer.heroPreferences[build.instanceId]
-                        ?.isConfigured == true,
                     onClick = { onHeroSelected(build.instanceId) },
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = animatedVisibilityScope,
@@ -324,7 +322,7 @@ private fun OptimizerEquipmentContent(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         if (displayedGears.isNotEmpty()) {
             item(key = "gear-summary") {
@@ -366,7 +364,10 @@ private fun OptimizerEquipmentContent(
                 )
             }
         } else {
-            items(filteredGears, key = E7Gear::id) { gear ->
+            // Key by index too: imported gear ids can collide across sources, and a
+            // duplicate LazyColumn key crashes the whole list.
+            items(filteredGears.size, key = { index -> "${filteredGears[index].id}#$index" }) { index ->
+                val gear = filteredGears[index]
                 InventoryGearCard(
                     gear = gear,
                     equippedHero = builds.firstOrNull {
@@ -553,6 +554,18 @@ internal fun OptimizerHeroDetailScreen(
                         "缺少可匹配的英雄基础属性",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+            }
+        }
+
+        build.hero?.exclusiveEquipment?.let { equipment ->
+            item(key = "exclusive-equipment") {
+                SectionSurface(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    SectionTitle(title = "专属装备", detail = "按属性最大值计入面板")
+                    Spacer(Modifier.height(10.dp))
+                    ExclusiveEquipmentDetail(equipment)
+                }
             }
         }
 

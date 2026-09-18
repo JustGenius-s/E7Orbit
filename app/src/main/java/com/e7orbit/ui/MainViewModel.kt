@@ -18,9 +18,11 @@ import com.e7orbit.data.E7Artifact
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7Hero
 import com.e7orbit.data.E7ScannedHero
+import com.e7orbit.data.E7StatusEffect
 import com.e7orbit.data.E7DataSnapshot
 import com.e7orbit.data.GearImportPhase
 import com.e7orbit.data.HeroRtaAnalysis
+import com.e7orbit.data.AssetPreloadService
 import com.e7orbit.data.RtaSeason
 import com.e7orbit.data.RtaTier
 import com.e7orbit.data.WikiAuthLinkType
@@ -174,6 +176,8 @@ data class DataUiState(
     val scannedHeroes: List<E7ScannedHero> = emptyList(),
     val heroes: List<E7Hero> = emptyList(),
     val artifacts: List<E7Artifact> = emptyList(),
+    val buffStatusEffects: List<E7StatusEffect> = emptyList(),
+    val debuffStatusEffects: List<E7StatusEffect> = emptyList(),
     val section: DataSection = DataSection.HEROES,
     val query: String = "",
     val selectedHeroCode: String? = null,
@@ -196,6 +200,7 @@ data class WikiEditorUiState(
     val passwordRecovery: Boolean = false,
     val saveRevision: Long = 0L,
     val savedHeroCode: String? = null,
+    val savedArtifactCode: String? = null,
 )
 
 private val WikiEmailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
@@ -400,6 +405,9 @@ class MainViewModel(
         }
         taskCoordinator.refreshHealth()
         restoreWikiEditorSession()
+        // Start loading the catalog (and warming the asset cache) right away instead of
+        // waiting for the user to open the Data/Optimizer tab.
+        loadData()
     }
 
     private fun restoreWikiEditorSession() {
@@ -704,6 +712,7 @@ class MainViewModel(
                         errorMessage = null,
                         saveRevision = currentEditor.saveRevision + 1L,
                         savedHeroCode = hero.code,
+                        savedArtifactCode = null,
                     ),
                 )
             } catch (error: Exception) {
@@ -716,6 +725,62 @@ class MainViewModel(
                     ),
                 )
             }
+        }
+    }
+
+    fun saveWikiArtifact(artifact: E7Artifact) {
+        val editor = data.value.wikiEditor
+        if (!editor.canEdit || editor.saving) return
+        data.value = data.value.copy(
+            wikiEditor = editor.copy(
+                saving = true,
+                message = null,
+                errorMessage = null,
+            ),
+        )
+        viewModelScope.launch {
+            try {
+                val snapshot = AppGraph.e7DataRepository.saveWikiArtifact(artifact)
+                applyDataSnapshot(snapshot)
+                val currentEditor = data.value.wikiEditor
+                data.value = data.value.copy(
+                    wikiEditor = currentEditor.copy(
+                        saving = false,
+                        message = "已更新 ${artifact.name} 的 Wiki 资料",
+                        errorMessage = null,
+                        saveRevision = currentEditor.saveRevision + 1L,
+                        savedHeroCode = null,
+                        savedArtifactCode = artifact.code,
+                    ),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                AppGraph.logger.error(
+                    "wiki.artifact_save_failed",
+                    error,
+                    "artifact" to artifact.code,
+                )
+                data.value = data.value.copy(
+                    wikiEditor = data.value.wikiEditor.copy(
+                        saving = false,
+                        errorMessage = "更新失败：${error.message ?: "未知错误"}",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun uploadWikiImage(
+        storagePath: String,
+        bytes: ByteArray,
+        onResult: (String?) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val url = runCatching {
+                AppGraph.e7DataRepository.uploadWikiImage(storagePath, bytes)
+            }.onFailure { AppGraph.logger.error("wiki.image_upload_failed", it) }
+                .getOrNull()
+            onResult(url)
         }
     }
 
@@ -741,9 +806,15 @@ class MainViewModel(
             loadState = DataLoadState.LOADING,
             errorMessage = null,
         )
+        AppGraph.logger.info("data.load_started", "forceRefresh" to forceRefresh)
         viewModelScope.launch {
             try {
                 val snapshot = AppGraph.e7DataRepository.load(forceRefresh)
+                AppGraph.logger.info(
+                    "data.load_succeeded",
+                    "heroes" to snapshot.heroes.size,
+                    "artifacts" to snapshot.artifacts.size,
+                )
                 applyDataSnapshot(snapshot)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -996,6 +1067,7 @@ class MainViewModel(
                             .withSelfImprint(current.imprintRank)
                             .withArtifact(artifact),
                         inventory = inventory,
+                        percentageBaseStats = hero.stats,
                         config = config,
                         isCancelled = { requestId != optimizerRequestId || !isActive },
                     )
@@ -1263,6 +1335,8 @@ class MainViewModel(
             loadState = DataLoadState.READY,
             heroes = snapshot.heroes,
             artifacts = snapshot.artifacts,
+            buffStatusEffects = snapshot.buffStatusEffects,
+            debuffStatusEffects = snapshot.debuffStatusEffects,
             selectedHeroCode = currentHero,
             selectedArtifactCode = currentArtifact,
             fetchedAtEpochMs = snapshot.fetchedAtEpochMs,
@@ -1279,6 +1353,36 @@ class MainViewModel(
         if (currentOptimizerHero != optimizer.value.selectedHeroCode) {
             updateOptimizerConfig { copy(selectedHeroCode = currentOptimizerHero) }
         }
+        preloadIconAssets(snapshot)
+    }
+
+    /**
+     * Warms the persistent icon cache in the background once the catalog is loaded.
+     * Already-downloaded icons are skipped locally; only new/changed paths hit the network.
+     * Hero artwork and artifact images are preloaded too, so detail screens render from disk.
+     */
+    private fun preloadIconAssets(snapshot: E7DataSnapshot) {
+        val urls = buildSet {
+            snapshot.heroes.forEach { hero ->
+                hero.assets.iconUrl?.let { add(it) }
+                hero.assets.thumbnailUrl?.let { add(it) }
+                hero.assets.imageUrl?.let { add(it) }
+                hero.skills.forEach { it.iconUrl?.let { url -> add(url) } }
+                hero.exclusiveEquipment?.iconUrl?.let { add(it) }
+            }
+            snapshot.artifacts.forEach { artifact ->
+                artifact.iconUrl?.let { add(it) }
+                artifact.imageUrl?.let { add(it) }
+            }
+            snapshot.buffStatusEffects.forEach { it.iconUrl?.let { url -> add(url) } }
+            snapshot.debuffStatusEffects.forEach { it.iconUrl?.let { url -> add(url) } }
+        }
+        if (urls.isEmpty()) return
+        AppGraph.logger.info("icons.preload_started", "targets" to urls.size)
+        // Downloads run in a foreground service with a progress notification so they
+        // continue while the user leaves the app; RemoteImage still resolves from the
+        // same IconAssetStore disk cache, so placeholders fill in as files land.
+        AssetPreloadService.start(getApplication(), urls)
     }
 
     fun setBuyCovenant(enabled: Boolean) {

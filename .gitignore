@@ -16,3 +16,4 @@ __pycache__/
 /gear.txt
 /log.txt
 /capture-*.gz
+.kotlin/

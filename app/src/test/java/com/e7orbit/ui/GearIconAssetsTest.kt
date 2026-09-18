@@ -100,6 +100,10 @@ class GearIconAssetsTest {
             R.drawable.e7_stat_resistance,
             exclusiveEquipmentStatIconRes("effect_resistance", true),
         )
+        assertEquals(
+            R.drawable.e7_stat_dual_attack,
+            gearStatIconRes("DualAttackChancePercent"),
+        )
         assertNull(exclusiveEquipmentStatIconRes("unknown", false))
     }
 }

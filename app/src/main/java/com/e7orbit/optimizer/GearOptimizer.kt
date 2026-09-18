@@ -3,6 +3,7 @@ package com.e7orbit.optimizer
 import com.e7orbit.data.E7Gear
 import com.e7orbit.data.E7GearStat
 import com.e7orbit.data.E7Hero
+import com.e7orbit.data.E7HeroStats
 import com.e7orbit.data.GearSlot
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -57,6 +58,7 @@ data class OptimizedHeroStats(
     val critDamage: Int,
     val effectiveness: Int,
     val resistance: Int,
+    val dualAttackChance: Int,
     val combatPower: Int,
     val effectiveHealth: Int,
     val damage: Int,
@@ -68,14 +70,30 @@ data class OptimizedHeroStats(
 /**
  * 单条属性的面板构成，用于概览页括号展开。
  * [gearPercent] 装备百分比加成合计（%），[gearFlat] 装备固定加成合计，
- * [setBonus] 套装提供的加成（百分比属性为 %，固定属性为点数）。
+ * [setBonus] 套装提供的加成，[exclusiveEquipmentBonus] 为专属装备满值。
+ * 百分比字段保存目录中的显示百分比，固定属性保存面板点数。
  */
 data class StatBreakdown(
     val gearPercent: Double = 0.0,
     val gearFlat: Double = 0.0,
     val setBonus: Double = 0.0,
     val setIsPercent: Boolean = false,
+    val exclusiveEquipmentBonus: Double = 0.0,
+    val exclusiveEquipmentIsPercent: Boolean = false,
 )
+
+private data class ExclusiveEquipmentBonus(
+    val stat: OptimizerStat? = null,
+    val panelValue: Double = 0.0,
+    val displayValue: Double = 0.0,
+    val isPercent: Boolean = false,
+) {
+    fun panelValueFor(target: OptimizerStat): Double =
+        if (stat == target) panelValue else 0.0
+
+    fun displayValueFor(target: OptimizerStat): Double =
+        if (stat == target) displayValue else 0.0
+}
 
 data class OptimizedBuild(
     val items: List<E7Gear>,
@@ -104,9 +122,12 @@ class GearOptimizer(
         hero: E7Hero,
         inventory: List<E7Gear>,
         config: GearOptimizationConfig,
+        percentageBaseStats: E7HeroStats? = hero.stats,
         isCancelled: () -> Boolean = { false },
     ): GearOptimizationOutcome {
-        val base = hero.stats ?: throw IllegalArgumentException("该英雄缺少六星满觉基础属性")
+        hero.stats ?: throw IllegalArgumentException("该英雄缺少六星满觉基础属性")
+        val percentageBase = percentageBaseStats
+            ?: throw IllegalArgumentException("该英雄缺少六星满觉基础属性")
         require(config.requiredSets.sumOf(::setPieces) <= SLOT_ORDER.size) {
             "必选套装需要超过 6 件装备"
         }
@@ -123,6 +144,7 @@ class GearOptimizer(
             selectCandidates(
                 items = eligible.filter { it.slot == slot },
                 hero = hero,
+                percentageBase = percentageBase,
                 config = config,
             )
         }
@@ -143,7 +165,7 @@ class GearOptimizer(
                 }
                 for (item in candidates.getValue(slot)) {
                     combinations++
-                    val next = partial.add(item, hero)
+                    val next = partial.add(item, percentageBase)
                     if (
                         canStillFormCompleteSets(next.setCounts, remainingSlots) &&
                         canStillMeetRequiredSets(next.setCounts, config.requiredSets, remainingSlots)
@@ -154,7 +176,7 @@ class GearOptimizer(
             }
             beam = expanded
                 .asSequence()
-                .map { it to heuristicScore(it, hero, config) }
+                .map { it to heuristicScore(it, hero, percentageBase, config) }
                 .sortedByDescending(Pair<PartialBuild, Double>::second)
                 .take(beamWidth)
                 .map(Pair<PartialBuild, Double>::first)
@@ -166,7 +188,7 @@ class GearOptimizer(
             .filter { hasOnlyCompleteSets(it.setCounts) }
             .filter { counts -> config.requiredSets.all { set -> counts.setCounts.getOrDefault(set, 0) >= setPieces(set) } }
             .map { partial ->
-                val stats = calculateStats(hero, partial.items)
+                val stats = calculateStats(hero, partial.items, percentageBase)
                 OptimizedBuild(
                     items = partial.items,
                     stats = stats,
@@ -189,52 +211,87 @@ class GearOptimizer(
         )
     }
 
-    fun calculateStats(hero: E7Hero, items: List<E7Gear>): OptimizedHeroStats {
+    fun calculateStats(
+        hero: E7Hero,
+        items: List<E7Gear>,
+        percentageBaseStats: E7HeroStats? = hero.stats,
+    ): OptimizedHeroStats {
         require(items.size <= SLOT_ORDER.size) { "配装不能超过六个部位" }
         val base = hero.stats ?: throw IllegalArgumentException("该英雄缺少基础属性")
+        val percentageBase = percentageBaseStats
+            ?: throw IllegalArgumentException("该英雄缺少基础属性")
+        val percentageBaseAttack = percentageBase.attack ?: 0
+        val percentageBaseHealth = percentageBase.health ?: 0
+        val percentageBaseDefense = percentageBase.defense ?: 0
+        val percentageBaseSpeed = percentageBase.speed ?: 0
         val accumulated = StatAccumulator()
-        items.forEach { accumulated.add(it, base.attack ?: 0, base.health ?: 0, base.defense ?: 0) }
+        items.forEach {
+            accumulated.add(
+                it,
+                percentageBaseAttack,
+                percentageBaseHealth,
+                percentageBaseDefense,
+            )
+        }
         val setCounts = items.groupingBy(E7Gear::setCode).eachCount()
 
         val baseAttack = base.attack ?: 0
         val baseHealth = base.health ?: 0
         val baseDefense = base.defense ?: 0
         val baseSpeed = base.speed ?: 0
+        val exclusiveBonus = exclusiveEquipmentBonus(
+            hero = hero,
+            baseAttack = percentageBaseAttack,
+            baseHealth = percentageBaseHealth,
+            baseDefense = percentageBaseDefense,
+        )
         // Fribbels keeps the accumulator as float and truncates only the final stat.
         val rawAttack = baseAttack + accumulated.attack +
-            setCounts.completeCount("set_att") * baseAttack * 0.45
+            setCounts.completeCount("set_att") * percentageBaseAttack * 0.45 +
+            exclusiveBonus.panelValueFor(OptimizerStat.ATTACK)
         val rawHealth = baseHealth + accumulated.health +
-            setCounts.completeCount("set_max_hp") * baseHealth * 0.20 +
-            setCounts.completeCount("set_opener") * baseHealth * 0.20 -
-            setCounts.completeCount("set_torrent") * baseHealth * 0.10
+            setCounts.completeCount("set_max_hp") * percentageBaseHealth * 0.20 +
+            setCounts.completeCount("set_opener") * percentageBaseHealth * 0.20 -
+            setCounts.completeCount("set_torrent") * percentageBaseHealth * 0.10 +
+            exclusiveBonus.panelValueFor(OptimizerStat.HEALTH)
         val rawDefense = baseDefense + accumulated.defense +
-            setCounts.completeCount("set_def") * baseDefense * 0.20
+            setCounts.completeCount("set_def") * percentageBaseDefense * 0.20 +
+            exclusiveBonus.panelValueFor(OptimizerStat.DEFENSE)
         val attack = rawAttack.toInt()
         val health = rawHealth.toInt()
         val defense = rawDefense.toInt()
         val speed = (
             baseSpeed + accumulated.speed +
-                setCounts.completeCount("set_speed") * baseSpeed * 0.25 +
-                setCounts.completeCount("set_revenge") * baseSpeed * 0.12 +
+                setCounts.completeCount("set_speed") * percentageBaseSpeed * 0.25 +
+                setCounts.completeCount("set_revenge") * percentageBaseSpeed * 0.12 +
                 (setCounts.completeCount("set_revenant") + setCounts.completeCount("set_weak")) *
-                baseSpeed * 0.15
+                percentageBaseSpeed * 0.15 + exclusiveBonus.panelValueFor(OptimizerStat.SPEED)
             ).toInt()
         val critChance = (
             (base.criticalChance ?: 15) + accumulated.critChance +
-                setCounts.completeCount("set_cri") * 12
+                setCounts.completeCount("set_cri") * 12 +
+                exclusiveBonus.panelValueFor(OptimizerStat.CRIT_CHANCE)
             ).toInt()
         val critDamage = (
             (base.criticalDamage ?: 150) + accumulated.critDamage +
-                setCounts.completeCount("set_cri_dmg") * 60
+                setCounts.completeCount("set_cri_dmg") * 60 +
+                exclusiveBonus.panelValueFor(OptimizerStat.CRIT_DAMAGE)
             ).toInt()
         val effectiveness = (
             (base.effectiveness ?: 0) + accumulated.effectiveness +
-                setCounts.completeCount("set_acc") * 20
+                setCounts.completeCount("set_acc") * 20 +
+                exclusiveBonus.panelValueFor(OptimizerStat.EFFECTIVENESS)
             ).toInt()
         val resistance = (
             (base.effectResistance ?: 0) + accumulated.resistance +
-                setCounts.completeCount("set_res") * 20
+                setCounts.completeCount("set_res") * 20 +
+                exclusiveBonus.panelValueFor(OptimizerStat.RESISTANCE)
             ).toInt()
+        val dualAttackChance = min(
+            DEFAULT_DUAL_ATTACK_CHANCE + accumulated.dualAttackChance +
+                setCounts.completeCount("set_coop") * UNITY_SET_DUAL_ATTACK_CHANCE,
+            MAX_DUAL_ATTACK_CHANCE,
+        ).toInt()
 
         val cappedCrit = min(critChance, 100) / 100.0
         val cappedCritDamage = min(critDamage, 350) / 100.0
@@ -261,12 +318,60 @@ class GearOptimizer(
             critDamage = critDamage,
             effectiveness = effectiveness,
             resistance = resistance,
+            dualAttackChance = dualAttackChance,
             combatPower = combatPower.toInt(),
             effectiveHealth = effectiveHealth.toInt(),
             damage = damage.toInt(),
             damagePerSpeed = (damage * speed / 1000.0).toInt(),
             gearScore = items.sumOf(::gearScore),
-            breakdowns = buildBreakdowns(items, baseAttack, baseHealth, baseDefense, setCounts),
+            breakdowns = buildBreakdowns(
+                items,
+                percentageBaseAttack,
+                percentageBaseHealth,
+                percentageBaseDefense,
+                setCounts,
+                exclusiveBonus,
+            ),
+        )
+    }
+
+    private fun exclusiveEquipmentBonus(
+        hero: E7Hero,
+        baseAttack: Int,
+        baseHealth: Int,
+        baseDefense: Int,
+    ): ExclusiveEquipmentBonus {
+        val equipment = hero.exclusiveEquipment ?: return ExclusiveEquipmentBonus()
+        // The catalog stores the roll range, not an imported per-instance roll.
+        val value = equipment.statMax
+        if (!value.isFinite() || value == 0.0) return ExclusiveEquipmentBonus()
+        val stat = when (equipment.statType.lowercase()) {
+            "attack" -> OptimizerStat.ATTACK
+            "health" -> OptimizerStat.HEALTH
+            "defense" -> OptimizerStat.DEFENSE
+            "speed" -> OptimizerStat.SPEED
+            "critical_chance" -> OptimizerStat.CRIT_CHANCE
+            "critical_damage" -> OptimizerStat.CRIT_DAMAGE
+            "effectiveness" -> OptimizerStat.EFFECTIVENESS
+            "effect_resistance" -> OptimizerStat.RESISTANCE
+            else -> return ExclusiveEquipmentBonus()
+        }
+        val panelValue = when (stat) {
+            OptimizerStat.ATTACK -> if (equipment.statPercent) baseAttack * value / 100.0 else value
+            OptimizerStat.HEALTH -> if (equipment.statPercent) baseHealth * value / 100.0 else value
+            OptimizerStat.DEFENSE -> if (equipment.statPercent) baseDefense * value / 100.0 else value
+            OptimizerStat.SPEED,
+            OptimizerStat.CRIT_CHANCE,
+            OptimizerStat.CRIT_DAMAGE,
+            OptimizerStat.EFFECTIVENESS,
+            OptimizerStat.RESISTANCE,
+            -> value
+        }
+        return ExclusiveEquipmentBonus(
+            stat = stat,
+            panelValue = panelValue,
+            displayValue = value,
+            isPercent = equipment.statPercent,
         )
     }
 
@@ -276,6 +381,7 @@ class GearOptimizer(
         baseHealth: Int,
         baseDefense: Int,
         setCounts: Map<String, Int>,
+        exclusiveBonus: ExclusiveEquipmentBonus,
     ): Map<OptimizerStat, StatBreakdown> {
         // 分类累加装备的百分比与固定值（只对攻击/生命/防御区分，其余属性装备只有固定值）。
         var attackPct = 0.0
@@ -312,6 +418,8 @@ class GearOptimizer(
                 gearFlat = attackFlat,
                 setBonus = setCounts.completeCount("set_att") * 45.0,
                 setIsPercent = true,
+                exclusiveEquipmentBonus = exclusiveBonus.displayValueFor(OptimizerStat.ATTACK),
+                exclusiveEquipmentIsPercent = exclusiveBonus.isPercent,
             ),
             OptimizerStat.HEALTH to StatBreakdown(
                 gearPercent = healthPct,
@@ -320,12 +428,16 @@ class GearOptimizer(
                     setCounts.completeCount("set_opener") * 20.0 -
                     setCounts.completeCount("set_torrent") * 10.0,
                 setIsPercent = true,
+                exclusiveEquipmentBonus = exclusiveBonus.displayValueFor(OptimizerStat.HEALTH),
+                exclusiveEquipmentIsPercent = exclusiveBonus.isPercent,
             ),
             OptimizerStat.DEFENSE to StatBreakdown(
                 gearPercent = defensePct,
                 gearFlat = defenseFlat,
                 setBonus = setCounts.completeCount("set_def") * 20.0,
                 setIsPercent = true,
+                exclusiveEquipmentBonus = exclusiveBonus.displayValueFor(OptimizerStat.DEFENSE),
+                exclusiveEquipmentIsPercent = exclusiveBonus.isPercent,
             ),
             OptimizerStat.SPEED to StatBreakdown(
                 gearFlat = speed,
@@ -333,22 +445,32 @@ class GearOptimizer(
                     setCounts.completeCount("set_revenge") * 12.0 +
                     (setCounts.completeCount("set_revenant") + setCounts.completeCount("set_weak")) * 15.0,
                 setIsPercent = true,
+                exclusiveEquipmentBonus = exclusiveBonus.displayValueFor(OptimizerStat.SPEED),
+                exclusiveEquipmentIsPercent = exclusiveBonus.isPercent,
             ),
             OptimizerStat.CRIT_CHANCE to StatBreakdown(
                 gearFlat = critChance,
                 setBonus = setCounts.completeCount("set_cri") * 12.0,
+                exclusiveEquipmentBonus = exclusiveBonus.displayValueFor(OptimizerStat.CRIT_CHANCE),
+                exclusiveEquipmentIsPercent = exclusiveBonus.isPercent,
             ),
             OptimizerStat.CRIT_DAMAGE to StatBreakdown(
                 gearFlat = critDamage,
                 setBonus = setCounts.completeCount("set_cri_dmg") * 60.0,
+                exclusiveEquipmentBonus = exclusiveBonus.displayValueFor(OptimizerStat.CRIT_DAMAGE),
+                exclusiveEquipmentIsPercent = exclusiveBonus.isPercent,
             ),
             OptimizerStat.EFFECTIVENESS to StatBreakdown(
                 gearFlat = effectiveness,
                 setBonus = setCounts.completeCount("set_acc") * 20.0,
+                exclusiveEquipmentBonus = exclusiveBonus.displayValueFor(OptimizerStat.EFFECTIVENESS),
+                exclusiveEquipmentIsPercent = exclusiveBonus.isPercent,
             ),
             OptimizerStat.RESISTANCE to StatBreakdown(
                 gearFlat = resistance,
                 setBonus = setCounts.completeCount("set_res") * 20.0,
+                exclusiveEquipmentBonus = exclusiveBonus.displayValueFor(OptimizerStat.RESISTANCE),
+                exclusiveEquipmentIsPercent = exclusiveBonus.isPercent,
             ),
         )
     }
@@ -356,9 +478,12 @@ class GearOptimizer(
     private fun selectCandidates(
         items: List<E7Gear>,
         hero: E7Hero,
+        percentageBase: E7HeroStats,
         config: GearOptimizationConfig,
     ): List<E7Gear> {
-        val ranked = items.sortedByDescending { item -> itemUtility(item, hero, config) }
+        val ranked = items.sortedByDescending { item ->
+            itemUtility(item, hero, percentageBase, config)
+        }
         val selected = LinkedHashMap<Long, E7Gear>()
         ranked.take(candidatesPerSlot).forEach { selected[it.id] = it }
         config.requiredSets.forEach { required ->
@@ -368,10 +493,20 @@ class GearOptimizer(
         return selected.values.toList()
     }
 
-    private fun itemUtility(item: E7Gear, hero: E7Hero, config: GearOptimizationConfig): Double {
-        val base = hero.stats ?: return 0.0
+    private fun itemUtility(
+        item: E7Gear,
+        hero: E7Hero,
+        percentageBase: E7HeroStats,
+        config: GearOptimizationConfig,
+    ): Double {
+        hero.stats ?: return 0.0
         val accumulator = StatAccumulator().apply {
-            add(item, base.attack ?: 0, base.health ?: 0, base.defense ?: 0)
+            add(
+                item,
+                percentageBase.attack ?: 0,
+                percentageBase.health ?: 0,
+                percentageBase.defense ?: 0,
+            )
         }
         val objective = when (config.metric) {
             OptimizerMetric.COMBAT_POWER ->
@@ -392,19 +527,34 @@ class GearOptimizer(
     private fun heuristicScore(
         partial: PartialBuild,
         hero: E7Hero,
+        percentageBase: E7HeroStats,
         config: GearOptimizationConfig,
     ): Double {
         val base = hero.stats ?: return 0.0
         val accumulator = partial.accumulator
+        val exclusiveBonus = exclusiveEquipmentBonus(
+            hero = hero,
+            baseAttack = percentageBase.attack ?: 0,
+            baseHealth = percentageBase.health ?: 0,
+            baseDefense = percentageBase.defense ?: 0,
+        )
         val projected = ProjectedStats(
-            attack = (base.attack ?: 0) + accumulator.attack,
-            health = (base.health ?: 0) + accumulator.health,
-            defense = (base.defense ?: 0) + accumulator.defense,
-            speed = (base.speed ?: 0) + accumulator.speed,
-            critChance = (base.criticalChance ?: 15) + accumulator.critChance,
-            critDamage = (base.criticalDamage ?: 150) + accumulator.critDamage,
-            effectiveness = (base.effectiveness ?: 0) + accumulator.effectiveness,
-            resistance = (base.effectResistance ?: 0) + accumulator.resistance,
+            attack = (base.attack ?: 0) + accumulator.attack +
+                exclusiveBonus.panelValueFor(OptimizerStat.ATTACK),
+            health = (base.health ?: 0) + accumulator.health +
+                exclusiveBonus.panelValueFor(OptimizerStat.HEALTH),
+            defense = (base.defense ?: 0) + accumulator.defense +
+                exclusiveBonus.panelValueFor(OptimizerStat.DEFENSE),
+            speed = (base.speed ?: 0) + accumulator.speed +
+                exclusiveBonus.panelValueFor(OptimizerStat.SPEED),
+            critChance = (base.criticalChance ?: 15) + accumulator.critChance +
+                exclusiveBonus.panelValueFor(OptimizerStat.CRIT_CHANCE),
+            critDamage = (base.criticalDamage ?: 150) + accumulator.critDamage +
+                exclusiveBonus.panelValueFor(OptimizerStat.CRIT_DAMAGE),
+            effectiveness = (base.effectiveness ?: 0) + accumulator.effectiveness +
+                exclusiveBonus.panelValueFor(OptimizerStat.EFFECTIVENESS),
+            resistance = (base.effectResistance ?: 0) + accumulator.resistance +
+                exclusiveBonus.panelValueFor(OptimizerStat.RESISTANCE),
         )
         val objective = when (config.metric) {
             OptimizerMetric.COMBAT_POWER ->
@@ -443,10 +593,14 @@ class GearOptimizer(
         val setCounts: Map<String, Int> = emptyMap(),
         val gearScore: Int = 0,
     ) {
-        fun add(item: E7Gear, hero: E7Hero): PartialBuild {
-            val stats = hero.stats ?: return this
+        fun add(item: E7Gear, percentageBase: E7HeroStats): PartialBuild {
             val nextAccumulator = accumulator.copy().apply {
-                add(item, stats.attack ?: 0, stats.health ?: 0, stats.defense ?: 0)
+                add(
+                    item,
+                    percentageBase.attack ?: 0,
+                    percentageBase.health ?: 0,
+                    percentageBase.defense ?: 0,
+                )
             }
             return PartialBuild(
                 items = items + item,
@@ -466,6 +620,7 @@ class GearOptimizer(
         var critDamage: Double = 0.0,
         var effectiveness: Double = 0.0,
         var resistance: Double = 0.0,
+        var dualAttackChance: Double = 0.0,
     ) {
         fun add(item: E7Gear, baseAttack: Int, baseHealth: Int, baseDefense: Int) {
             add(item.mainStat, baseAttack, baseHealth, baseDefense)
@@ -485,6 +640,7 @@ class GearOptimizer(
                 "CriticalHitDamagePercent" -> critDamage += stat.value
                 "EffectivenessPercent" -> effectiveness += stat.value
                 "EffectResistancePercent" -> resistance += stat.value
+                "DualAttackChancePercent" -> dualAttackChance += stat.value
             }
         }
     }
@@ -515,6 +671,9 @@ class GearOptimizer(
         private const val MAX_RESULTS = 100
         private const val CANCELLATION_CHECK_INTERVAL = 64
         private const val TARGET_DEFENSE = 1_500.0
+        private const val DEFAULT_DUAL_ATTACK_CHANCE = 3.0
+        private const val UNITY_SET_DUAL_ATTACK_CHANCE = 4.0
+        private const val MAX_DUAL_ATTACK_CHANCE = 20.0
         private val PEN_MULTIPLIER = (TARGET_DEFENSE / 300.0 + 1.0) /
             (0.00283333 * TARGET_DEFENSE + 1.0)
 

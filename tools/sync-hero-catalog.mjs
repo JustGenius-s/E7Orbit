@@ -15,6 +15,7 @@ import {
   statusEffectKind,
 } from "./lib/status-effects-zh.mjs";
 import { artifactChineseFallback } from "./lib/artifacts-zh.mjs";
+import { officialStatusEffectKey } from "./lib/status-effect-assets.mjs";
 
 const supabaseUrl = (process.env.SUPABASE_URL || "https://biayslzufpixsyuitjus.supabase.co").replace(/\/$/, "");
 const serviceRoleKey = (
@@ -61,6 +62,7 @@ const skillsOnly = process.argv.includes("--skills-only");
 const heroNamesOnly = process.argv.includes("--hero-names-only");
 const growthOnly = process.argv.includes("--growth-only");
 const heroArtOnly = process.argv.includes("--hero-art-only");
+const heroAssetsOnly = process.argv.includes("--hero-assets-only");
 const forceHeroArt = process.argv.includes("--force-hero-art");
 const artifactsOnly = process.argv.includes("--artifacts-only");
 const artifactLocalizationOnly = process.argv.includes("--artifact-localization-only");
@@ -1524,8 +1526,10 @@ function localizeSkillRows(rows, heroes, localizations, syncedAt) {
 }
 
 function localizedStatusEffect(effect, gameKeeEffects) {
-  const slug = canonicalStatusEffectCode(effect?.slug);
-  const definition = statusEffectDefinition(slug);
+  const canonicalCode = canonicalStatusEffectCode(effect?.slug);
+  const slug = officialStatusEffectKey(canonicalCode);
+  const definitionCode = slug ? canonicalStatusEffectCode(slug) : canonicalCode;
+  const definition = statusEffectDefinition(definitionCode);
   const gameKee = definition?.gameKeeLabels
     .map((label) => gameKeeEffects.get(label))
     .find(Boolean);
@@ -1536,7 +1540,7 @@ function localizedStatusEffect(effect, gameKeeEffects) {
       ? existingLabel
       : "未知效果"),
     description: gameKee?.description || definition?.description || null,
-    icon_url: gameKee?.iconUrl || chineseStatusEffectIconUrl(slug) || effect?.icon_url || null,
+    icon_url: gameKee?.iconUrl || chineseStatusEffectIconUrl(definitionCode) || effect?.icon_url || null,
   };
 }
 
@@ -1656,7 +1660,7 @@ function parseArtifactDetailPage(html, slug, fribbels, syncedAt) {
     max_description: maxDescription,
     lore,
     image_url: imageUrl,
-    icon_url: imageUrl,
+    icon_url: null,
     stats_attack: maxStats.attack ?? baseStats.attack ?? integerOrNull(fribbels?.stats?.attack),
     stats_health: maxStats.health ?? baseStats.health ?? integerOrNull(fribbels?.stats?.health),
     stats_defense: integerOrNull(fribbels?.stats?.defense),
@@ -1710,7 +1714,7 @@ async function artifactRowFallback(code, name, fribbels, syncedAt) {
     max_description: null,
     lore: null,
     image_url: imageUrl,
-    icon_url: imageUrl,
+    icon_url: null,
     stats_attack: integerOrNull(fribbels?.stats?.attack),
     stats_health: integerOrNull(fribbels?.stats?.health),
     stats_defense: integerOrNull(fribbels?.stats?.defense),
@@ -1831,12 +1835,18 @@ function contentTypeForExtension(ext) {
 }
 
 async function storageObjectExists(path) {
-  try {
-    const response = await fetch(storagePublicUrl(path), { method: "HEAD" });
-    return response.ok;
-  } catch (_error) {
-    return false;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(storagePublicUrl(path), { method: "HEAD" });
+      if (response.ok) return true;
+    } catch (_error) {
+      // Retry transient Storage or network failures before treating an object as missing.
+    }
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 200));
+    }
   }
+  return false;
 }
 
 async function downloadImage(url) {
@@ -1988,6 +1998,95 @@ async function mirrorHeroImages(heroes) {
   return mirrorHeroArtworkRows(heroes);
 }
 
+async function managedHeroAssetRows(heroes) {
+  console.log(`Validating managed assets for ${heroes.length} heroes...`);
+  let done = 0;
+  const rows = [];
+  for (let start = 0; start < heroes.length; start += concurrency) {
+    const group = heroes.slice(start, start + concurrency);
+    const resolved = await Promise.all(group.map(async (hero) => {
+      const root = `heroes/${hero.code}`;
+      const artPath = `${root}/art.webp`;
+      if (!(await storageObjectExists(artPath))) {
+        const sourcePath = `${root}/image.png`;
+        if (!(await storageObjectExists(sourcePath))) {
+          throw new Error(`${hero.code} is missing both art.webp and image.png`);
+        }
+        const body = await transformHeroArtwork(storagePublicUrl(sourcePath));
+        await uploadToStorage(artPath, body, "image/webp");
+        console.log(`Generated ${artPath} from image.png`);
+      }
+
+      const paths = {
+        image_url: artPath,
+        icon_url: `${root}/icon.png`,
+        thumbnail_url: `${root}/thumbnail.png`,
+      };
+      const missing = [];
+      for (const path of Object.values(paths)) {
+        if (!(await storageObjectExists(path))) missing.push(path);
+      }
+      if (missing.length) {
+        throw new Error(`${hero.code} is missing managed assets: ${missing.join(", ")}`);
+      }
+
+      done += 1;
+      if (done % 50 === 0 || done === heroes.length) {
+        console.log(`Validated hero assets ${done}/${heroes.length}`);
+      }
+      return {
+        code: hero.code,
+        image_url: storagePublicUrl(paths.image_url),
+        icon_url: storagePublicUrl(paths.icon_url),
+        thumbnail_url: storagePublicUrl(paths.thumbnail_url),
+      };
+    }));
+    rows.push(...resolved);
+  }
+  return rows;
+}
+
+async function updateHeroAssetUrls(rows) {
+  let done = 0;
+  for (let start = 0; start < rows.length; start += concurrency) {
+    const group = rows.slice(start, start + concurrency);
+    await Promise.all(group.map(async ({ code, ...assets }) => {
+      const response = await fetch(
+        `${supabaseUrl}/rest/v1/hero_catalog?code=eq.${encodeURIComponent(code)}`,
+        {
+          method: "PATCH",
+          headers: supabaseAdminHeaders({
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          }),
+          body: JSON.stringify(assets),
+        },
+      );
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Supabase hero asset update failed for ${code} (${response.status}): ${text.slice(0, 500)}`);
+      }
+      done += 1;
+      if (done % 50 === 0 || done === rows.length) {
+        console.log(`Updated hero asset URLs ${done}/${rows.length}`);
+      }
+    }));
+  }
+}
+
+function assertHeroAssetUrls(actualRows, expectedRows) {
+  const actualByCode = new Map(actualRows.map((row) => [row.code, row]));
+  const mismatches = expectedRows.filter((expected) => {
+    const actual = actualByCode.get(expected.code);
+    return !actual || actual.image_url !== expected.image_url ||
+      actual.icon_url !== expected.icon_url ||
+      actual.thumbnail_url !== expected.thumbnail_url;
+  });
+  if (mismatches.length) {
+    throw new Error(`Hero asset URL verification failed for: ${mismatches.map((row) => row.code).join(", ")}`);
+  }
+}
+
 async function writeHeroArtExport(directory, heroes) {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const artDirectory = `${directory}/hero-art`;
@@ -2029,34 +2128,7 @@ async function mirrorSkillImages(skills) {
       console.log(`Mirrored skill images ${done}/${skills.length}`);
     }
   }
-  await mirrorStatusEffectImages(skills);
   return skills;
-}
-
-// Buff/debuff icons are shared across heroes; mirror each unique slug once.
-async function mirrorStatusEffectImages(skills) {
-  const allEffects = skills.flatMap((skill) => [...(skill.buffs || []), ...(skill.debuffs || [])]);
-  const unique = new Map();
-  for (const effect of allEffects) {
-    if (effect?.slug && effect.icon_url && !unique.has(effect.slug)) {
-      unique.set(effect.slug, effect.icon_url);
-    }
-  }
-  if (!unique.size) return;
-  console.log(`Mirroring ${unique.size} shared status-effect icons...`);
-  const mirrored = new Map();
-  for (const [slug, url] of unique) {
-    mirrored.set(slug, await mirrorImage(url, `status-effects/${slug}.png`));
-  }
-  for (const skill of skills) {
-    for (const listName of ["buffs", "debuffs"]) {
-      for (const effect of skill[listName] || []) {
-        if (effect?.slug && mirrored.has(effect.slug)) {
-          effect.icon_url = mirrored.get(effect.slug);
-        }
-      }
-    }
-  }
 }
 
 async function mirrorArtifactImages(artifacts) {
@@ -2066,9 +2138,13 @@ async function mirrorArtifactImages(artifacts) {
   for (const artifact of artifacts) {
     if (artifact.image_url) {
       const ext = extensionFromUrl(artifact.image_url);
-      const path = `artifacts/${artifact.code}${ext}`;
+      const path = `artifacts/${artifact.code}/image${ext}`;
       artifact.image_url = await mirrorImage(artifact.image_url, path);
-      artifact.icon_url = artifact.image_url;
+    }
+    if (artifact.icon_url) {
+      const ext = extensionFromUrl(artifact.icon_url);
+      const path = `artifacts/${artifact.code}/icon${ext}`;
+      artifact.icon_url = await mirrorImage(artifact.icon_url, path);
     }
     done += 1;
     if (done % 50 === 0 || done === artifacts.length) {
@@ -2123,6 +2199,23 @@ async function loadRestRows(table) {
   return rows;
 }
 
+async function preserveManagedStatusEffectIcons(rows) {
+  if (!serviceRoleKey || !rows.length) return rows;
+  const existingBySlug = new Map(
+    (await loadRestRows("status_effect_catalog")).map((row) => [row.slug, row]),
+  );
+  return rows.map((row) => {
+    const existing = existingBySlug.get(row.slug);
+    if (existing) return { ...row, icon_url: existing.icon_url || null };
+    return { ...row, icon_url: null };
+  });
+}
+
+function managedArtifactAssetUrl(url, code, filename) {
+  const prefix = storagePublicUrl(`artifacts/${code}/${filename}`);
+  return String(url || "").startsWith(`${prefix}.`) ? url : null;
+}
+
 async function mergeExistingArtifactRows(rows) {
   if (!serviceRoleKey || !rows.length) return rows;
   const existingByCode = new Map(
@@ -2142,9 +2235,20 @@ async function mergeExistingArtifactRows(rows) {
     const lore = usesLocalFallback
       ? existing.lore || row.lore
       : row.lore || existing.lore;
+    const imageUrl = managedArtifactAssetUrl(existing.image_url, row.code, "image") ||
+      row.image_url || null;
+    const iconUrl = managedArtifactAssetUrl(existing.icon_url, row.code, "icon") ||
+      row.icon_url || null;
 
     if (!artifactLocalizationOnly) {
-      return { ...row, description, max_description: maxDescription, lore };
+      return {
+        ...row,
+        description,
+        max_description: maxDescription,
+        lore,
+        image_url: imageUrl,
+        icon_url: iconUrl,
+      };
     }
 
     return {
@@ -2176,6 +2280,35 @@ async function wikiHeroOverrideCodes() {
       });
   }
   return wikiHeroOverrideCodesPromise;
+}
+
+let wikiArtifactOverrideCodesPromise = null;
+async function wikiArtifactOverrideCodes() {
+  if (!wikiArtifactOverrideCodesPromise) {
+    wikiArtifactOverrideCodesPromise = loadRestRows("wiki_artifact_overrides")
+      .then((rows) => new Set(rows.map((row) => row.artifact_code).filter(Boolean)))
+      .catch((error) => {
+        console.warn(`Artifact Wiki override markers unavailable (${error.message}); preserving source=wiki rows only.`);
+        return new Set();
+      });
+  }
+  return wikiArtifactOverrideCodesPromise;
+}
+
+async function excludeWikiArtifactOverrides(rows) {
+  if (!rows.length) return rows;
+  const overrideCodes = await wikiArtifactOverrideCodes();
+  const existingWikiCodes = new Set(
+    (await loadRestRows("artifact_catalog"))
+      .filter((row) => row.source === "wiki")
+      .map((row) => row.code),
+  );
+  const filtered = rows.filter(
+    (row) => !overrideCodes.has(row.code) && !existingWikiCodes.has(row.code),
+  );
+  const preserved = rows.length - filtered.length;
+  if (preserved) console.log(`Preserved ${preserved} Wiki override(s) in artifact_catalog`);
+  return filtered;
 }
 
 async function excludeWikiOverrides(table, rows, keyColumns) {
@@ -2261,8 +2394,8 @@ if (!exportDir) await validateSupabaseAdminAccess();
 
 if (artifactsOnly) {
   console.log("Starting artifact-only sync...");
-  const artifacts = await mergeExistingArtifactRows(
-    await mirrorArtifactImages(await syncArtifacts(syncedAt)),
+  const artifacts = await mirrorArtifactImages(
+    await mergeExistingArtifactRows(await syncArtifacts(syncedAt)),
   );
 
   if (exportDir) {
@@ -2270,9 +2403,30 @@ if (artifactsOnly) {
   }
   if (!exportDir && artifacts.length) {
     console.log(`Preparing ${artifacts.length} artifact rows`);
-    await upsert("artifact_catalog", artifacts, "code");
+    const rows = await excludeWikiArtifactOverrides(artifacts);
+    await upsert("artifact_catalog", rows, "code");
   }
   console.log(`Artifact catalog sync completed: ${artifacts.length} artifacts`);
+  process.exit(0);
+}
+
+if (heroAssetsOnly) {
+  if (exportDir) throw new Error("--hero-assets-only updates Supabase and cannot be exported");
+  console.log("Starting managed hero-asset URL sync...");
+  const allHeroes = await loadRestRows("hero_catalog");
+  const heroes = requestedHeroCodes.size
+    ? allHeroes.filter((hero) => requestedHeroCodes.has(hero.code))
+    : allHeroes;
+  const matchedCodes = new Set(heroes.map((hero) => hero.code));
+  const missingCodes = [...requestedHeroCodes].filter((code) => !matchedCodes.has(code));
+  if (missingCodes.length) throw new Error(`Unknown hero codes: ${missingCodes.join(", ")}`);
+  if (!heroes.length) throw new Error("hero_catalog was empty");
+
+  const assetRows = await managedHeroAssetRows(heroes);
+  await updateHeroAssetUrls(assetRows);
+  const persistedRows = await loadRestRows("hero_catalog");
+  assertHeroAssetUrls(persistedRows, assetRows);
+  console.log(`Managed hero-asset URL sync completed: ${assetRows.length} heroes`);
   process.exit(0);
 }
 
@@ -2434,7 +2588,8 @@ if (skills.length && !exportDir) {
   const syncedHeroCodes = [...new Set(skills.map((skill) => skill.hero_code))];
   console.log(`Preparing ${skills.length} skill rows for ${syncedHeroCodes.length} heroes`);
   if (effects.length) {
-    await upsert("status_effect_catalog", effects, "slug");
+    const rows = await preserveManagedStatusEffectIcons(effects);
+    await upsert("status_effect_catalog", rows, "slug");
   }
   const rows = await excludeWikiOverrides(
     "hero_skills",
@@ -2449,13 +2604,14 @@ if (skills.length && !exportDir) {
 if (!skipArtifacts && !skillsOnly && !exportDir) {
   try {
     console.log("Starting artifact sync (inline)...");
-    const artifacts = await mergeExistingArtifactRows(
-      await mirrorArtifactImages(await syncArtifacts(syncedAt)),
+    const artifacts = await mirrorArtifactImages(
+      await mergeExistingArtifactRows(await syncArtifacts(syncedAt)),
     );
 
     if (artifacts.length) {
       console.log(`Preparing ${artifacts.length} artifact rows`);
-      await upsert("artifact_catalog", artifacts, "code");
+      const rows = await excludeWikiArtifactOverrides(artifacts);
+      await upsert("artifact_catalog", rows, "code");
     }
     console.log(`Artifact sync completed: ${artifacts.length} artifacts`);
   } catch (error) {
