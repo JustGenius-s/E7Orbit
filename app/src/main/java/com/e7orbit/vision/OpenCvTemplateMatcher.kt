@@ -30,21 +30,26 @@ internal class OpenCvTemplateMatcher(
         templateId: String,
         thresholdOverride: Double? = null,
     ): MatchResult {
-        val definition = repository.config.template(templateId)
+        val definition = repository.definition(templateId)
             ?: return MatchResult(matched = false)
         val geometry = geometry(source)
-        val template = repository.template(templateId, geometry.scale)
+        val template = repository.template(templateId, geometry)
             ?: return MatchResult(matched = false)
         val region = geometry.mapRegion(
             region = definition.region,
             horizontalAnchor = definition.horizontalAnchor,
             verticalAnchor = definition.verticalAnchor,
         )
-        val threshold = thresholdOverride?.let { max(it, definition.threshold) }
-            ?: definition.threshold
-        val primary = matchOne(source, template, region, threshold)
+        val threshold = definition.resolveThreshold(thresholdOverride)
+        val primary = matchOne(source, template, region, threshold, definition)
         logMatch(templateId, primary, threshold, geometry.scale, region)
-        if (primary.matched || region.isFullFrame(source)) return primary
+        if (
+            primary.matched ||
+            region.isFullFrame(source) ||
+            definition.matchMode == MatchMode.MASKED
+        ) {
+            return primary
+        }
 
         logger.debug(
             "$logPrefix.template_full_frame_fallback",
@@ -56,6 +61,7 @@ internal class OpenCvTemplateMatcher(
             template = template,
             region = ScreenRect(0, 0, source.cols(), source.rows()),
             threshold = threshold,
+            definition = definition,
         ).also { fallback ->
             logMatch(
                 templateId,
@@ -67,65 +73,40 @@ internal class OpenCvTemplateMatcher(
         }
     }
 
-    private fun matchOne(
-        source: Mat,
-        template: Mat,
-        region: ScreenRect,
-        threshold: Double,
-    ): MatchResult {
-        if (region.width < template.cols() || region.height < template.rows()) {
-            return MatchResult(matched = false)
-        }
-        val sourceRegion = source.submat(
-            Rect(region.left, region.top, region.width, region.height),
-        )
-        val result = Mat(
-            sourceRegion.rows() - template.rows() + 1,
-            sourceRegion.cols() - template.cols() + 1,
-            CvType.CV_32FC1,
-        )
-        return try {
-            Imgproc.matchTemplate(sourceRegion, template, result, Imgproc.TM_CCOEFF_NORMED)
-            val minMax = Core.minMaxLoc(result)
-            val left = region.left + minMax.maxLoc.x.toInt()
-            val top = region.top + minMax.maxLoc.y.toInt()
-            MatchResult(
-                matched = minMax.maxVal >= threshold,
-                confidence = minMax.maxVal,
-                bounds = ScreenRect(
-                    left = left,
-                    top = top,
-                    right = left + template.cols(),
-                    bottom = top + template.rows(),
-                ),
-            )
-        } finally {
-            result.release()
-            sourceRegion.release()
-        }
-    }
-
     fun allMatches(
         source: Mat,
         templateId: String,
         thresholdOverride: Double? = null,
         maxMatchesOverride: Int? = null,
     ): List<MatchResult> {
-        val definition = repository.config.template(templateId)
+        val definition = repository.definition(templateId)
             ?: return emptyList()
         val geometry = geometry(source)
-        val template = repository.template(templateId, geometry.scale)
+        val template = repository.template(templateId, geometry)
             ?: return emptyList()
         val region = geometry.mapRegion(
             region = definition.region,
             horizontalAnchor = definition.horizontalAnchor,
             verticalAnchor = definition.verticalAnchor,
         )
-        val threshold = thresholdOverride?.let { max(it, definition.threshold) }
-            ?: definition.threshold
+        val threshold = definition.resolveThreshold(thresholdOverride)
         val maxMatches = maxMatchesOverride ?: definition.maxMatches
-        val primary = matchMany(source, template, region, threshold, maxMatches, templateId)
-        if (primary.isNotEmpty() || region.isFullFrame(source)) return primary
+        val primary = matchMany(
+            source,
+            template,
+            region,
+            threshold,
+            maxMatches,
+            templateId,
+            definition,
+        )
+        if (
+            primary.isNotEmpty() ||
+            region.isFullFrame(source) ||
+            definition.matchMode == MatchMode.MASKED
+        ) {
+            return primary
+        }
         logger.debug(
             "$logPrefix.template_full_frame_fallback",
             "template" to templateId,
@@ -138,31 +119,72 @@ internal class OpenCvTemplateMatcher(
             threshold = threshold,
             maxMatches = maxMatches,
             templateId = templateId,
+            definition = definition,
         )
+    }
+
+    private fun matchOne(
+        source: Mat,
+        template: ScaledTemplate,
+        region: ScreenRect,
+        threshold: Double,
+        definition: TemplateConfig,
+    ): MatchResult {
+        if (region.width < template.bgr.cols() || region.height < template.bgr.rows()) {
+            return MatchResult(matched = false)
+        }
+        val sourceRegion = ensureBgr(
+            source.submat(Rect(region.left, region.top, region.width, region.height)),
+        )
+        val result = Mat(
+            sourceRegion.rows() - template.bgr.rows() + 1,
+            sourceRegion.cols() - template.bgr.cols() + 1,
+            CvType.CV_32FC1,
+        )
+        return try {
+            matchTemplate(sourceRegion, template, result, definition.matchMode)
+            val minMax = Core.minMaxLoc(result)
+            val left = region.left + minMax.maxLoc.x.toInt()
+            val top = region.top + minMax.maxLoc.y.toInt()
+            MatchResult(
+                matched = minMax.maxVal >= threshold,
+                confidence = definition.reportConfidence(minMax.maxVal),
+                bounds = ScreenRect(
+                    left = left,
+                    top = top,
+                    right = left + template.bgr.cols(),
+                    bottom = top + template.bgr.rows(),
+                ),
+            )
+        } finally {
+            result.release()
+            sourceRegion.release()
+        }
     }
 
     private fun matchMany(
         source: Mat,
-        template: Mat,
+        template: ScaledTemplate,
         region: ScreenRect,
         threshold: Double,
         maxMatches: Int,
         templateId: String,
+        definition: TemplateConfig,
     ): List<MatchResult> {
-        if (region.width < template.cols() || region.height < template.rows()) {
+        if (region.width < template.bgr.cols() || region.height < template.bgr.rows()) {
             return emptyList()
         }
-        val sourceRegion = source.submat(
-            Rect(region.left, region.top, region.width, region.height),
+        val sourceRegion = ensureBgr(
+            source.submat(Rect(region.left, region.top, region.width, region.height)),
         )
         val result = Mat(
-            sourceRegion.rows() - template.rows() + 1,
-            sourceRegion.cols() - template.cols() + 1,
+            sourceRegion.rows() - template.bgr.rows() + 1,
+            sourceRegion.cols() - template.bgr.cols() + 1,
             CvType.CV_32FC1,
         )
         val matches = mutableListOf<MatchResult>()
         try {
-            Imgproc.matchTemplate(sourceRegion, template, result, Imgproc.TM_CCOEFF_NORMED)
+            matchTemplate(sourceRegion, template, result, definition.matchMode)
             var matchCount = 0
             while (matchCount < maxMatches) {
                 val minMax = Core.minMaxLoc(result)
@@ -182,24 +204,24 @@ internal class OpenCvTemplateMatcher(
                 val top = region.top + minMax.maxLoc.y.toInt()
                 matches += MatchResult(
                     matched = true,
-                    confidence = minMax.maxVal,
+                    confidence = definition.reportConfidence(minMax.maxVal),
                     bounds = ScreenRect(
                         left = left,
                         top = top,
-                        right = left + template.cols(),
-                        bottom = top + template.rows(),
+                        right = left + template.bgr.cols(),
+                        bottom = top + template.bgr.rows(),
                     ),
                 )
 
-                val suppressLeft = max(0, minMax.maxLoc.x.toInt() - template.cols() / 2)
-                val suppressTop = max(0, minMax.maxLoc.y.toInt() - template.rows() / 2)
+                val suppressLeft = max(0, minMax.maxLoc.x.toInt() - template.bgr.cols() / 2)
+                val suppressTop = max(0, minMax.maxLoc.y.toInt() - template.bgr.rows() / 2)
                 val suppressRight = min(
                     result.cols() - 1,
-                    minMax.maxLoc.x.toInt() + template.cols() / 2,
+                    minMax.maxLoc.x.toInt() + template.bgr.cols() / 2,
                 )
                 val suppressBottom = min(
                     result.rows() - 1,
-                    minMax.maxLoc.y.toInt() + template.rows() / 2,
+                    minMax.maxLoc.y.toInt() + template.bgr.rows() / 2,
                 )
                 Imgproc.rectangle(
                     result,
@@ -215,6 +237,43 @@ internal class OpenCvTemplateMatcher(
             sourceRegion.release()
         }
         return matches.sortedByDescending(MatchResult::confidence)
+    }
+
+    private fun matchTemplate(
+        sourceRegion: Mat,
+        template: ScaledTemplate,
+        result: Mat,
+        matchMode: MatchMode,
+    ) {
+        val mask = template.mask
+        if (matchMode == MatchMode.MASKED && mask != null) {
+            Imgproc.matchTemplate(
+                sourceRegion,
+                template.bgr,
+                result,
+                Imgproc.TM_CCORR_NORMED,
+                mask,
+            )
+        } else {
+            Imgproc.matchTemplate(
+                sourceRegion,
+                template.bgr,
+                result,
+                Imgproc.TM_CCOEFF_NORMED,
+            )
+        }
+    }
+
+    private fun ensureBgr(source: Mat): Mat {
+        if (source.channels() == 3) return source
+        val bgr = Mat()
+        when (source.channels()) {
+            1 -> Imgproc.cvtColor(source, bgr, Imgproc.COLOR_GRAY2BGR)
+            4 -> Imgproc.cvtColor(source, bgr, Imgproc.COLOR_BGRA2BGR)
+            else -> source.copyTo(bgr)
+        }
+        source.release()
+        return bgr
     }
 
     private fun ScreenRect.isFullFrame(source: Mat): Boolean =

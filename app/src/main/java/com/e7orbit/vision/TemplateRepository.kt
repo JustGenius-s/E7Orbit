@@ -6,13 +6,15 @@ import java.io.FileNotFoundException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 import kotlinx.serialization.json.Json
+import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.MatOfByte
-import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.core.Size
+import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.imgproc.Imgproc
 
-private const val ASSET_ROOT = "vision/cn_1920x1080"
+const val SHOP_ASSET_ROOT = "vision/shop"
+const val HUNT_ASSET_ROOT = "vision/cn_1920x1080"
 
 class TemplateRepository(
     context: Context,
@@ -24,49 +26,47 @@ class TemplateRepository(
         explicitNulls = false
     }
 
-    val config: VisionConfig by lazy {
-        assets.open("$ASSET_ROOT/regions.json").bufferedReader().use { reader ->
-            json.decodeFromString<VisionConfig>(reader.readText())
-        }
-    }
+    val shopConfig: VisionConfig by lazy { loadConfig(SHOP_ASSET_ROOT) }
+    val huntConfig: VisionConfig by lazy { loadConfig(HUNT_ASSET_ROOT) }
+    val config: VisionConfig get() = shopConfig
 
     private val templatesDelegate = lazy {
         buildMap {
-            config.templates.forEach { template ->
-                loadTemplate(template)?.let { put(template.id, it) }
+            shopConfig.templates.forEach { template ->
+                loadTemplate(SHOP_ASSET_ROOT, template)?.let { put(template.id, it) }
+            }
+            huntConfig.templates.forEach { template ->
+                if (!containsKey(template.id)) {
+                    loadTemplate(HUNT_ASSET_ROOT, template)?.let { put(template.id, it) }
+                }
             }
         }
     }
     private val templates: Map<String, Mat> by templatesDelegate
-    private val scaledTemplates = ConcurrentHashMap<ScaledTemplateKey, Mat>()
+    private val scaledTemplates = ConcurrentHashMap<ScaledTemplateKey, ScaledTemplate>()
+
+    fun definition(id: String): TemplateConfig? =
+        shopConfig.template(id) ?: huntConfig.template(id)
 
     fun template(id: String): Mat? = templates[id]
 
-    fun template(
+    internal fun template(
         id: String,
-        scale: Double,
-    ): Mat? {
+        geometry: VisionGeometry,
+    ): ScaledTemplate? {
+        val definition = definition(id) ?: return null
         val original = template(id) ?: return null
+        val scale = definition.scaleFor(geometry, original.cols(), original.rows())
         val width = (original.cols() * scale).roundToInt().coerceAtLeast(1)
         val height = (original.rows() * scale).roundToInt().coerceAtLeast(1)
-        if (width == original.cols() && height == original.rows()) return original
-        val key = ScaledTemplateKey(id, width, height)
+        val key = ScaledTemplateKey(id, width, height, definition.matchMode)
         return scaledTemplates.computeIfAbsent(key) {
-            Mat().also { scaled ->
-                Imgproc.resize(
-                    original,
-                    scaled,
-                    Size(width.toDouble(), height.toDouble()),
-                    0.0,
-                    0.0,
-                    if (scale >= 1.0) Imgproc.INTER_CUBIC else Imgproc.INTER_AREA,
-                )
-            }
+            prepareTemplate(original, width, height, definition.matchMode)
         }
     }
 
     fun health(): VisionHealth {
-        val requiredIds = config.templates.filter(TemplateConfig::required).map(TemplateConfig::id)
+        val requiredIds = shopConfig.templates.filter(TemplateConfig::required).map(TemplateConfig::id)
         return health(requiredIds)
     }
 
@@ -80,13 +80,21 @@ class TemplateRepository(
         )
     }
 
-    private fun loadTemplate(definition: TemplateConfig): Mat? {
+    private fun loadConfig(packRoot: String): VisionConfig =
+        assets.open("$packRoot/regions.json").bufferedReader().use { reader ->
+            json.decodeFromString<VisionConfig>(reader.readText())
+        }
+
+    private fun loadTemplate(
+        packRoot: String,
+        definition: TemplateConfig,
+    ): Mat? {
         if (!openCvReady) return null
         return try {
-            val bytes = assets.open("$ASSET_ROOT/${definition.file}").use { it.readBytes() }
+            val bytes = assets.open("$packRoot/${definition.file}").use { it.readBytes() }
             val encoded = MatOfByte(*bytes)
             try {
-                val decoded = Imgcodecs.imdecode(encoded, Imgcodecs.IMREAD_COLOR)
+                val decoded = Imgcodecs.imdecode(encoded, Imgcodecs.IMREAD_UNCHANGED)
                 if (decoded.empty()) {
                     decoded.release()
                     null
@@ -101,8 +109,53 @@ class TemplateRepository(
         }
     }
 
+    private fun prepareTemplate(
+        original: Mat,
+        width: Int,
+        height: Int,
+        matchMode: MatchMode,
+    ): ScaledTemplate {
+        val scaled = Mat()
+        Imgproc.resize(
+            original,
+            scaled,
+            Size(width.toDouble(), height.toDouble()),
+            0.0,
+            0.0,
+            if (width >= original.cols()) Imgproc.INTER_CUBIC else Imgproc.INTER_AREA,
+        )
+        return try {
+            splitPrepared(scaled, matchMode)
+        } finally {
+            scaled.release()
+        }
+    }
+
+    private fun splitPrepared(
+        source: Mat,
+        matchMode: MatchMode,
+    ): ScaledTemplate {
+        val bgr = Mat()
+        when (source.channels()) {
+            1 -> Imgproc.cvtColor(source, bgr, Imgproc.COLOR_GRAY2BGR)
+            4 -> Imgproc.cvtColor(source, bgr, Imgproc.COLOR_BGRA2BGR)
+            else -> source.copyTo(bgr)
+        }
+        val mask = if (matchMode == MatchMode.MASKED && source.channels() == 4) {
+            val alpha = Mat()
+            Core.extractChannel(source, alpha, 3)
+            val bgrMask = Mat()
+            Imgproc.cvtColor(alpha, bgrMask, Imgproc.COLOR_GRAY2BGR)
+            alpha.release()
+            bgrMask
+        } else {
+            null
+        }
+        return ScaledTemplate(bgr = bgr, mask = mask)
+    }
+
     override fun close() {
-        scaledTemplates.values.forEach(Mat::release)
+        scaledTemplates.values.forEach(ScaledTemplate::release)
         scaledTemplates.clear()
         if (templatesDelegate.isInitialized()) {
             templates.values.forEach(Mat::release)
@@ -113,5 +166,16 @@ class TemplateRepository(
         val id: String,
         val width: Int,
         val height: Int,
+        val matchMode: MatchMode,
     )
+}
+
+internal data class ScaledTemplate(
+    val bgr: Mat,
+    val mask: Mat?,
+) {
+    fun release() {
+        bgr.release()
+        mask?.release()
+    }
 }

@@ -1,7 +1,10 @@
 package com.e7orbit.vision
 
 import com.e7orbit.model.ScreenRect
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlin.math.max
+import kotlin.math.min
 
 @Serializable
 enum class HorizontalAnchor {
@@ -50,6 +53,24 @@ data class RectConfig(
 }
 
 @Serializable
+enum class MatchMode {
+    @SerialName("opaque")
+    OPAQUE,
+
+    @SerialName("masked")
+    MASKED,
+}
+
+@Serializable
+enum class TemplateSource {
+    @SerialName("screenshot")
+    SCREENSHOT,
+
+    @SerialName("native")
+    NATIVE,
+}
+
+@Serializable
 data class TemplateConfig(
     val id: String,
     val file: String,
@@ -59,7 +80,49 @@ data class TemplateConfig(
     val maxMatches: Int = 1,
     val horizontalAnchor: HorizontalAnchor = HorizontalAnchor.AUTO,
     val verticalAnchor: VerticalAnchor = VerticalAnchor.AUTO,
-)
+    val displayWidth: Int? = null,
+    val displayHeight: Int? = null,
+    val matchMode: MatchMode = MatchMode.OPAQUE,
+    val source: TemplateSource = TemplateSource.SCREENSHOT,
+) {
+    fun scaleFor(
+        geometry: VisionGeometry,
+        nativeWidth: Int,
+        nativeHeight: Int,
+    ): Double {
+        val widthScale = displayWidth?.takeIf { nativeWidth > 0 }?.let { displayWidth ->
+            (displayWidth * geometry.scale) / nativeWidth
+        }
+        val heightScale = displayHeight?.takeIf { nativeHeight > 0 }?.let { displayHeight ->
+            (displayHeight * geometry.scale) / nativeHeight
+        }
+        return when {
+            widthScale != null && heightScale != null -> min(widthScale, heightScale)
+            widthScale != null -> widthScale
+            heightScale != null -> heightScale
+            else -> geometry.scale
+        }
+    }
+
+    fun resolveThreshold(override: Double?): Double = when (matchMode) {
+        MatchMode.MASKED ->
+            if (override == null) threshold else min(threshold, override)
+        MatchMode.OPAQUE ->
+            override?.let { max(it, threshold) } ?: threshold
+    }
+
+    fun reportConfidence(rawScore: Double): Double {
+        if (matchMode != MatchMode.MASKED || rawScore < threshold || threshold >= 1.0) {
+            return rawScore
+        }
+        return OPAQUE_MATCH_THRESHOLD_DEFAULT +
+            (rawScore - threshold) *
+            (1.0 - OPAQUE_MATCH_THRESHOLD_DEFAULT) /
+            (1.0 - threshold)
+    }
+}
+
+const val OPAQUE_MATCH_THRESHOLD_DEFAULT = 0.92
 
 object TemplateIds {
     const val GLOBAL_MENU_BUTTON = "global_menu_button"

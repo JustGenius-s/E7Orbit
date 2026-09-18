@@ -870,4 +870,4 @@ private fun HuntPhase.overlayLabel(): String = when (this) {
     HuntPhase.ERROR -> "异常"
 }
 
-private const val VISION_ASSET_ROOT = "vision/cn_1920x1080"
+private const val VISION_ASSET_ROOT = "vision/shop"

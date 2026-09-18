@@ -113,9 +113,9 @@ class OpenCvShopVision(
                 }
             }
 
-            val rowPairTolerance = ROW_PAIR_TOLERANCE_PX * matcher.geometry(source).scale
-            val rowBucketHeight = (ROW_BUCKET_HEIGHT_PX * matcher.geometry(source).scale)
-                .coerceAtLeast(1.0)
+            val geometry = matcher.geometry(source)
+            val rowPairTolerance = ShopLayoutMetrics.rowPairTolerance(geometry)
+            val rowBucketHeight = ShopLayoutMetrics.rowBucketHeight(geometry)
             val targets = items
                 .sortedBy { it.second.bounds?.top }
                 .mapNotNull { (type, itemMatch) ->
@@ -248,8 +248,16 @@ class OpenCvShopVision(
         }
     }
 
-    private companion object {
-        const val ROW_PAIR_TOLERANCE_PX = 55
-        const val ROW_BUCKET_HEIGHT_PX = 100
-    }
+}
+
+internal object ShopLayoutMetrics {
+    const val ROW_PAIR_TOLERANCE_RATIO = 55.0 / 576.0
+    const val ROW_BUCKET_HEIGHT_RATIO = 100.0 / 576.0
+
+    fun rowPairTolerance(geometry: VisionGeometry): Double =
+        ROW_PAIR_TOLERANCE_RATIO * geometry.referenceHeight * geometry.scale
+
+    fun rowBucketHeight(geometry: VisionGeometry): Double =
+        (ROW_BUCKET_HEIGHT_RATIO * geometry.referenceHeight * geometry.scale)
+            .coerceAtLeast(1.0)
 }

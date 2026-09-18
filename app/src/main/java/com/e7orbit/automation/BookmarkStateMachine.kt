@@ -18,6 +18,7 @@ import com.e7orbit.model.StopReason
 import com.e7orbit.model.VisualAction
 import com.e7orbit.vision.VisionConfig
 import kotlin.math.abs
+import kotlin.math.min
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CancellationException
 
@@ -341,6 +342,11 @@ class BookmarkStateMachine(
                                         context.originalTarget.itemBounds.center.y,
                                     "candidateCount" to targets.size,
                                 )
+                                val revalidateTolerance =
+                                    TARGET_REVALIDATE_TOLERANCE_PX * min(
+                                        frame.width.toDouble() / visionConfig.referenceWidth,
+                                        frame.height.toDouble() / visionConfig.referenceHeight,
+                                    )
                                 targets
                                     .filter { it.type == context.originalTarget.type }
                                     .minByOrNull { target ->
@@ -353,7 +359,7 @@ class BookmarkStateMachine(
                                         abs(
                                             target.itemBounds.center.y -
                                                 context.originalTarget.itemBounds.center.y,
-                                        ) <= TARGET_REVALIDATE_TOLERANCE_PX
+                                        ) <= revalidateTolerance
                                     }
                             }
                         if (context.currentTarget == null) completeWorkflow()
